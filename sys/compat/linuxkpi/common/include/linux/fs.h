@@ -53,9 +53,11 @@ struct pipe_inode_info;
 struct vm_area_struct;
 struct poll_table_struct;
 struct files_struct;
+struct pfs_node;
 
 #define	inode	vnode
 #define	i_cdev	v_rdev
+#define	i_private v_data
 
 #define	S_IRUGO	(S_IRUSR | S_IRGRP | S_IROTH)
 #define	S_IWUGO	(S_IWUSR | S_IWGRP | S_IWOTH)
@@ -65,6 +67,7 @@ typedef struct files_struct *fl_owner_t;
 
 struct dentry {
 	struct inode	*d_inode;
+	struct pfs_node	*d_pfs_node;
 };
 
 struct file_operations;
@@ -80,7 +83,11 @@ struct linux_file {
 	struct selinfo	f_selinfo;
 	struct sigio	*f_sigio;
 	struct vnode	*f_vnode;
+#define	f_inode	f_vnode
 	volatile u_int	f_count;
+
+	/* anonymous shmem object */
+	vm_object_t	f_shmem;
 
 	/* kqfilter support */
 	int		f_kqflags;
@@ -156,7 +163,8 @@ struct file_operations {
 	int (*setlease)(struct file *, long, struct file_lock **);
 #endif
 };
-#define	fops_get(fops)	(fops)
+#define	fops_get(fops)		(fops)
+#define	replace_fops(f, fops)	((f)->f_op = (fops))
 
 #define	FMODE_READ	FREAD
 #define	FMODE_WRITE	FWRITE
@@ -224,12 +232,8 @@ nonseekable_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static inline dev_t
-iminor(struct inode *inode)
-{
-
-	return (minor(dev2unit(inode->v_rdev)));
-}
+extern unsigned int linux_iminor(struct inode *);
+#define	iminor(...) linux_iminor(__VA_ARGS__)
 
 static inline struct linux_file *
 get_file(struct linux_file *f)

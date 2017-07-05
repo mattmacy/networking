@@ -731,11 +731,12 @@ mpr_attach_sas(struct mpr_softc *sc)
 	int unit, error = 0;
 
 	MPR_FUNCTRACE(sc);
+	mpr_dprint(sc, MPR_INIT, "%s entered\n", __func__);
 
 	sassc = malloc(sizeof(struct mprsas_softc), M_MPR, M_WAITOK|M_ZERO);
 	if (!sassc) {
-		device_printf(sc->mpr_dev, "Cannot allocate memory %s %d\n",
-		    __func__, __LINE__);
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
+		    "Cannot allocate SAS subsystem memory\n");
 		return (ENOMEM);
 	}
 
@@ -749,8 +750,8 @@ mpr_attach_sas(struct mpr_softc *sc)
 	sassc->targets = malloc(sizeof(struct mprsas_target) *
 	    sassc->maxtargets, M_MPR, M_WAITOK|M_ZERO);
 	if (!sassc->targets) {
-		device_printf(sc->mpr_dev, "Cannot allocate memory %s %d\n",
-		    __func__, __LINE__);
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
+		    "Cannot allocate SAS target memory\n");
 		free(sassc, M_MPR);
 		return (ENOMEM);
 	}
@@ -758,7 +759,7 @@ mpr_attach_sas(struct mpr_softc *sc)
 	sassc->sc = sc;
 
 	if ((sassc->devq = cam_simq_alloc(sc->num_reqs)) == NULL) {
-		mpr_dprint(sc, MPR_ERROR, "Cannot allocate SIMQ\n");
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR, "Cannot allocate SIMQ\n");
 		error = ENOMEM;
 		goto out;
 	}
@@ -767,7 +768,7 @@ mpr_attach_sas(struct mpr_softc *sc)
 	sassc->sim = cam_sim_alloc(mprsas_action, mprsas_poll, "mpr", sassc,
 	    unit, &sc->mpr_mtx, sc->num_reqs, sc->num_reqs, sassc->devq);
 	if (sassc->sim == NULL) {
-		mpr_dprint(sc, MPR_ERROR, "Cannot allocate SIM\n");
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR, "Cannot allocate SIM\n");
 		error = EINVAL;
 		goto out;
 	}
@@ -789,8 +790,8 @@ mpr_attach_sas(struct mpr_softc *sc)
 	 * everything is just a target on a single bus.
 	 */
 	if ((error = xpt_bus_register(sassc->sim, sc->mpr_dev, 0)) != 0) {
-		mpr_dprint(sc, MPR_ERROR, "Error %d registering SCSI bus\n",
-		    error);
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
+		    "Error %d registering SCSI bus\n", error);
 		mpr_unlock(sc);
 		goto out;
 	}
@@ -814,7 +815,8 @@ mpr_attach_sas(struct mpr_softc *sc)
 	    cam_sim_path(sc->sassc->sim), CAM_TARGET_WILDCARD,
 	    CAM_LUN_WILDCARD);
 	if (status != CAM_REQ_CMP) {
-		mpr_printf(sc, "Error %#x creating sim path\n", status);
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
+		    "Error %#x creating sim path\n", status);
 		sassc->path = NULL;
 	} else {
 		int event;
@@ -890,6 +892,8 @@ mpr_attach_sas(struct mpr_softc *sc)
 out:
 	if (error)
 		mpr_detach_sas(sc);
+
+	mpr_dprint(sc, MPR_INIT, "%s exit, error= %d\n", __func__, error);
 	return (error);
 }
 
@@ -1193,13 +1197,8 @@ mprsas_complete_all_commands(struct mpr_softc *sc)
 			completed = 1;
 		}
 
-		if (cm->cm_sc->io_cmds_active != 0) {
+		if (cm->cm_sc->io_cmds_active != 0)
 			cm->cm_sc->io_cmds_active--;
-		} else {
-			mpr_dprint(cm->cm_sc, MPR_INFO, "Warning: "
-			    "io_cmds_active is out of sync - resynching to "
-			    "0\n");
-		}
 		
 		if ((completed == 0) && (cm->cm_state != MPR_CM_STATE_FREE)) {
 			/* this should never happen, but if it does, log */
@@ -2677,7 +2676,7 @@ mprsas_scsiio_complete(struct mpr_softc *sc, struct mpr_command *cm)
 		if ((sassc->flags & MPRSAS_QUEUE_FROZEN) == 0) {
 			xpt_freeze_simq(sassc->sim, 1);
 			sassc->flags |= MPRSAS_QUEUE_FROZEN;
-			mpr_dprint(sc, MPR_INFO, "Error sending command, "
+			mpr_dprint(sc, MPR_XINFO, "Error sending command, "
 			    "freezing SIM queue\n");
 		}
 	}

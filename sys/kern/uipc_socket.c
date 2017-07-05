@@ -858,6 +858,9 @@ solisten_proto(struct socket *so, int backlog)
 	so->sol_accept_filter_arg = NULL;
 	so->sol_accept_filter_str = NULL;
 
+	so->sol_upcall = NULL;
+	so->sol_upcallarg = NULL;
+
 	so->so_options |= SO_ACCEPTCONN;
 
 listening:
@@ -3017,19 +3020,23 @@ integer:
 			goto integer;
 
 		case SO_SNDBUF:
-			optval = so->so_snd.sb_hiwat;
+			optval = SOLISTENING(so) ? so->sol_sbsnd_hiwat :
+			    so->so_snd.sb_hiwat;
 			goto integer;
 
 		case SO_RCVBUF:
-			optval = so->so_rcv.sb_hiwat;
+			optval = SOLISTENING(so) ? so->sol_sbrcv_hiwat :
+			    so->so_rcv.sb_hiwat;
 			goto integer;
 
 		case SO_SNDLOWAT:
-			optval = so->so_snd.sb_lowat;
+			optval = SOLISTENING(so) ? so->sol_sbsnd_lowat :
+			    so->so_snd.sb_lowat;
 			goto integer;
 
 		case SO_RCVLOWAT:
-			optval = so->so_rcv.sb_lowat;
+			optval = SOLISTENING(so) ? so->sol_sbrcv_lowat :
+			    so->so_rcv.sb_lowat;
 			goto integer;
 
 		case SO_SNDTIMEO:
@@ -3762,13 +3769,14 @@ soisdisconnected(struct socket *so)
 	so->so_state |= SS_ISDISCONNECTED;
 
 	if (!SOLISTENING(so)) {
+		SOCK_UNLOCK(so);
 		SOCKBUF_LOCK(&so->so_rcv);
 		socantrcvmore_locked(so);
 		SOCKBUF_LOCK(&so->so_snd);
 		sbdrop_locked(&so->so_snd, sbused(&so->so_snd));
 		socantsendmore_locked(so);
-	}
-	SOCK_UNLOCK(so);
+	} else
+		SOCK_UNLOCK(so);
 	wakeup(&so->so_timeo);
 }
 

@@ -481,6 +481,10 @@ DtFatal (
     DT_FIELD                *FieldObject,
     char                    *ExtraMessage);
 
+UINT64
+DtDoConstant (
+    char                    *String);
+
 char*
 DtGetFieldValue (
     DT_FIELD                *Field);
@@ -726,6 +730,7 @@ extern const unsigned char  TemplateRasf[];
 extern const unsigned char  TemplateRsdt[];
 extern const unsigned char  TemplateS3pt[];
 extern const unsigned char  TemplateSbst[];
+extern const unsigned char  TemplateSdei[];
 extern const unsigned char  TemplateSlic[];
 extern const unsigned char  TemplateSlit[];
 extern const unsigned char  TemplateSpcr[];
