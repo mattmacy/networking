@@ -562,6 +562,7 @@ MAN=	aac.4 \
 	wlan_tkip.4 \
 	wlan_wep.4 \
 	wlan_xauth.4 \
+	wmt.4 \
 	${_wpi.4} \
 	wsp.4 \
 	xe.4 \
@@ -887,6 +888,7 @@ MAN+=		iser.4
 
 .if ${MK_OFED} != "no"
 MAN+=		mlx4ib.4
+MAN+=		mlx5ib.4
 .endif
 
 .if ${MK_TESTS} != "no"
