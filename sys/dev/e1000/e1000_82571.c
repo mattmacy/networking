@@ -514,13 +514,13 @@ e1000_get_hw_semaphore_82574(struct e1000_hw *hw)
 {
 	u32 extcnf_ctrl;
 	s32 i = 0;
+#ifdef INVARIANTS
 	struct e1000_osdep *os = hw->back;
-	struct sx *lock = iflib_ctx_lock_get(os->ctx);
-
+#endif
 	/* XXX assert that mutex is held */
 	DEBUGFUNC("e1000_get_hw_semaphore_82573");
 
-	sx_assert(lock, SX_XLOCKED);
+	sx_assert(iflib_ctx_lock_get(os->ctx), SX_XLOCKED);
 	extcnf_ctrl = E1000_READ_REG(hw, E1000_EXTCNF_CTRL);
 	do {
 		extcnf_ctrl |= E1000_EXTCNF_CTRL_MDIO_SW_OWNERSHIP;
