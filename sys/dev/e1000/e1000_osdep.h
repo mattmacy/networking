@@ -120,16 +120,6 @@ safe_pause_ms(int x) {
 #define CMD_MEM_WRT_INVALIDATE	0x0010  /* BIT_4 */
 #define PCI_COMMAND_REGISTER	PCIR_COMMAND
 
-/* Mutex used in the shared code */
-#define E1000_MUTEX                     struct mtx
-#define E1000_MUTEX_INIT(mutex)         mtx_init((mutex), #mutex, \
-                                            MTX_NETWORK_LOCK, \
-					    MTX_DEF | MTX_DUPOK)
-#define E1000_MUTEX_DESTROY(mutex)      mtx_destroy(mutex)
-#define E1000_MUTEX_LOCK(mutex)         mtx_lock(mutex)
-#define E1000_MUTEX_TRYLOCK(mutex)      mtx_trylock(mutex)
-#define E1000_MUTEX_UNLOCK(mutex)       mtx_unlock(mutex)
-
 typedef uint64_t	u64;
 typedef uint32_t	u32;
 typedef uint16_t	u16;
@@ -154,6 +144,12 @@ typedef int8_t		s8;
 #define wmb()
 #endif
 #endif /*__FreeBSD_version < 800000 */
+
+#ifdef INVARIANTS
+#define ASSERT_CTX_LOCK_HELD(hw) (sx_assert(iflib_ctx_lock_get(((struct e1000_osdep *)hw->back)->ctx), SX_XLOCKED))
+#else
+#define ASSERT_CTX_LOCK_HELD(hw)
+#endif
 
 #if defined(__i386__) || defined(__amd64__)
 static __inline
