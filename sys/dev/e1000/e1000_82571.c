@@ -503,7 +503,7 @@ static s32 e1000_get_phy_id_82571(struct e1000_hw *hw)
 }
 
 /**
- *  e1000_get_hw_semaphore_82573 - Acquire hardware semaphore
+ *  e1000_get_hw_semaphore_82574 - Acquire hardware semaphore
  *  @hw: pointer to the HW structure
  *
  *  Acquire the HW semaphore during reset.
