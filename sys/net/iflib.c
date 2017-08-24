@@ -438,6 +438,9 @@ struct iflib_rxq {
 	if_ctx_t	ifr_ctx;
 	iflib_fl_t	ifr_fl;
 	uint64_t	ifr_rx_irq;
+	struct mbuf *ifr_deferred_mh;
+	struct mbuf *ifr_deferred_mt;
+	uint32_t  ifr_deferred_bytes;
 	uint16_t	ifr_id;
 	uint8_t		ifr_lro_enabled;
 	uint8_t		ifr_nfl;
@@ -2513,6 +2516,50 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	return (m);
 }
 
+static void
+iflib_rx_input_loop(iflib_rxq_t rxq, struct ifnet *ifp, uint32_t *budget_bytes)
+{
+	struct mbuf *m, *mh;
+	int lro_enabled, rx_bytes, rx_pkts, pktlen;
+
+	lro_enabled = (if_getcapenable(ifp) & IFCAP_LRO);
+
+	rx_bytes = rx_pkts = 0;
+	mh = rxq->ifr_deferred_mh;
+	while (mh != NULL && *budget_bytes > 0) {
+		m = mh;
+		mh = mh->m_nextpkt;
+		m->m_nextpkt = NULL;
+#ifndef __NO_STRICT_ALIGNMENT
+		if (!IP_ALIGNED(m) && (m = iflib_fixup_rx(m)) == NULL)
+			continue;
+#endif
+		pktlen = m->m_pkthdr.len;
+		rx_bytes += pktlen;
+		*budget_bytes -= pktlen;
+		rx_pkts++;
+#if defined(INET6) || defined(INET)
+		if (lro_enabled && tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
+			continue;
+#endif
+		DBG_COUNTER_INC(rx_if_input);
+		ifp->if_input(ifp, m);
+	}
+	if (rx_pkts) {
+		if_inc_counter(ifp, IFCOUNTER_IBYTES, rx_bytes);
+		if_inc_counter(ifp, IFCOUNTER_IPACKETS, rx_pkts);
+	}
+	rxq->ifr_deferred_mh = mh;
+	rxq->ifr_deferred_bytes -= rx_bytes;
+	if (mh == NULL) {
+		rxq->ifr_deferred_mt = NULL;
+		MPASS(rxq->ifr_deferred_bytes == 0);
+	}
+#if defined(INET6) || defined(INET)
+	tcp_lro_flush_all(&rxq->ifr_lc);
+#endif
+}
+
 static bool
 iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 {
@@ -2522,10 +2569,9 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 	int avail, i;
 	qidx_t *cidxp;
 	struct if_rxd_info ri;
-	int err, budget_left, rx_bytes, rx_pkts;
+	int err, budget_bytes, pkts_rxd, bytes_rxd;
 	iflib_fl_t fl;
 	struct ifnet *ifp;
-	int lro_enabled;
 
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
@@ -2544,19 +2590,22 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 
 	mh = mt = NULL;
 	MPASS(budget > 0);
-	rx_pkts	= rx_bytes = 0;
 	if (sctx->isc_flags & IFLIB_HAS_RXCQ)
 		cidxp = &rxq->ifr_cq_cidx;
 	else
 		cidxp = &rxq->ifr_fl[0].ifl_cidx;
+	budget_bytes = budget*ifp->if_mtu;
+	iflib_rx_input_loop(rxq, ifp, &budget_bytes);
 	if ((avail = iflib_rxd_avail(ctx, rxq, *cidxp, budget)) == 0) {
 		for (i = 0, fl = &rxq->ifr_fl[0]; i < sctx->isc_nfl; i++, fl++)
 			__iflib_fl_refill_lt(ctx, fl, budget + 8);
 		DBG_COUNTER_INC(rx_unavail);
 		return (false);
 	}
-
-	for (budget_left = budget; (budget_left > 0) && (avail > 0); budget_left--, avail--) {
+	mh = rxq->ifr_deferred_mh;
+	mt = rxq->ifr_deferred_mt;
+	bytes_rxd =pkts_rxd = 0;
+	for (; avail > 0; avail--) {
 		if (__predict_false(!CTX_ACTIVE(ctx))) {
 			DBG_COUNTER_INC(rx_ctx_inactive);
 			break;
@@ -2570,7 +2619,6 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		ri.iri_ifp = ifp;
 		ri.iri_frags = rxq->ifr_frags;
 		err = ctx->isc_rxd_pkt_get(ctx->ifc_softc, &ri);
-
 		if (err)
 			goto err;
 		if (sctx->isc_flags & IFLIB_HAS_RXCQ) {
@@ -2587,11 +2635,13 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		}
 		MPASS(ri.iri_nfrags != 0);
 		MPASS(ri.iri_len != 0);
+		bytes_rxd += ri.iri_len;
+		pkts_rxd++;
 
 		/* will advance the cidx on the corresponding free lists */
 		m = iflib_rxd_pkt_get(rxq, &ri);
-		if (avail == 0 && budget_left)
-			avail = iflib_rxd_avail(ctx, rxq, *cidxp, budget_left);
+		if (avail == 0)
+			avail = iflib_rxd_avail(ctx, rxq, *cidxp, budget);
 
 		if (__predict_false(m == NULL)) {
 			DBG_COUNTER_INC(rx_mbuf_null);
@@ -2599,49 +2649,24 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		}
 		/* imm_pkt: -- cxgb */
 		if (mh == NULL)
-			mh = mt = m;
+			rxq->ifr_deferred_mh = mh = mt = m;
 		else {
 			mt->m_nextpkt = m;
 			mt = m;
 		}
 	}
+	rxq->ifr_deferred_mt = mt;
+	rxq->ifr_deferred_bytes += bytes_rxd;
 	/* make sure that we can refill faster than drain */
 	for (i = 0, fl = &rxq->ifr_fl[0]; i < sctx->isc_nfl; i++, fl++)
-		__iflib_fl_refill_lt(ctx, fl, budget + 8);
-
-	lro_enabled = (if_getcapenable(ifp) & IFCAP_LRO);
-	while (mh != NULL) {
-		m = mh;
-		mh = mh->m_nextpkt;
-		m->m_nextpkt = NULL;
-#ifndef __NO_STRICT_ALIGNMENT
-		if (!IP_ALIGNED(m) && (m = iflib_fixup_rx(m)) == NULL)
-			continue;
-#endif
-		rx_bytes += m->m_pkthdr.len;
-		rx_pkts++;
-#if defined(INET6) || defined(INET)
-		if (lro_enabled && tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
-			continue;
-#endif
-		DBG_COUNTER_INC(rx_if_input);
-		ifp->if_input(ifp, m);
-	}
-
-	if (rx_pkts) {
-		if_inc_counter(ifp, IFCOUNTER_IBYTES, rx_bytes);
-		if_inc_counter(ifp, IFCOUNTER_IPACKETS, rx_pkts);
-	}
-
+		__iflib_fl_refill_lt(ctx, fl, pkts_rxd + 8);
+	iflib_rx_input_loop(rxq, ifp, &budget_bytes);
 	/*
 	 * Flush any outstanding LRO work
 	 */
-#if defined(INET6) || defined(INET)
-	tcp_lro_flush_all(&rxq->ifr_lc);
-#endif
 	if (avail)
 		return true;
-	return (iflib_rxd_avail(ctx, rxq, *cidxp, 1));
+	return (rxq->ifr_deferred_bytes > 0);
 err:
 	iflib_admin_reset_deferred(ctx);
 	return (false);
