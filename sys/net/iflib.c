@@ -553,8 +553,8 @@ MODULE_VERSION(iflib, 1);
 MODULE_DEPEND(iflib, pci, 1, 1, 1);
 MODULE_DEPEND(iflib, ether, 1, 1, 1);
 
-TASKQGROUP_DEFINE(if_io, mp_ncpus, 1);
-TASKQGROUP_DEFINE(if_config, 1, 1);
+TASKQGROUP_DEFINE(if_io, mp_ncpus, 1, true, PI_NET);
+TASKQGROUP_DEFINE(if_config, 1, 1, false, PI_SOFT);
 
 #ifndef IFLIB_DEBUG_COUNTERS
 #ifdef INVARIANTS

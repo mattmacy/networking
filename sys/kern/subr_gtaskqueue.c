@@ -52,12 +52,21 @@ static MALLOC_DEFINE(M_GTASKQUEUE, "taskqueue", "Task Queues");
 static void	gtaskqueue_thread_enqueue(void *);
 static void	gtaskqueue_thread_loop(void *arg);
 
-TASKQGROUP_DEFINE(softirq, mp_ncpus, 1);
+TASKQGROUP_DEFINE(softirq, mp_ncpus, 1, false, PI_SOFT);
 
 struct gtaskqueue_busy {
 	struct gtask	*tb_running;
 	TAILQ_ENTRY(gtaskqueue_busy) tb_link;
 };
+
+struct gt_intr_thread {
+	int	git_flags;		/* (j) IT_* flags. */
+	int	git_need;		/* Needs service. */
+};
+
+/* Interrupt thread flags kept in it_flags */
+#define	IT_DEAD		0x000001	/* Thread is waiting to exit. */
+#define	IT_WAIT		0x000002	/* Thread is waiting for completion. */
 
 static struct gtask * const TB_DRAIN_WAITER = (struct gtask *)0x1;
 
@@ -69,6 +78,7 @@ struct gtaskqueue {
 	TAILQ_HEAD(, gtaskqueue_busy) tq_active;
 	struct mtx		tq_mutex;
 	struct thread		**tq_threads;
+	struct gt_intr_thread *tq_gt_intrs;
 	int			tq_tcount;
 	int			tq_spin;
 	int			tq_flags;
@@ -80,6 +90,7 @@ struct gtaskqueue {
 #define	TQ_FLAGS_ACTIVE		(1 << 0)
 #define	TQ_FLAGS_BLOCKED	(1 << 1)
 #define	TQ_FLAGS_UNLOCKED_ENQUEUE	(1 << 2)
+#define	TQ_FLAGS_INTR		(1 << 3)
 
 #define	DT_CALLOUT_ARMED	(1 << 0)
 
@@ -180,6 +191,32 @@ gtaskqueue_free(struct gtaskqueue *queue)
 	free(queue, M_GTASKQUEUE);
 }
 
+static void
+schedule_ithread(struct gtaskqueue *queue)
+{
+	struct proc *p;
+	struct thread *td;
+	struct gt_intr_thread *git;
+
+	MPASS(queue->tq_tcount == 1);
+	td = queue->tq_threads[0];
+	git = &queue->tq_gt_intrs[0];
+	p = td->td_proc;
+
+	atomic_store_rel_int(&git->git_need, 1);
+	thread_lock(td);
+	if (TD_AWAITING_INTR(td)) {
+		CTR3(KTR_INTR, "%s: schedule pid %d (%s)", __func__, p->p_pid,
+		    td->td_name);
+		TD_CLR_IWAIT(td);
+		sched_add(td, SRQ_INTR);
+	} else {
+		CTR5(KTR_INTR, "%s: pid %d (%s): it_need %d, state %d",
+		    __func__, p->p_pid, td->td_name, git->git_need, td->td_state);
+	}
+	thread_unlock(td);
+}
+
 int
 grouptaskqueue_enqueue(struct gtaskqueue *queue, struct gtask *gtask)
 {
@@ -197,8 +234,13 @@ grouptaskqueue_enqueue(struct gtaskqueue *queue, struct gtask *gtask)
 	STAILQ_INSERT_TAIL(&queue->tq_queue, gtask, ta_link);
 	gtask->ta_flags |= TASK_ENQUEUED;
 	TQ_UNLOCK(queue);
-	if ((queue->tq_flags & TQ_FLAGS_BLOCKED) == 0)
-		queue->tq_enqueue(queue->tq_context);
+	if ((queue->tq_flags & TQ_FLAGS_BLOCKED) == 0) {
+		if (queue->tq_flags & TQ_FLAGS_INTR) {
+			schedule_ithread(queue);
+		} else {
+			queue->tq_enqueue(queue->tq_context);
+		}
+	}
 	return (0);
 }
 
@@ -403,7 +445,7 @@ gtaskqueue_drain_all(struct gtaskqueue *queue)
 
 static int
 _gtaskqueue_start_threads(struct gtaskqueue **tqp, int count, int pri,
-    cpuset_t *mask, const char *name, va_list ap)
+    cpuset_t *mask, bool intr, const char *name, va_list ap)
 {
 	char ktname[MAXCOMLEN + 1];
 	struct thread *td;
@@ -420,6 +462,12 @@ _gtaskqueue_start_threads(struct gtaskqueue **tqp, int count, int pri,
 	    M_NOWAIT | M_ZERO);
 	if (tq->tq_threads == NULL) {
 		printf("%s: no memory for %s threads\n", __func__, ktname);
+		return (ENOMEM);
+	}
+	tq->tq_gt_intrs = malloc(sizeof(struct gt_intr_thread) * count, M_GTASKQUEUE,
+	    M_NOWAIT | M_ZERO);
+	if (tq->tq_gt_intrs == NULL) {
+		printf("%s: no memory for %s intr info\n", __func__, ktname);
 		return (ENOMEM);
 	}
 
@@ -439,6 +487,9 @@ _gtaskqueue_start_threads(struct gtaskqueue **tqp, int count, int pri,
 		} else
 			tq->tq_tcount++;
 	}
+	if (intr)
+		tq->tq_flags |= TQ_FLAGS_INTR;
+
 	for (i = 0; i < count; i++) {
 		if (tq->tq_threads[i] == NULL)
 			continue;
@@ -458,7 +509,14 @@ _gtaskqueue_start_threads(struct gtaskqueue **tqp, int count, int pri,
 		}
 		thread_lock(td);
 		sched_prio(td, pri);
-		sched_add(td, SRQ_BORING);
+		if (intr) {
+			/* we need to schedule the thread from the interrupt handler for this to work */
+			TD_SET_IWAIT(td);
+			sched_class(td, PRI_ITHD);
+			td->td_pflags |= TDP_ITHREAD;
+		} else {
+			sched_add(td, SRQ_BORING);
+		}
 		thread_unlock(td);
 	}
 
@@ -467,13 +525,13 @@ _gtaskqueue_start_threads(struct gtaskqueue **tqp, int count, int pri,
 
 static int
 gtaskqueue_start_threads(struct gtaskqueue **tqp, int count, int pri,
-    const char *name, ...)
+   bool intr, const char *name, ...)
 {
 	va_list ap;
 	int error;
 
 	va_start(ap, name);
-	error = _gtaskqueue_start_threads(tqp, count, pri, NULL, name, ap);
+	error = _gtaskqueue_start_threads(tqp, count, pri, NULL, intr, name, ap);
 	va_end(ap);
 	return (error);
 }
@@ -491,16 +549,58 @@ gtaskqueue_run_callback(struct gtaskqueue *tq,
 }
 
 static void
-gtaskqueue_thread_loop(void *arg)
+intr_thread_loop(struct gtaskqueue *tq)
 {
-	struct gtaskqueue **tqp, *tq;
+	struct gt_intr_thread *git;
+	struct thread *td;
 
-	tqp = arg;
-	tq = *tqp;
-	gtaskqueue_run_callback(tq, TASKQUEUE_CALLBACK_TYPE_INIT);
-	TQ_LOCK(tq);
+	git = &tq->tq_gt_intrs[0];
+	td = tq->tq_threads[0];
+	MPASS(tq->tq_tcount == 1);
+
 	while ((tq->tq_flags & TQ_FLAGS_ACTIVE) != 0) {
-		/* XXX ? */
+		THREAD_NO_SLEEPING();
+		while (atomic_cmpset_acq_int(&git->git_need, 1, 0) != 0) {
+			gtaskqueue_run_locked(tq);
+		}
+		THREAD_SLEEPING_OK();
+
+		/*
+		 * Because taskqueue_run() can drop tq_mutex, we need to
+		 * check if the TQ_FLAGS_ACTIVE flag wasn't removed in the
+		 * meantime, which means we missed a wakeup.
+		 */
+		if ((tq->tq_flags & TQ_FLAGS_ACTIVE) == 0)
+			break;
+
+		TQ_UNLOCK(tq);
+		WITNESS_WARN(WARN_PANIC, NULL, "suspending ithread");
+		mtx_assert(&Giant, MA_NOTOWNED);
+		thread_lock(td);
+		if (atomic_load_acq_int(&git->git_need) == 0 &&
+		    (git->git_flags & (IT_DEAD | IT_WAIT)) == 0) {
+			TD_SET_IWAIT(td);
+			mi_switch(SW_VOL | SWT_IWAIT, NULL);
+		}
+#if 0
+		/* XXX is this something we want? */
+		if (git->git_flags & IT_WAIT) {
+			wake = 1;
+			git->git_flags &= ~IT_WAIT;
+		}
+#endif
+		thread_unlock(td);
+		TQ_LOCK(tq);
+	}
+	THREAD_NO_SLEEPING();
+	gtaskqueue_run_locked(tq);
+	THREAD_SLEEPING_OK();
+}
+
+static void
+timeshare_thread_loop(struct gtaskqueue *tq)
+{
+	while ((tq->tq_flags & TQ_FLAGS_ACTIVE) != 0) {
 		gtaskqueue_run_locked(tq);
 		/*
 		 * Because taskqueue_run() can drop tq_mutex, we need to
@@ -512,6 +612,23 @@ gtaskqueue_thread_loop(void *arg)
 		TQ_SLEEP(tq, tq, &tq->tq_mutex, 0, "-", 0);
 	}
 	gtaskqueue_run_locked(tq);
+}
+
+static void
+gtaskqueue_thread_loop(void *arg)
+{
+	struct gtaskqueue **tqp, *tq;
+
+	tqp = arg;
+	tq = *tqp;
+	gtaskqueue_run_callback(tq, TASKQUEUE_CALLBACK_TYPE_INIT);
+	TQ_LOCK(tq);
+	if (curthread->td_pflags & TDP_ITHREAD) {
+		intr_thread_loop(tq);
+	} else {
+		timeshare_thread_loop(tq);
+	}
+
 	/*
 	 * This thread is on its way out, so just drop the lock temporarily
 	 * in order to call the shutdown callback.  This allows the callback
@@ -570,7 +687,7 @@ struct taskq_bind_task {
 };
 
 static void
-taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx, int cpu)
+taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx, int cpu, bool intr, int pri)
 {
 	struct taskqgroup_cpu *qcpu;
 
@@ -578,8 +695,8 @@ taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx, int cpu)
 	LIST_INIT(&qcpu->tgc_tasks);
 	qcpu->tgc_taskq = gtaskqueue_create_fast(NULL, M_WAITOK,
 	    taskqueue_thread_enqueue, &qcpu->tgc_taskq);
-	gtaskqueue_start_threads(&qcpu->tgc_taskq, 1, PI_SOFT,
-	    "%s_%d", qgroup->tqg_name, idx);
+	gtaskqueue_start_threads(&qcpu->tgc_taskq, 1, pri,
+	    intr, "%s_%d", qgroup->tqg_name, idx);
 	qcpu->tgc_cpu = cpu;
 }
 
@@ -843,7 +960,7 @@ taskqgroup_bind(struct taskqgroup *qgroup)
 }
 
 static int
-_taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
+_taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread, int pri)
 {
 	LIST_HEAD(, grouptask) gtask_head = LIST_HEAD_INITIALIZER(NULL);
 	struct grouptask *gtask;
@@ -881,7 +998,7 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 	 */
 	cpu = old_cpu;
 	for (i = old_cnt; i < cnt; i++) {
-		taskqgroup_cpu_create(qgroup, i, cpu);
+		taskqgroup_cpu_create(qgroup, i, cpu, ithread, pri);
 
 		for (k = 0; k < stride; k++)
 			cpu = CPU_NEXT(cpu);
@@ -934,12 +1051,12 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 }
 
 int
-taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
+taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread, int pri)
 {
 	int error;
 
 	mtx_lock(&qgroup->tqg_lock);
-	error = _taskqgroup_adjust(qgroup, cnt, stride);
+	error = _taskqgroup_adjust(qgroup, cnt, stride, ithread, pri);
 	mtx_unlock(&qgroup->tqg_lock);
 
 	return (error);
