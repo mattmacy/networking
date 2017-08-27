@@ -163,6 +163,7 @@ struct iflib_ctx {
 
 	iflib_txq_t ifc_txqs;
 	iflib_rxq_t ifc_rxqs;
+	uint64_t ifc_rx_pkts;
 	uint32_t ifc_if_flags;
 	uint32_t ifc_flags;
 	uint32_t ifc_max_fl_buf_size;
@@ -293,6 +294,10 @@ typedef struct iflib_sw_tx_desc_array {
 #define IFLIB_QUEUE_IDLE		0
 #define IFLIB_QUEUE_HUNG		1
 #define IFLIB_QUEUE_WORKING		2
+
+/* 10 kpps - seems like a reasonable threshold */
+#define IFLIB_MAX_ENTROPY_PACKETS	5000
+
 /* maximum number of txqs that can share an rx interrupt */
 #define IFLIB_MAX_TX_SHARED_INTR	4
 
@@ -719,6 +724,7 @@ static void iflib_if_init_locked(if_ctx_t ctx);
 static int async_if_ioctl(if_ctx_t ctx, u_long command, caddr_t data);
 static int iflib_config_async_gtask_dispatch(if_ctx_t ctx, async_gtask_fn_t *fn, char *name, void *arg);
 static void iflib_admin_reset_deferred(if_ctx_t ctx);
+static void iflib_toggle_entropy(if_ctx_t ctx, void *arg);
 
 
 
@@ -2129,9 +2135,23 @@ iflib_timer(void *arg)
 	iflib_txq_t txq = arg;
 	if_ctx_t ctx = txq->ift_ctx;
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
+	uint64_t pkts_total;
+	bool need_toggle;
 
 	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
 		return;
+
+	pkts_total = if_get_counter_default(ctx->ifc_ifp, IFCOUNTER_IPACKETS);
+	/* disable entropy collection at high data rates - enable at lower rates */
+	need_toggle = ((pkts_total - ctx->ifc_rx_pkts <= IFLIB_MAX_ENTROPY_PACKETS) &&
+		       (if_getflags(ctx->ifc_ifp) & IFF_NO_ENTROPY)) ||
+		((pkts_total - ctx->ifc_rx_pkts > IFLIB_MAX_ENTROPY_PACKETS) &&
+		 !(if_getflags(ctx->ifc_ifp) & IFF_NO_ENTROPY));
+	/* We can't acquire an sx lock from swi context */
+	if (need_toggle) {
+		iflib_config_async_gtask_dispatch(ctx, iflib_toggle_entropy, "toggle entropy", NULL);
+	}
+	ctx->ifc_rx_pkts = pkts_total;
 	/*
 	** Check on the state of the TX queue(s), this
 	** can be done without the lock because its RO
@@ -4026,15 +4046,16 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	if_ctx_t ctx;
 	if_t ifp;
 	if_softc_ctx_t scctx;
-	int i;
+	int i, flags;
 	uint16_t main_txq;
 	uint16_t main_rxq;
+	flags = M_WAITOK|M_ZERO;
 
 
-	ctx = malloc(sizeof(* ctx), M_IFLIB, M_WAITOK|M_ZERO);
+	ctx = malloc(sizeof(* ctx), M_IFLIB, flags);
 
 	if (sc == NULL) {
-		sc = malloc(sctx->isc_driver->size, M_IFLIB, M_WAITOK|M_ZERO);
+		sc = malloc(sctx->isc_driver->size, M_IFLIB, flags);
 		device_set_softc(dev, ctx);
 		ctx->ifc_flags |= IFC_SC_ALLOCATED;
 	}
@@ -5126,6 +5147,21 @@ iflib_admin_intr_deferred(if_ctx_t ctx)
 }
 
 /* CONFIG context only */
+static void
+iflib_toggle_entropy(if_ctx_t ctx, void *arg)
+{
+	if_t ifp = ctx->ifc_ifp;
+
+	CTX_LOCK(ctx);
+	/* What does wrapping ifnet actually buy us? */
+	if (if_getflags(ifp) & IFF_NO_ENTROPY) {
+		if_setflagbits(ifp, 0, IFF_NO_ENTROPY);
+	} else {
+		if_setflagbits(ifp, IFF_NO_ENTROPY, 0);
+	}
+	CTX_UNLOCK(ctx);
+}
+
 static void
 iflib_handle_reset(if_ctx_t ctx, void *arg)
 {
