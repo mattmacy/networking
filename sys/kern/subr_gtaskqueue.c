@@ -872,9 +872,7 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 			if (qgroup->tqg_queue[i].tgc_cpu > cpu_max)
 				cpu_max = qgroup->tqg_queue[i].tgc_cpu;
 		MPASS(cpu <= mp_maxid);
-		printf("cpu=%d cpu_max=%d\n", cpu, cpu_max);
 		if (cpu > cpu_max) {
-			printf("cpu=%d cpu_max=%d\n\n", cpu, cpu_max);
 			err = _taskqgroup_adjust(qgroup, cpu + 1, qgroup->tqg_stride,
 						 qgroup->tqg_intr, qgroup->tqg_pri);
 			if (err) {
@@ -882,14 +880,12 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 				       qgroup, cpu + 1, qgroup->tqg_stride, qgroup->tqg_intr, qgroup->tqg_pri,
 				       err);
 				mtx_unlock(&qgroup->tqg_lock);
-				printf("adjust failed!\n");
 				return (err);
 			}
 		}
 		for (i = 0; i < qgroup->tqg_cnt; i++)
 			if (qgroup->tqg_queue[i].tgc_cpu > cpu_max)
 				cpu_max = qgroup->tqg_queue[i].tgc_cpu;
-		printf("cpu_max=%d\n", cpu_max);
 		for (i = 0; i < qgroup->tqg_cnt; i++)
 			if (qgroup->tqg_queue[i].tgc_cpu == cpu) {
 				qid = i;
@@ -1039,7 +1035,6 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 		if (old_cnt > 0)
 			for (k = 0; k < stride; k++)
 				old_cpu = CPU_NEXT(old_cpu);
-		printf("%s: old_cnt=%d old_cpu=%d\n", __func__, old_cnt, old_cpu);
 	}
 	mtx_unlock(&qgroup->tqg_lock);
 	/*
@@ -1055,10 +1050,7 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 	 * If new taskq threads have been added.
 	 */
 	cpu = old_cpu;
-	printf("old_cnt=%d cnt=%d delta=%d\n",
-	       old_cnt, cnt, cnt-old_cnt);
 	for (i = old_cnt; i < cnt; i++) {
-		printf("create(i=%d, cpu=%d)\n", i, cpu);
 		taskqgroup_cpu_create(qgroup, i, cpu, ithread, pri);
 
 		for (k = 0; k < stride; k++)
