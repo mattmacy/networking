@@ -1034,11 +1034,12 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 	old_cnt = qgroup->tqg_cnt;
 	old_cpu = 0;
 	if (old_cnt < cnt) {
-		old_cpu = qgroup->tqg_queue[old_cnt].tgc_cpu;
+		int old_max_idx = max(0, old_cnt-1);
+		old_cpu = qgroup->tqg_queue[old_max_idx].tgc_cpu;
 		if (old_cnt > 0)
 			for (k = 0; k < stride; k++)
 				old_cpu = CPU_NEXT(old_cpu);
-		printf("%s: old_cpu=%d\n", __func__, old_cpu);
+		printf("%s: old_cnt=%d old_cpu=%d\n", __func__, old_cnt, old_cpu);
 	}
 	mtx_unlock(&qgroup->tqg_lock);
 	/*
