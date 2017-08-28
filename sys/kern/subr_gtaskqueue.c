@@ -852,6 +852,13 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 	gtask->gt_name = name;
 	gtask->gt_irq = irq;
 	gtask->gt_cpu = cpu;
+
+	mtx_lock(&qgroup->tqg_lock);
+	qgroup->tqg_flags |= TQG_NEED_ADJUST;
+	mtx_unlock(&qgroup->tqg_lock);
+
+	if (tqg_smp_started && !(qgroup->tqg_flags & TQG_ADJUSTED))
+		qgroup->adjust_func(NULL);
 	mtx_lock(&qgroup->tqg_lock);
 	if (tqg_smp_started) {
 		for (i = 0; i < qgroup->tqg_cnt; i++)
