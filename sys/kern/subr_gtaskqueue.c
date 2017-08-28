@@ -872,6 +872,7 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 			if (qgroup->tqg_queue[i].tgc_cpu > cpu_max)
 				cpu_max = qgroup->tqg_queue[i].tgc_cpu;
 		MPASS(cpu <= mp_maxid);
+		printf("cpu=%d cpu_max=%d\n", cpu, cpu_max);
 		if (cpu > cpu_max) {
 			printf("cpu=%d cpu_max=%d\n\n", cpu, cpu_max);
 			err = _taskqgroup_adjust(qgroup, cpu + 1, qgroup->tqg_stride,
@@ -881,6 +882,7 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 				       qgroup, cpu + 1, qgroup->tqg_stride, qgroup->tqg_intr, qgroup->tqg_pri,
 				       err);
 				mtx_unlock(&qgroup->tqg_lock);
+				printf("adjust failed!\n");
 				return (err);
 			}
 		}
@@ -895,6 +897,7 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 			}
 		if (qid == -1) {
 			mtx_unlock(&qgroup->tqg_lock);
+			printf("qid not found for cpu=%d\n", cpu);
 			return (EINVAL);
 		}
 	} else
@@ -1021,7 +1024,7 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 		return (EINVAL);
 	}
 	if (qgroup->tqg_adjusting) {
-		printf("taskqgroup_adjust failed: adjusting\n");
+		printf("%s: failed: adjusting\n", __func__);
 		return (EBUSY);
 	}
 	qgroup->tqg_adjusting = 1;
@@ -1031,7 +1034,7 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 		old_cpu = qgroup->tqg_queue[old_cnt].tgc_cpu;
 		for (k = 0; k < stride; k++)
 			old_cpu = CPU_NEXT(old_cpu);
-		printf("old_cpu=%d\n", old_cpu);
+		printf("%s: old_cpu=%d\n", __func__, old_cpu);
 	}
 	mtx_unlock(&qgroup->tqg_lock);
 	/*
