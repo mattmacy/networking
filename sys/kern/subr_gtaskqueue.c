@@ -51,7 +51,7 @@ __FBSDID("$FreeBSD$");
 static MALLOC_DEFINE(M_GTASKQUEUE, "taskqueue", "Task Queues");
 static void	gtaskqueue_thread_enqueue(void *);
 static void	gtaskqueue_thread_loop(void *arg);
-
+static int	_taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread, int pri);
 TASKQGROUP_DEFINE(softirq, mp_ncpus, 1, false, PI_SOFT);
 
 struct gtaskqueue_busy {
@@ -680,7 +680,9 @@ struct taskqgroup {
 	int		tqg_adjusting;
 	int		tqg_stride;
 	int		tqg_cnt;
+	int		tqg_pri;
 	int		tqg_flags;
+	bool		tqg_intr;
 };
 #define TQG_NEED_ADJUST	0x1
 #define TQG_ADJUSTED		0x2
@@ -845,22 +847,35 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 	void *uniq, int cpu, int irq, char *name)
 {
 	cpuset_t mask;
-	int i, qid;
+	int i, qid, cpu_max;
 
 	qid = -1;
 	gtask->gt_uniq = uniq;
 	gtask->gt_name = name;
 	gtask->gt_irq = irq;
 	gtask->gt_cpu = cpu;
+	cpu_max = -1;
+	MPASS(cpu >= 0);
 
 	mtx_lock(&qgroup->tqg_lock);
 	qgroup->tqg_flags |= TQG_NEED_ADJUST;
 	mtx_unlock(&qgroup->tqg_lock);
 
-	if (tqg_smp_started && !(qgroup->tqg_flags & TQG_ADJUSTED))
-		qgroup->adjust_func(NULL);
+	if (tqg_smp_started && !(qgroup->tqg_flags & TQG_ADJUSTED)) {
+		uintptr_t cpuid = cpu + 1;
+		qgroup->adjust_func((void *)cpuid);
+	}
 	mtx_lock(&qgroup->tqg_lock);
 	if (tqg_smp_started) {
+		/* adjust as needed */
+		for (i = 0; i < qgroup->tqg_cnt; i++)
+			if (qgroup->tqg_queue[i].tgc_cpu > cpu_max)
+				cpu_max = qgroup->tqg_queue[i].tgc_cpu;
+		MPASS(cpu <= mp_maxid);
+		if (cpu > cpu_max)
+			_taskqgroup_adjust(qgroup, cpu + 1, qgroup->tqg_stride,
+					  qgroup->tqg_intr, qgroup->tqg_pri);
+
 		for (i = 0; i < qgroup->tqg_cnt; i++)
 			if (qgroup->tqg_queue[i].tgc_cpu == cpu) {
 				qid = i;
@@ -1025,6 +1040,8 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 	mtx_lock(&qgroup->tqg_lock);
 	qgroup->tqg_cnt = cnt;
 	qgroup->tqg_stride = stride;
+	qgroup->tqg_intr = ithread;
+	qgroup->tqg_pri = pri;
 
 	/*
 	 * Adjust drivers to use new taskqs.

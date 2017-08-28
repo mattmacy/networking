@@ -90,7 +90,13 @@ struct taskqgroup *qgroup_##name;					\
 static void								\
 taskqgroup_adjust_##name(void *arg)					\
 {									\
-	taskqgroup_adjust_once(qgroup_##name, (cnt), (stride), (intr), (pri)); \
+	int max = (intr) ? 1 : (cnt);					\
+	if (arg != NULL) {						\
+		uintptr_t maxcpu = (uintptr_t) arg;				\
+		max = maxcpu;						\
+	}								\
+									\
+	taskqgroup_adjust_once(qgroup_##name, max, (stride), (intr), (pri)); \
 }									\
 									\
 SYSINIT(taskqgroup_adj_##name, SI_SUB_SMP, SI_ORDER_ANY,		\

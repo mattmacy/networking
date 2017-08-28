@@ -185,6 +185,7 @@ struct iflib_ctx {
 	uint16_t ifc_sysctl_ntxqs;
 	uint16_t ifc_sysctl_nrxqs;
 	uint16_t ifc_sysctl_qs_eq_override;
+	uint16_t ifc_cpuid_highest;
 
 	qidx_t ifc_sysctl_ntxds[8];
 	qidx_t ifc_sysctl_nrxds[8];
@@ -203,8 +204,66 @@ struct iflib_ctx {
 	eventhandler_tag ifc_vlan_detach_event;
 	uint8_t ifc_mac[ETHER_ADDR_LEN];
 	char ifc_mtx_name[16];
+	LIST_ENTRY(iflib_ctx) ifc_next;
 };
 
+static LIST_HEAD(ctx_head, iflib_ctx) ctx_list;
+static struct mtx ctx_list_lock;
+
+TASKQGROUP_DEFINE(if_io, mp_ncpus, 1, true, PI_NET);
+TASKQGROUP_DEFINE(if_config, 1, 1, false, PI_SOFT);
+
+static void
+iflib_ctx_apply(void (*fn)(if_ctx_t ctx, void *arg), void *arg)
+{
+	if_ctx_t ctx;
+
+	mtx_lock(&ctx_list_lock);
+	LIST_FOREACH(ctx, &ctx_list, ifc_next) {
+		(fn)(ctx, arg);
+	}
+	mtx_unlock(&ctx_list_lock);
+}
+
+static void
+_iflib_cpuid_highest(if_ctx_t ctx, void *arg) {
+	int *cpuid = arg;
+
+	if (*cpuid < ctx->ifc_cpuid_highest)
+		*cpuid = ctx->ifc_cpuid_highest;
+}
+
+static int
+iflib_cpuid_highest(void)
+{
+	int cpuid = 0;
+
+	iflib_ctx_apply(_iflib_cpuid_highest, &cpuid);
+	return (cpuid);
+}
+
+static void
+iflib_ctx_insert(if_ctx_t ctx)
+{
+	mtx_lock(&ctx_list_lock);
+	LIST_INSERT_HEAD(&ctx_list, ctx, ifc_next);
+	mtx_unlock(&ctx_list_lock);
+}
+
+static void
+iflib_ctx_remove(if_ctx_t ctx)
+{
+	int max_cpuid_prev, max_cpuid_new;
+
+	max_cpuid_prev = iflib_cpuid_highest();
+	mtx_lock(&ctx_list_lock);
+	LIST_REMOVE(ctx, ifc_next);
+	mtx_unlock(&ctx_list_lock);
+	max_cpuid_new = max(1, iflib_cpuid_highest());
+	if (max_cpuid_new < max_cpuid_prev) {
+		taskqgroup_adjust(qgroup_if_io, max_cpuid_new, 1, true, PI_NET);
+	}
+}
 
 void *
 iflib_get_softc(if_ctx_t ctx)
@@ -552,9 +611,6 @@ MODULE_VERSION(iflib, 1);
 
 MODULE_DEPEND(iflib, pci, 1, 1, 1);
 MODULE_DEPEND(iflib, ether, 1, 1, 1);
-
-TASKQGROUP_DEFINE(if_io, mp_ncpus, 1, true, PI_NET);
-TASKQGROUP_DEFINE(if_config, 1, 1, false, PI_SOFT);
 
 #ifndef IFLIB_DEBUG_COUNTERS
 #ifdef INVARIANTS
@@ -4244,6 +4300,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 
 	if_setgetcounterfn(ctx->ifc_ifp, iflib_if_get_counter);
 	iflib_add_device_sysctl_post(ctx);
+	iflib_ctx_insert(ctx);
 	ctx->ifc_flags |= IFC_INIT_DONE;
 	return (0);
 fail_detach:
@@ -4348,6 +4405,7 @@ iflib_device_deregister(if_ctx_t ctx)
 	iflib_rx_structures_free(ctx);
 	if (ctx->ifc_flags & IFC_SC_ALLOCATED)
 		free(ctx->ifc_softc, M_IFLIB);
+	iflib_ctx_remove(ctx);
 	free(ctx, M_IFLIB);
 	return (0);
 }
@@ -4443,13 +4501,11 @@ iflib_device_iov_add_vf(device_t dev, uint16_t vfnum, const nvlist_t *params)
  *
  **********************************************************************/
 
-/*
- * - Start a fast taskqueue thread for each core
- * - Start a taskqueue for control operations
- */
 static int
 iflib_module_init(void)
 {
+	LIST_INIT(&ctx_list);
+	mtx_init(&ctx_list_lock, "ctx list", NULL, MTX_DEF);
 	return (0);
 }
 
@@ -4986,7 +5042,14 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 
 	if (tqrid != -1) {
 		cpuid = find_nth(ctx, &cpus, qid);
-		taskqgroup_attach_cpu(tqg, gtask, q, cpuid, irq->ii_rid, name);
+		err = taskqgroup_attach_cpu(tqg, gtask, q, cpuid, irq->ii_rid, name);
+		if (err) {
+			device_printf(ctx->ifc_dev, "taskqgroup_attach_cpu failed %d\n", err);
+			return (err);
+		}
+		if (cpuid > ctx->ifc_cpuid_highest)
+			ctx->ifc_cpuid_highest = cpuid;
+		MPASS(gtask->gt_taskqueue != NULL);
 	} else {
 		taskqgroup_attach(tqg, gtask, q, tqrid, name);
 	}
