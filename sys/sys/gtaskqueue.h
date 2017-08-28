@@ -59,6 +59,8 @@ void	taskqgroup_detach(struct taskqgroup *qgroup, struct grouptask *gtask);
 struct taskqgroup *taskqgroup_create(char *name);
 void	taskqgroup_destroy(struct taskqgroup *qgroup);
 int	taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread, int pri);
+int	taskqgroup_adjust_once(struct taskqgroup *qgroup, int cnt, int stride, bool ithread, int pri);
+void taskqgroup_set_adjust(struct taskqgroup *qgroup, void (*adjust_func)(void*));
 
 #define TASK_ENQUEUED			0x1
 #define TASK_SKIP_WAKEUP		0x2
@@ -86,22 +88,23 @@ extern struct taskqgroup *qgroup_##name
 struct taskqgroup *qgroup_##name;					\
 									\
 static void								\
-taskqgroup_define_##name(void *arg)					\
-{									\
-	qgroup_##name = taskqgroup_create(#name);			\
-}									\
-									\
-SYSINIT(taskqgroup_##name, SI_SUB_TASKQ, SI_ORDER_FIRST,		\
-	taskqgroup_define_##name, NULL);				\
-									\
-static void								\
 taskqgroup_adjust_##name(void *arg)					\
 {									\
-	taskqgroup_adjust(qgroup_##name, (cnt), (stride), (intr), (pri)); \
+	taskqgroup_adjust_once(qgroup_##name, (cnt), (stride), (intr), (pri)); \
 }									\
 									\
 SYSINIT(taskqgroup_adj_##name, SI_SUB_SMP, SI_ORDER_ANY,		\
-	taskqgroup_adjust_##name, NULL)
+	taskqgroup_adjust_##name, NULL);				\
+									\
+static void								\
+taskqgroup_define_##name(void *arg)					\
+{									\
+	qgroup_##name = taskqgroup_create(#name);			\
+	taskqgroup_set_adjust(qgroup_##name, taskqgroup_adjust_##name); \
+}									\
+SYSINIT(taskqgroup_##name, SI_SUB_TASKQ, SI_ORDER_FIRST,		\
+	taskqgroup_define_##name, NULL)
+
 
 
 

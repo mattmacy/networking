@@ -675,11 +675,15 @@ struct taskqgroup_cpu {
 struct taskqgroup {
 	struct taskqgroup_cpu tqg_queue[MAXCPU];
 	struct mtx	tqg_lock;
+	void (*adjust_func)(void*);
 	char *		tqg_name;
 	int		tqg_adjusting;
 	int		tqg_stride;
 	int		tqg_cnt;
+	int		tqg_flags;
 };
+#define TQG_NEED_ADJUST	0x1
+#define TQG_ADJUSTED		0x2
 
 struct taskq_bind_task {
 	struct gtask bt_task;
@@ -786,6 +790,14 @@ taskqgroup_attach(struct taskqgroup *qgroup, struct grouptask *gtask,
 	gtask->gt_name = name;
 	gtask->gt_irq = irq;
 	gtask->gt_cpu = -1;
+
+	mtx_lock(&qgroup->tqg_lock);
+	qgroup->tqg_flags |= TQG_NEED_ADJUST;
+	mtx_unlock(&qgroup->tqg_lock);
+
+	if (tqg_smp_started && !(qgroup->tqg_flags & TQG_ADJUSTED))
+		qgroup->adjust_func(NULL);
+
 	mtx_lock(&qgroup->tqg_lock);
 	qid = taskqgroup_find(qgroup, uniq);
 	qgroup->tqg_queue[qid].tgc_cnt++;
@@ -1057,6 +1069,28 @@ taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread, 
 
 	mtx_lock(&qgroup->tqg_lock);
 	error = _taskqgroup_adjust(qgroup, cnt, stride, ithread, pri);
+	mtx_unlock(&qgroup->tqg_lock);
+
+	return (error);
+}
+
+void
+taskqgroup_set_adjust(struct taskqgroup *qgroup, void (*adjust_func)(void*))
+{
+	qgroup-> adjust_func = adjust_func;
+}
+
+int
+taskqgroup_adjust_once(struct taskqgroup *qgroup, int cnt, int stride, bool ithread, int pri)
+{
+	int error = 0;
+
+	mtx_lock(&qgroup->tqg_lock);
+	if ((qgroup->tqg_flags & (TQG_ADJUSTED|TQG_NEED_ADJUST)) == TQG_NEED_ADJUST) {
+		qgroup->tqg_flags |= TQG_ADJUSTED;
+		error = _taskqgroup_adjust(qgroup, cnt, stride, ithread, pri);
+		MPASS(error == 0);
+	}
 	mtx_unlock(&qgroup->tqg_lock);
 
 	return (error);
