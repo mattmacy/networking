@@ -4265,7 +4265,9 @@ fail_intr_free:
 fail_queues:
 	/* XXX free queues */
 fail:
+	CTX_LOCK(ctx);
 	IFDI_DETACH(ctx);
+	CTX_UNLOCK(ctx);
 	return (err);
 }
 
