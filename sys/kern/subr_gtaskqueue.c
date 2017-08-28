@@ -1027,13 +1027,17 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 		printf("%s: failed: adjusting\n", __func__);
 		return (EBUSY);
 	}
+	/* No work to be done */
+	if (qgroup->tqg_cnt == cnt)
+		return (0);
 	qgroup->tqg_adjusting = 1;
 	old_cnt = qgroup->tqg_cnt;
 	old_cpu = 0;
 	if (old_cnt < cnt) {
 		old_cpu = qgroup->tqg_queue[old_cnt].tgc_cpu;
-		for (k = 0; k < stride; k++)
-			old_cpu = CPU_NEXT(old_cpu);
+		if (old_cnt > 0)
+			for (k = 0; k < stride; k++)
+				old_cpu = CPU_NEXT(old_cpu);
 		printf("%s: old_cpu=%d\n", __func__, old_cpu);
 	}
 	mtx_unlock(&qgroup->tqg_lock);
