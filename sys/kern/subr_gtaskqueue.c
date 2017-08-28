@@ -44,7 +44,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
-#include <sys/syslog.h>
 #include <sys/gtaskqueue.h>
 #include <sys/unistd.h>
 #include <machine/stdarg.h>
@@ -877,9 +876,9 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 			err = _taskqgroup_adjust(qgroup, cpu + 1, qgroup->tqg_stride,
 						 qgroup->tqg_intr, qgroup->tqg_pri);
 			if (err) {
-				log(LOG_ERR, "_taskqgroup_adjust(%p, %d, %d, %d, %d) => %d",
-				    qgroup, cpu + 1, qgroup->tqg_stride, qgroup->tqg_intr, qgroup->tqg_pri,
-				    err);
+				printf("_taskqgroup_adjust(%p, %d, %d, %d, %d) => %d",
+				       qgroup, cpu + 1, qgroup->tqg_stride, qgroup->tqg_intr, qgroup->tqg_pri,
+				       err);
 				mtx_unlock(&qgroup->tqg_lock);
 				return (err);
 			}
