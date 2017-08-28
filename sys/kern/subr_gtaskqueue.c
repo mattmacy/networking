@@ -1029,6 +1029,8 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, bool ithread,
 	old_cpu = 0;
 	if (old_cnt < cnt) {
 		old_cpu = qgroup->tqg_queue[old_cnt].tgc_cpu;
+		for (k = 0; k < stride; k++)
+			old_cpu = CPU_NEXT(old_cpu);
 		printf("old_cpu=%d\n", old_cpu);
 	}
 	mtx_unlock(&qgroup->tqg_lock);
