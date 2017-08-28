@@ -44,6 +44,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/syslog.h>
 #include <sys/gtaskqueue.h>
 #include <sys/unistd.h>
 #include <machine/stdarg.h>
@@ -847,7 +848,7 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 	void *uniq, int cpu, int irq, char *name)
 {
 	cpuset_t mask;
-	int i, qid, cpu_max;
+	int i, err, qid, cpu_max;
 
 	qid = -1;
 	gtask->gt_uniq = uniq;
@@ -872,10 +873,17 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 			if (qgroup->tqg_queue[i].tgc_cpu > cpu_max)
 				cpu_max = qgroup->tqg_queue[i].tgc_cpu;
 		MPASS(cpu <= mp_maxid);
-		if (cpu > cpu_max)
-			_taskqgroup_adjust(qgroup, cpu + 1, qgroup->tqg_stride,
-					  qgroup->tqg_intr, qgroup->tqg_pri);
-
+		if (cpu > cpu_max) {
+			err = _taskqgroup_adjust(qgroup, cpu + 1, qgroup->tqg_stride,
+						 qgroup->tqg_intr, qgroup->tqg_pri);
+			if (err) {
+				log(LOG_ERR, "_taskqgroup_adjust(%p, %d, %d, %d, %d) => %d",
+				    qgroup, cpu + 1, qgroup->tqg_stride, qgroup->tqg_intr, qgroup->tqg_pri,
+				    err);
+				mtx_unlock(&qgroup->tqg_lock);
+				return (err);
+			}
+		}
 		for (i = 0; i < qgroup->tqg_cnt; i++)
 			if (qgroup->tqg_queue[i].tgc_cpu == cpu) {
 				qid = i;
