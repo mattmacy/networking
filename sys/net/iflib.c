@@ -538,7 +538,7 @@ typedef struct if_rxsd {
 #define RXD_INFO_SIZE	5
 #define PKT_TYPE uint64_t
 #else
-#define PKT_INFO_SIZE	13
+#define PKT_INFO_SIZE	12
 #define RXD_INFO_SIZE	8
 #define PKT_TYPE uint32_t
 #endif
@@ -1320,6 +1320,7 @@ prefetch2(void *x)
 }
 #else
 #define prefetch(x)
+#define prefetch2(x)
 #endif
 
 static void
@@ -2862,7 +2863,9 @@ static int
 iflib_parse_header(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp)
 {
 	if_ctx_t ctx = txq->ift_ctx;
+#ifdef INET
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
+#endif
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	struct ether_vlan_header *eh;
 	struct mbuf *m, *n;
@@ -3762,7 +3765,6 @@ _task_fn_admin(void *context)
 	iflib_txq_t txq;
 	int i, running;
 
-	running = !!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING);
 	CTX_LOCK(ctx);
 	running = !!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING);
 
@@ -5100,21 +5102,23 @@ iflib_irq_alloc(if_ctx_t ctx, if_irq_t irq, int rid,
 	return (_iflib_irq_alloc(ctx, irq, rid, filter, handler, arg, name));
 }
 
+#ifdef SMP
 static int
-find_nth(if_ctx_t ctx, cpuset_t *cpus, int qid)
+find_nth(if_ctx_t ctx, int qid)
 {
+	cpuset_t cpus;
 	int i, cpuid, eqid, count;
 
-	CPU_COPY(&ctx->ifc_cpus, cpus);
+	CPU_COPY(&ctx->ifc_cpus, &cpus);
 	count = CPU_COUNT(&ctx->ifc_cpus);
 	eqid = qid % count;
 	/* clear up to the qid'th bit */
 	for (i = 0; i < eqid; i++) {
-		cpuid = CPU_FFS(cpus);
+		cpuid = CPU_FFS(&cpus);
 		MPASS(cpuid != 0);
-		CPU_CLR(cpuid-1, cpus);
+		CPU_CLR(cpuid-1, &cpus);
 	}
-	cpuid = CPU_FFS(cpus);
+	cpuid = CPU_FFS(&cpus);
 	MPASS(cpuid != 0);
 	return (cpuid-1);
 }
@@ -5187,17 +5191,21 @@ get_thread_num(if_ctx_t ctx, iflib_intr_type_t type, int qid)
 		return -1;
 	}
 }
+#else
+#define get_thread_num(ctx, type, qid)	0
+#define find_thread(cpuid, tid)		0
+#define find_nth(ctx, gid)		0
+#endif
 
 /* Just to avoid copy/paste */
 static inline int
 iflib_irq_set_affinity(if_ctx_t ctx, int irq, iflib_intr_type_t type, int qid,
     struct grouptask *gtask, struct taskqgroup *tqg, void *uniq, char *name)
 {
-	cpuset_t cpus;
 	int cpuid;
 	int err, tid;
 
-	cpuid = find_nth(ctx, &cpus, qid);
+	cpuid = find_nth(ctx, qid);
 	tid = get_thread_num(ctx, type, qid);
 	MPASS(tid >= 0);
 	cpuid = find_thread(cpuid, tid);
