@@ -10,6 +10,13 @@ PROG=		boot1.sym
 INTERNALPROG=
 WARNS?=		6
 
+# We implement a slightly non-standard %S in that it always takes a
+# CHAR16 that's common in UEFI-land instead of a wchar_t. This only
+# seems to matter on arm64 where wchar_t defaults to an int instead
+# of a short. There's no good cast to use here so just ignore the
+# warnings for now.
+CWARNFLAGS.boot1.c+=	-Wno-format
+
 # Disable warnings that are currently incompatible with the zfs boot code
 CWARNFLAGS.zfs_module.c += -Wno-array-bounds
 CWARNFLAGS.zfs_module.c += -Wno-cast-align
@@ -119,7 +126,6 @@ boot1.o: ${.CURDIR}/../../common/ufsread.c
 # created by generate-fat.sh
 
 .include "${.CURDIR}/Makefile.fat"
-BOOT1_MAXSIZE?=	131072
 
 boot1.efifat: boot1.efi
 	@set -- `ls -l ${.ALLSRC}`; \

@@ -91,6 +91,7 @@ u_int	cpu_feature;		/* Feature flags */
 u_int	cpu_feature2;		/* Feature flags */
 u_int	amd_feature;		/* AMD feature flags */
 u_int	amd_feature2;		/* AMD feature flags */
+u_int	amd_rascap;		/* AMD RAS capabilities */
 u_int	amd_pminfo;		/* AMD advanced power management info */
 u_int	via_feature_rng;	/* VIA RNG features */
 u_int	via_feature_xcrypt;	/* VIA ACE features */
@@ -1461,6 +1462,7 @@ finishidentcpu(void)
 	}
 	if (cpu_exthigh >= 0x80000007) {
 		do_cpuid(0x80000007, regs);
+		amd_rascap = regs[1];
 		amd_pminfo = regs[3];
 	}
 	if (cpu_exthigh >= 0x80000008) {
@@ -2150,9 +2152,27 @@ print_svm_info(void)
 	       "\011<b8>"
 	       "\012<b9>"
 	       "\013PauseFilter"	/* PAUSE intercept filter */    
-	       "\014<b11>"
+	       "\014EncryptedMcodePatch"
 	       "\015PauseFilterThreshold" /* PAUSE filter threshold */
 	       "\016AVIC"		/* virtual interrupt controller */
+	       "\017<b14>"
+	       "\020V_VMSAVE_VMLOAD"
+	       "\021vGIF"
+	       "\022<b17>"
+	       "\023<b18>"
+	       "\024<b19>"
+	       "\025<b20>"
+	       "\026<b21>"
+	       "\027<b22>"
+	       "\030<b23>"
+	       "\031<b24>"
+	       "\032<b25>"
+	       "\033<b26>"
+	       "\034<b27>"
+	       "\035<b28>"
+	       "\036<b29>"
+	       "\037<b30>"
+	       "\040<b31>"
                 );
 	printf("\nRevision=%d, ASIDs=%d", regs[0] & 0xff, regs[1]);
 }
