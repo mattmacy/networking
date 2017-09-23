@@ -657,7 +657,7 @@ bnxt_attach_pre(if_ctx_t ctx)
 	scctx = softc->scctx;
 
 	/* TODO: Better way of detecting NPAR/VF is needed */
-	switch (softc->sctx->isc_vendor_info->pvi_device_id) {
+	switch (pci_get_device(softc->dev)) {
 	case BCM57402_NPAR:
 	case BCM57404_NPAR:
 	case BCM57406_NPAR:
@@ -980,7 +980,7 @@ bnxt_init(if_ctx_t ctx)
 		goto fail;
 
 	/* And now set the default CP ring as the async CP ring */
-	rc = bnxt_hwrm_func_cfg(softc);
+	rc = bnxt_cfg_async_cr(softc);
 	if (rc)
 		goto fail;
 
@@ -1640,8 +1640,7 @@ bnxt_msix_intr_assign(if_ctx_t ctx, int msix)
 	}
 
 	for (i=0; i<softc->scctx->isc_ntxqsets; i++)
-		/* TODO: Benchmark and see if tying to the RX irqs helps */
-		iflib_softirq_alloc_generic(ctx, -1, IFLIB_INTR_TX, NULL, i,
+		iflib_softirq_alloc_generic(ctx, i + 1, IFLIB_INTR_TX, NULL, i,
 		    "tx_cp");
 
 	return rc;
