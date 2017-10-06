@@ -2234,15 +2234,24 @@ static void
 em_free_pci_resources(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-	struct em_rx_queue *que = adapter->rx_queues;
+	struct em_rx_queue *rxque = adapter->rx_queues;
+	struct em_tx_queue *txque = adapter->tx_queues;
 	device_t dev = iflib_get_dev(ctx);
+	int is_igb;
 
+	is_igb = (adapter->hw.mac.type >= igb_mac_min);
 	/* Release all msix queue resources */
 	if (adapter->intr_type == IFLIB_INTR_MSIX)
 		iflib_irq_free(ctx, &adapter->irq);
 
-	for (int i = 0; i < adapter->rx_num_queues; i++, que++) {
-		iflib_irq_free(ctx, &que->que_irq);
+	for (int i = 0; i < adapter->rx_num_queues; i++, rxque++) {
+		iflib_irq_free(ctx, &rxque->que_irq);
+	}
+
+	if (!is_igb) {
+		for (int i = 0; i < adapter->tx_num_queues; i++, txque++) {
+			iflib_irq_free(ctx, &txque->que_irq);
+		}
 	}
 
 	/* First release all the interrupt resources */
