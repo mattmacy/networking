@@ -4509,8 +4509,6 @@ iflib_device_deregister(if_ctx_t ctx)
 
 	iflib_netmap_detach(ifp);
 	ether_ifdetach(ifp);
-	/* ether_ifdetach calls if_qflush - lock must be destroy afterwards*/
-	CTX_LOCK_DESTROY(ctx);
 	if (ctx->ifc_led_dev != NULL)
 		led_destroy(ctx->ifc_led_dev);
 	/* XXX drain any dependent tasks */
@@ -4534,7 +4532,10 @@ iflib_device_deregister(if_ctx_t ctx)
 	if (ctx->ifc_vflr_task.gt_uniq != NULL)
 		taskqgroup_detach(tqg, &ctx->ifc_vflr_task);
 
+	CTX_LOCK(ctx);
 	IFDI_DETACH(ctx);
+	CTX_UNLOCK(ctx);
+	CTX_LOCK_DESTROY(ctx);
 	device_set_softc(ctx->ifc_dev, NULL);
 	if (ctx->ifc_softc_ctx.isc_intr != IFLIB_INTR_LEGACY) {
 		pci_release_msi(dev);
