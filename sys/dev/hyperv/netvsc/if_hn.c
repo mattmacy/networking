@@ -61,7 +61,9 @@ __FBSDID("$FreeBSD$");
 #include "opt_rss.h"
 
 #include <sys/param.h>
+#include <sys/systm.h>
 #include <sys/bus.h>
+#include <sys/counter.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
 #include <sys/malloc.h>
@@ -76,7 +78,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/sockio.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
-#include <sys/systm.h>
 #include <sys/taskqueue.h>
 #include <sys/buf_ring.h>
 #include <sys/eventhandler.h>
@@ -384,11 +385,10 @@ static void			hn_link_status(struct hn_softc *);
 static int			hn_create_rx_data(struct hn_softc *, int);
 static void			hn_destroy_rx_data(struct hn_softc *);
 static int			hn_check_iplen(const struct mbuf *, int);
+static void			hn_rxpkt_proto(const struct mbuf *, int *, int *);
 static int			hn_set_rxfilter(struct hn_softc *, uint32_t);
 static int			hn_rxfilter_config(struct hn_softc *);
-#ifndef RSS
 static int			hn_rss_reconfig(struct hn_softc *);
-#endif
 static void			hn_rss_ind_fixup(struct hn_softc *);
 static void			hn_rss_mbuf_hash(struct hn_softc *, uint32_t);
 static int			hn_rxpkt(struct hn_rx_ring *, const void *,
@@ -400,6 +400,7 @@ static int			hn_tx_ring_create(struct hn_softc *, int);
 static void			hn_tx_ring_destroy(struct hn_tx_ring *);
 static int			hn_create_tx_data(struct hn_softc *, int);
 static void			hn_fixup_tx_data(struct hn_softc *);
+static void			hn_fixup_rx_data(struct hn_softc *);
 static void			hn_destroy_tx_data(struct hn_softc *);
 static void			hn_txdesc_dmamap_destroy(struct hn_txdesc *);
 static void			hn_txdesc_gc(struct hn_tx_ring *,
@@ -459,6 +460,35 @@ SYSCTL_INT(_hw_hn, OID_AUTO, trust_hostip, CTLFLAG_RDTUN,
     &hn_trust_hostip, 0,
     "Trust ip packet verification on host side, "
     "when csum info is missing (global setting)");
+
+/*
+ * Offload UDP/IPv4 checksum.
+ */
+static int			hn_enable_udp4cs = 1;
+SYSCTL_INT(_hw_hn, OID_AUTO, enable_udp4cs, CTLFLAG_RDTUN,
+    &hn_enable_udp4cs, 0, "Offload UDP/IPv4 checksum");
+
+/*
+ * Offload UDP/IPv6 checksum.
+ */
+static int			hn_enable_udp6cs = 1;
+SYSCTL_INT(_hw_hn, OID_AUTO, enable_udp6cs, CTLFLAG_RDTUN,
+    &hn_enable_udp6cs, 0, "Offload UDP/IPv6 checksum");
+
+/* Stats. */
+static counter_u64_t		hn_udpcs_fixup;
+SYSCTL_COUNTER_U64(_hw_hn, OID_AUTO, udpcs_fixup, CTLFLAG_RW,
+    &hn_udpcs_fixup, "# of UDP checksum fixup");
+
+/*
+ * See hn_set_hlen().
+ *
+ * This value is for Azure.  For Hyper-V, set this above
+ * 65536 to disable UDP datagram checksum fixup.
+ */
+static int			hn_udpcs_fixup_mtu = 1420;
+SYSCTL_INT(_hw_hn, OID_AUTO, udpcs_fixup_mtu, CTLFLAG_RWTUN,
+    &hn_udpcs_fixup_mtu, 0, "UDP checksum fixup MTU threshold");
 
 /* Limit TSO burst size */
 static int			hn_tso_maxlen = IP_MAXPACKET;
@@ -727,6 +757,7 @@ hn_tso_fixup(struct mbuf *m_head)
 		ehlen = ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN;
 	else
 		ehlen = ETHER_HDR_LEN;
+	m_head->m_pkthdr.l2hlen = ehlen;
 
 #ifdef INET
 	if (m_head->m_pkthdr.csum_flags & CSUM_IP_TSO) {
@@ -736,6 +767,7 @@ hn_tso_fixup(struct mbuf *m_head)
 		PULLUP_HDR(m_head, ehlen + sizeof(*ip));
 		ip = mtodo(m_head, ehlen);
 		iphlen = ip->ip_hl << 2;
+		m_head->m_pkthdr.l3hlen = iphlen;
 
 		PULLUP_HDR(m_head, ehlen + iphlen + sizeof(*th));
 		th = mtodo(m_head, ehlen + iphlen);
@@ -759,6 +791,7 @@ hn_tso_fixup(struct mbuf *m_head)
 			m_freem(m_head);
 			return (NULL);
 		}
+		m_head->m_pkthdr.l3hlen = sizeof(*ip6);
 
 		PULLUP_HDR(m_head, ehlen + sizeof(*ip6) + sizeof(*th));
 		th = mtodo(m_head, ehlen + sizeof(*ip6));
@@ -768,20 +801,16 @@ hn_tso_fixup(struct mbuf *m_head)
 	}
 #endif
 	return (m_head);
-
 }
 
 /*
  * NOTE: If this function failed, the m_head would be freed.
  */
 static __inline struct mbuf *
-hn_check_tcpsyn(struct mbuf *m_head, int *tcpsyn)
+hn_set_hlen(struct mbuf *m_head)
 {
 	const struct ether_vlan_header *evl;
-	const struct tcphdr *th;
 	int ehlen;
-
-	*tcpsyn = 0;
 
 	PULLUP_HDR(m_head, sizeof(*evl));
 	evl = mtod(m_head, const struct ether_vlan_header *);
@@ -789,20 +818,38 @@ hn_check_tcpsyn(struct mbuf *m_head, int *tcpsyn)
 		ehlen = ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN;
 	else
 		ehlen = ETHER_HDR_LEN;
+	m_head->m_pkthdr.l2hlen = ehlen;
 
 #ifdef INET
-	if (m_head->m_pkthdr.csum_flags & CSUM_IP_TCP) {
+	if (m_head->m_pkthdr.csum_flags & (CSUM_IP_TCP | CSUM_IP_UDP)) {
 		const struct ip *ip;
 		int iphlen;
 
 		PULLUP_HDR(m_head, ehlen + sizeof(*ip));
 		ip = mtodo(m_head, ehlen);
 		iphlen = ip->ip_hl << 2;
+		m_head->m_pkthdr.l3hlen = iphlen;
 
-		PULLUP_HDR(m_head, ehlen + iphlen + sizeof(*th));
-		th = mtodo(m_head, ehlen + iphlen);
-		if (th->th_flags & TH_SYN)
-			*tcpsyn = 1;
+		/*
+		 * UDP checksum offload does not work in Azure, if the
+		 * following conditions meet:
+		 * - sizeof(IP hdr + UDP hdr + payload) > 1420.
+		 * - IP_DF is not set in the IP hdr.
+		 *
+		 * Fallback to software checksum for these UDP datagrams.
+		 */
+		if ((m_head->m_pkthdr.csum_flags & CSUM_IP_UDP) &&
+		    m_head->m_pkthdr.len > hn_udpcs_fixup_mtu + ehlen &&
+		    (ntohs(ip->ip_off) & IP_DF) == 0) {
+			uint16_t off = ehlen + iphlen;
+
+			counter_u64_add(hn_udpcs_fixup, 1);
+			PULLUP_HDR(m_head, off + sizeof(struct udphdr));
+			*(uint16_t *)(m_head->m_data + off +
+                            m_head->m_pkthdr.csum_data) = in_cksum_skip(
+			    m_head, m_head->m_pkthdr.len, off);
+			m_head->m_pkthdr.csum_flags &= ~CSUM_IP_UDP;
+		}
 	}
 #endif
 #if defined(INET6) && defined(INET)
@@ -814,15 +861,33 @@ hn_check_tcpsyn(struct mbuf *m_head, int *tcpsyn)
 
 		PULLUP_HDR(m_head, ehlen + sizeof(*ip6));
 		ip6 = mtodo(m_head, ehlen);
-		if (ip6->ip6_nxt != IPPROTO_TCP)
-			return (m_head);
-
-		PULLUP_HDR(m_head, ehlen + sizeof(*ip6) + sizeof(*th));
-		th = mtodo(m_head, ehlen + sizeof(*ip6));
-		if (th->th_flags & TH_SYN)
-			*tcpsyn = 1;
+		if (ip6->ip6_nxt != IPPROTO_TCP) {
+			m_freem(m_head);
+			return (NULL);
+		}
+		m_head->m_pkthdr.l3hlen = sizeof(*ip6);
 	}
 #endif
+	return (m_head);
+}
+
+/*
+ * NOTE: If this function failed, the m_head would be freed.
+ */
+static __inline struct mbuf *
+hn_check_tcpsyn(struct mbuf *m_head, int *tcpsyn)
+{
+	const struct tcphdr *th;
+	int ehlen, iphlen;
+
+	*tcpsyn = 0;
+	ehlen = m_head->m_pkthdr.l2hlen;
+	iphlen = m_head->m_pkthdr.l3hlen;
+
+	PULLUP_HDR(m_head, ehlen + iphlen + sizeof(*th));
+	th = mtodo(m_head, ehlen + iphlen);
+	if (th->th_flags & TH_SYN)
+		*tcpsyn = 1;
 	return (m_head);
 }
 
@@ -960,7 +1025,6 @@ hn_get_txswq_depth(const struct hn_tx_ring *txr)
 	return hn_tx_swq_depth;
 }
 
-#ifndef RSS
 static int
 hn_rss_reconfig(struct hn_softc *sc)
 {
@@ -999,7 +1063,6 @@ hn_rss_reconfig(struct hn_softc *sc)
 	}
 	return (0);
 }
-#endif	/* !RSS */
 
 static void
 hn_rss_ind_fixup(struct hn_softc *sc)
@@ -2177,9 +2240,10 @@ hn_attach(device_t dev)
 #endif
 
 	/*
-	 * Fixup TX stuffs after synthetic parts are attached.
+	 * Fixup TX/RX stuffs after synthetic parts are attached.
 	 */
 	hn_fixup_tx_data(sc);
+	hn_fixup_rx_data(sc);
 
 	ctx = device_get_sysctl_ctx(dev);
 	child = SYSCTL_CHILDREN(device_get_sysctl_tree(dev));
@@ -3010,7 +3074,8 @@ hn_encap(struct ifnet *ifp, struct hn_tx_ring *txr, struct hn_txdesc *txd,
 		    NDIS_LSO2_INFO_SIZE, NDIS_PKTINFO_TYPE_LSO);
 #ifdef INET
 		if (m_head->m_pkthdr.csum_flags & CSUM_IP_TSO) {
-			*pi_data = NDIS_LSO2_INFO_MAKEIPV4(0,
+			*pi_data = NDIS_LSO2_INFO_MAKEIPV4(
+			    m_head->m_pkthdr.l2hlen + m_head->m_pkthdr.l3hlen,
 			    m_head->m_pkthdr.tso_segsz);
 		}
 #endif
@@ -3019,7 +3084,8 @@ hn_encap(struct ifnet *ifp, struct hn_tx_ring *txr, struct hn_txdesc *txd,
 #endif
 #ifdef INET6
 		{
-			*pi_data = NDIS_LSO2_INFO_MAKEIPV6(0,
+			*pi_data = NDIS_LSO2_INFO_MAKEIPV6(
+			    m_head->m_pkthdr.l2hlen + m_head->m_pkthdr.l3hlen,
 			    m_head->m_pkthdr.tso_segsz);
 		}
 #endif
@@ -3036,11 +3102,15 @@ hn_encap(struct ifnet *ifp, struct hn_tx_ring *txr, struct hn_txdesc *txd,
 				*pi_data |= NDIS_TXCSUM_INFO_IPCS;
 		}
 
-		if (m_head->m_pkthdr.csum_flags & (CSUM_IP_TCP | CSUM_IP6_TCP))
-			*pi_data |= NDIS_TXCSUM_INFO_TCPCS;
-		else if (m_head->m_pkthdr.csum_flags &
-		    (CSUM_IP_UDP | CSUM_IP6_UDP))
-			*pi_data |= NDIS_TXCSUM_INFO_UDPCS;
+		if (m_head->m_pkthdr.csum_flags &
+		    (CSUM_IP_TCP | CSUM_IP6_TCP)) {
+			*pi_data |= NDIS_TXCSUM_INFO_MKTCPCS(
+			    m_head->m_pkthdr.l2hlen + m_head->m_pkthdr.l3hlen);
+		} else if (m_head->m_pkthdr.csum_flags &
+		    (CSUM_IP_UDP | CSUM_IP6_UDP)) {
+			*pi_data |= NDIS_TXCSUM_INFO_MKUDPCS(
+			    m_head->m_pkthdr.l2hlen + m_head->m_pkthdr.l3hlen);
+		}
 	}
 
 	pkt_hlen = pkt->rm_pktinfooffset + pkt->rm_pktinfolen;
@@ -3311,6 +3381,7 @@ hn_rxpkt(struct hn_rx_ring *rxr, const void *data, int dlen,
 	struct mbuf *m_new;
 	int size, do_lro = 0, do_csum = 1, is_vf = 0;
 	int hash_type = M_HASHTYPE_NONE;
+	int l3proto = ETHERTYPE_MAX, l4proto = IPPROTO_DONE;
 
 	ifp = hn_ifp;
 	if (rxr->hn_rxvf_ifp != NULL) {
@@ -3410,31 +3481,9 @@ hn_rxpkt(struct hn_rx_ring *rxr, const void *data, int dlen,
 		    (NDIS_RXCSUM_INFO_TCPCS_OK | NDIS_RXCSUM_INFO_IPCS_OK))
 			do_lro = 1;
 	} else {
-		const struct ether_header *eh;
-		uint16_t etype;
-		int hoff;
-
-		hoff = sizeof(*eh);
-		/* Checked at the beginning of this function. */
-		KASSERT(m_new->m_len >= hoff, ("not ethernet frame"));
-
-		eh = mtod(m_new, struct ether_header *);
-		etype = ntohs(eh->ether_type);
-		if (etype == ETHERTYPE_VLAN) {
-			const struct ether_vlan_header *evl;
-
-			hoff = sizeof(*evl);
-			if (m_new->m_len < hoff)
-				goto skip;
-			evl = mtod(m_new, struct ether_vlan_header *);
-			etype = ntohs(evl->evl_proto);
-		}
-
-		if (etype == ETHERTYPE_IP) {
-			int pr;
-
-			pr = hn_check_iplen(m_new, hoff);
-			if (pr == IPPROTO_TCP) {
+		hn_rxpkt_proto(m_new, &l3proto, &l4proto);
+		if (l3proto == ETHERTYPE_IP) {
+			if (l4proto == IPPROTO_TCP) {
 				if (do_csum &&
 				    (rxr->hn_trust_hcsum &
 				     HN_TRUST_HCSUM_TCP)) {
@@ -3445,7 +3494,7 @@ hn_rxpkt(struct hn_rx_ring *rxr, const void *data, int dlen,
 					m_new->m_pkthdr.csum_data = 0xffff;
 				}
 				do_lro = 1;
-			} else if (pr == IPPROTO_UDP) {
+			} else if (l4proto == IPPROTO_UDP) {
 				if (do_csum &&
 				    (rxr->hn_trust_hcsum &
 				     HN_TRUST_HCSUM_UDP)) {
@@ -3455,7 +3504,7 @@ hn_rxpkt(struct hn_rx_ring *rxr, const void *data, int dlen,
 					    CSUM_DATA_VALID | CSUM_PSEUDO_HDR);
 					m_new->m_pkthdr.csum_data = 0xffff;
 				}
-			} else if (pr != IPPROTO_DONE && do_csum &&
+			} else if (l4proto != IPPROTO_DONE && do_csum &&
 			    (rxr->hn_trust_hcsum & HN_TRUST_HCSUM_IP)) {
 				rxr->hn_csum_trusted++;
 				m_new->m_pkthdr.csum_flags |=
@@ -3463,7 +3512,7 @@ hn_rxpkt(struct hn_rx_ring *rxr, const void *data, int dlen,
 			}
 		}
 	}
-skip:
+
 	if (info->vlan_info != HN_NDIS_VLAN_INFO_INVALID) {
 		m_new->m_pkthdr.ether_vtag = EVL_MAKETAG(
 		    NDIS_VLAN_INFO_ID(info->vlan_info),
@@ -3518,6 +3567,35 @@ skip:
 
 			case NDIS_HASH_TCP_IPV4:
 				hash_type = M_HASHTYPE_RSS_TCP_IPV4;
+				if (rxr->hn_rx_flags & HN_RX_FLAG_UDP_HASH) {
+					int def_htype = M_HASHTYPE_OPAQUE_HASH;
+
+					if (is_vf)
+						def_htype = M_HASHTYPE_NONE;
+
+					/*
+					 * UDP 4-tuple hash is delivered as
+					 * TCP 4-tuple hash.
+					 */
+					if (l3proto == ETHERTYPE_MAX) {
+						hn_rxpkt_proto(m_new,
+						    &l3proto, &l4proto);
+					}
+					if (l3proto == ETHERTYPE_IP) {
+						if (l4proto == IPPROTO_UDP) {
+							hash_type =
+							M_HASHTYPE_RSS_UDP_IPV4;
+							do_lro = 0;
+						} else if (l4proto !=
+						    IPPROTO_TCP) {
+							hash_type = def_htype;
+							do_lro = 0;
+						}
+					} else {
+						hash_type = def_htype;
+						do_lro = 0;
+					}
+				}
 				break;
 
 			case NDIS_HASH_IPV6:
@@ -4768,6 +4846,36 @@ hn_check_iplen(const struct mbuf *m, int hoff)
 	return ip->ip_p;
 }
 
+static void
+hn_rxpkt_proto(const struct mbuf *m_new, int *l3proto, int *l4proto)
+{
+	const struct ether_header *eh;
+	uint16_t etype;
+	int hoff;
+
+	hoff = sizeof(*eh);
+	/* Checked at the beginning of this function. */
+	KASSERT(m_new->m_len >= hoff, ("not ethernet frame"));
+
+	eh = mtod(m_new, const struct ether_header *);
+	etype = ntohs(eh->ether_type);
+	if (etype == ETHERTYPE_VLAN) {
+		const struct ether_vlan_header *evl;
+
+		hoff = sizeof(*evl);
+		if (m_new->m_len < hoff)
+			return;
+		evl = mtod(m_new, const struct ether_vlan_header *);
+		etype = ntohs(evl->evl_proto);
+	}
+	*l3proto = etype;
+
+	if (etype == ETHERTYPE_IP)
+		*l4proto = hn_check_iplen(m_new, hoff);
+	else
+		*l4proto = IPPROTO_DONE;
+}
+
 static int
 hn_create_rx_data(struct hn_softc *sc, int ring_cnt)
 {
@@ -5459,11 +5567,11 @@ hn_fixup_tx_data(struct hn_softc *sc)
 		csum_assist |= CSUM_IP;
 	if (sc->hn_caps & HN_CAP_TCP4CS)
 		csum_assist |= CSUM_IP_TCP;
-	if (sc->hn_caps & HN_CAP_UDP4CS)
+	if ((sc->hn_caps & HN_CAP_UDP4CS) && hn_enable_udp4cs)
 		csum_assist |= CSUM_IP_UDP;
 	if (sc->hn_caps & HN_CAP_TCP6CS)
 		csum_assist |= CSUM_IP6_TCP;
-	if (sc->hn_caps & HN_CAP_UDP6CS)
+	if ((sc->hn_caps & HN_CAP_UDP6CS) && hn_enable_udp6cs)
 		csum_assist |= CSUM_IP6_UDP;
 	for (i = 0; i < sc->hn_tx_ring_cnt; ++i)
 		sc->hn_tx_ring[i].hn_csum_assist = csum_assist;
@@ -5476,6 +5584,18 @@ hn_fixup_tx_data(struct hn_softc *sc)
 			if_printf(sc->hn_ifp, "support HASHVAL pktinfo\n");
 		for (i = 0; i < sc->hn_tx_ring_cnt; ++i)
 			sc->hn_tx_ring[i].hn_tx_flags |= HN_TX_FLAG_HASHVAL;
+	}
+}
+
+static void
+hn_fixup_rx_data(struct hn_softc *sc)
+{
+
+	if (sc->hn_caps & HN_CAP_UDPHASH) {
+		int i;
+
+		for (i = 0; i < sc->hn_rx_ring_cnt; ++i)
+			sc->hn_rx_ring[i].hn_rx_flags |= HN_RX_FLAG_UDP_HASH;
 	}
 }
 
@@ -5562,6 +5682,13 @@ hn_start_locked(struct hn_tx_ring *txr, int len)
 #if defined(INET6) || defined(INET)
 		if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
 			m_head = hn_tso_fixup(m_head);
+			if (__predict_false(m_head == NULL)) {
+				if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
+				continue;
+			}
+		} else if (m_head->m_pkthdr.csum_flags &
+		    (CSUM_IP_UDP | CSUM_IP_TCP | CSUM_IP6_UDP | CSUM_IP6_TCP)) {
+			m_head = hn_set_hlen(m_head);
 			if (__predict_false(m_head == NULL)) {
 				if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 				continue;
@@ -5846,11 +5973,18 @@ hn_transmit(struct ifnet *ifp, struct mbuf *m)
 
 #if defined(INET6) || defined(INET)
 	/*
-	 * Perform TSO packet header fixup now, since the TSO
-	 * packet header should be cache-hot.
+	 * Perform TSO packet header fixup or get l2/l3 header length now,
+	 * since packet headers should be cache-hot.
 	 */
 	if (m->m_pkthdr.csum_flags & CSUM_TSO) {
 		m = hn_tso_fixup(m);
+		if (__predict_false(m == NULL)) {
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
+			return EIO;
+		}
+	} else if (m->m_pkthdr.csum_flags &
+	    (CSUM_IP_UDP | CSUM_IP_TCP | CSUM_IP6_UDP | CSUM_IP6_TCP)) {
+		m = hn_set_hlen(m);
 		if (__predict_false(m == NULL)) {
 			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			return EIO;
@@ -7302,6 +7436,8 @@ hn_sysinit(void *arg __unused)
 {
 	int i;
 
+	hn_udpcs_fixup = counter_u64_alloc(M_WAITOK);
+
 #ifdef HN_IFSTART_SUPPORT
 	/*
 	 * Don't use ifnet.if_start if transparent VF mode is requested;
@@ -7381,5 +7517,7 @@ hn_sysuninit(void *arg __unused)
 	if (hn_vfmap != NULL)
 		free(hn_vfmap, M_DEVBUF);
 	rm_destroy(&hn_vfmap_lock);
+
+	counter_u64_free(hn_udpcs_fixup);
 }
 SYSUNINIT(hn_sysuninit, SI_SUB_DRIVERS, SI_ORDER_SECOND, hn_sysuninit, NULL);

@@ -43,7 +43,6 @@ extern	int	szfreebsd4_sigcode;
 #endif
 #ifdef COMPAT_43
 extern	int	szosigcode;
-extern	int	szlcallcode;
 #endif
 extern	uint32_t *vm_page_dump;
 
@@ -67,6 +66,8 @@ void	init_AMD_Elan_sc520(void);
 vm_paddr_t kvtop(void *addr);
 void	panicifcpuunsupported(void);
 void	ppro_reenable_apic(void);
+void	set_fsbase(struct thread *td, uint32_t base);
+void	set_gsbase(struct thread *td, uint32_t base);
 void	setidt(int idx, alias_for_inthand_t *func, int typ, int dpl, int selec);
 union savefpu *get_pcb_user_save_td(struct thread *td);
 union savefpu *get_pcb_user_save_pcb(struct pcb *pcb);

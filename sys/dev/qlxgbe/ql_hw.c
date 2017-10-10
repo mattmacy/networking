@@ -64,7 +64,6 @@ static int qla_link_event_req(qla_host_t *ha, uint16_t cntxt_id);
 static int qla_tx_tso(qla_host_t *ha, struct mbuf *mp, q80_tx_cmd_t *tx_cmd,
 		uint8_t *hdr);
 static int qla_hw_add_all_mcast(qla_host_t *ha);
-static int qla_hw_del_all_mcast(qla_host_t *ha);
 static int qla_add_rcv_rings(qla_host_t *ha, uint32_t sds_idx, uint32_t nsds);
 
 static int qla_init_nic_func(qla_host_t *ha);
@@ -2375,6 +2374,16 @@ ql_hw_send(qla_host_t *ha, bus_dma_segment_t *segs, int nsegs,
 		}
 	}
 
+	for (i = 0; i < num_tx_cmds; i++) {
+		if (NULL != ha->tx_ring[txr_idx].tx_buf[(tx_idx+i)].m_head) {
+			QL_ASSERT(ha, 0, \
+				("%s: txr_idx = %d tx_idx = %d mbuf = %p\n",\
+				__func__, txr_idx, (tx_idx+i),\
+				ha->tx_ring[txr_idx].tx_buf[(tx_idx+i)].m_head));
+			return (EINVAL);
+		}
+	}
+
 	tx_cmd = &hw->tx_cntxt[txr_idx].tx_ring_base[tx_idx];
 
         if (!(mp->m_pkthdr.csum_flags & CSUM_TSO)) {
@@ -3249,6 +3258,7 @@ qla_init_xmt_cntxt_i(qla_host_t *ha, uint32_t txr_idx)
 
 	hw_tx_cntxt->txr_free = NUM_TX_DESCRIPTORS;
 	hw_tx_cntxt->txr_next = hw_tx_cntxt->txr_comp = 0;
+	*(hw_tx_cntxt->tx_cons) = 0;
 
         if (qla_mbx_cmd(ha, (uint32_t *)tcntxt,
 		(sizeof (q80_rq_tx_cntxt_t) >> 2),
@@ -3413,7 +3423,7 @@ qla_hw_add_all_mcast(qla_host_t *ha)
 	return (ret);
 }
 
-static int
+int
 qla_hw_del_all_mcast(qla_host_t *ha)
 {
 	int ret;
