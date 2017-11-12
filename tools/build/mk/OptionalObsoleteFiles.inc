@@ -2480,11 +2480,8 @@ OLD_FILES+=usr/share/man/man8/gpioctl.8.gz
 .endif
 
 .if ${MK_GNU_DIFF} == no
-OLD_FILES+=usr/bin/diff
 OLD_FILES+=usr/bin/diff3
-OLD_FILES+=usr/share/man/man1/diff.1.gz
 OLD_FILES+=usr/share/man/man1/diff3.1.gz
-OLD_FILES+=usr/share/man/man7/diff.7.gz
 .endif
 
 .if ${MK_GNU_GREP} == no
@@ -6156,7 +6153,7 @@ OLD_FILES+=usr/share/man/man3/NgRecvMsg.3.gz
 OLD_FILES+=usr/share/man/man3/NgSendAsciiMsg.3.gz
 OLD_FILES+=usr/share/man/man3/NgSendData.3.gz
 OLD_FILES+=usr/share/man/man3/NgSendMsg.3.gz
-OLD_FILES+=usr/share/man/man3/NgSendMsgReply.3.gz
+OLD_FILES+=usr/share/man/man3/NgSendReplyMsg.3.gz
 OLD_FILES+=usr/share/man/man3/NgSetDebug.3.gz
 OLD_FILES+=usr/share/man/man3/NgSetErrLog.3.gz
 OLD_FILES+=usr/share/man/man3/netgraph.3.gz

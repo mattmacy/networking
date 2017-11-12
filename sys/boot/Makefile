@@ -9,14 +9,12 @@ SUBDIR+=		ficl
 SUBDIR+=		forth
 .endif
 
-SUBDIR+=		common
+SUBDIR+=		man
 
 .include <bsd.arch.inc.mk>
 
-# Pick the machine-dependent subdir based on the target architecture.
-ADIR=			${MACHINE:S/powerpc64/powerpc/}
-.if exists(${.CURDIR}/${ADIR}/.)
-SUBDIR+=		${ADIR}
+.if exists(${.CURDIR}/${MACHINE}/.)
+SUBDIR+=		${MACHINE}
 .endif
 
 .include <bsd.subdir.mk>

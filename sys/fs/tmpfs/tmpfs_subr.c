@@ -362,7 +362,13 @@ tmpfs_free_node_locked(struct tmpfs_mount *tmp, struct tmpfs_node *node,
 		panic("tmpfs_free_node: type %p %d", node, (int)node->tn_type);
 	}
 
-	free_unr(tmp->tm_ino_unr, node->tn_id);
+	/*
+	 * If we are unmounting there is no need for going through the overhead
+	 * of freeing the inodes from the unr individually, so free them all in
+	 * one go later.
+	 */
+	if (!detach)
+		free_unr(tmp->tm_ino_unr, node->tn_id);
 	uma_zfree(tmp->tm_node_pool, node);
 	TMPFS_LOCK(tmp);
 	tmpfs_free_tmp(tmp);
@@ -1401,13 +1407,10 @@ retry:
 					goto retry;
 				MPASS(m->valid == VM_PAGE_BITS_ALL);
 			} else if (vm_pager_has_page(uobj, idx, NULL, NULL)) {
-				m = vm_page_alloc(uobj, idx, VM_ALLOC_NORMAL);
-				if (m == NULL) {
-					VM_OBJECT_WUNLOCK(uobj);
-					VM_WAIT;
-					VM_OBJECT_WLOCK(uobj);
+				m = vm_page_alloc(uobj, idx, VM_ALLOC_NORMAL |
+				    VM_ALLOC_WAITFAIL);
+				if (m == NULL)
 					goto retry;
-				}
 				rv = vm_pager_get_pages(uobj, &m, 1, NULL,
 				    NULL);
 				vm_page_lock(m);
