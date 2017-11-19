@@ -398,6 +398,8 @@ ndadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 		return (ENXIO);
 	}
 
+	/* xpt_get_ccb returns a zero'd allocation for the ccb, mimic that here */
+	memset(&nvmeio, 0, sizeof(nvmeio));
 	if (length > 0) {
 		xpt_setup_ccb(&nvmeio.ccb_h, periph->path, CAM_PRIORITY_NORMAL);
 		nvmeio.ccb_h.ccb_state = NDA_CCB_DUMP;
@@ -792,7 +794,7 @@ ndaregister(struct cam_periph *periph, void *arg)
 	/*
 	 * Add alias for older nvd drives to ease transition.
 	 */
-	disk_add_alias(disk, "nvd");
+	/* disk_add_alias(disk, "nvd"); Have reports of this causing problems */
 
 	/*
 	 * Acquire a reference to the periph before we register with GEOM.

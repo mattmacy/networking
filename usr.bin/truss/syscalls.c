@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-4-Clause
+ *
  * Copyright 1997 Sean Eric Fagan
  *
  * Redistribution and use in source and binary forms, with or without
@@ -734,7 +736,7 @@ static struct xlat cloudabi_fdsflags[] = {
 static struct xlat cloudabi_filetype[] = {
 	X(FILETYPE_UNKNOWN) X(FILETYPE_BLOCK_DEVICE)
 	X(FILETYPE_CHARACTER_DEVICE) X(FILETYPE_DIRECTORY)
-	X(FILETYPE_POLL) X(FILETYPE_PROCESS) X(FILETYPE_REGULAR_FILE)
+	X(FILETYPE_PROCESS) X(FILETYPE_REGULAR_FILE)
 	X(FILETYPE_SHARED_MEMORY) X(FILETYPE_SOCKET_DGRAM)
 	X(FILETYPE_SOCKET_STREAM) X(FILETYPE_SYMBOLIC_LINK)
 	XEND

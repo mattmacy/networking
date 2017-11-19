@@ -332,6 +332,7 @@ struct adapter_params {
 	struct devlog_params devlog;	/* PF-only */
 	struct rss_params rss;		/* VF-only */
 	struct vf_resources vfres;	/* VF-only */
+	unsigned int core_vdd;
 
 	unsigned int sf_size;             /* serial flash size in bytes */
 	unsigned int sf_nsec;             /* # of flash sectors */
@@ -369,6 +370,8 @@ struct adapter_params {
 
 	unsigned int max_ordird_qp;
 	unsigned int max_ird_adapter;
+
+	uint32_t mps_bg_map;	/* rx buffer group map for all ports (upto 4) */
 };
 
 #define CHELSIO_T4		0x4

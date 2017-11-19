@@ -61,7 +61,7 @@ static int findbucket();
 /*
  * Pre-allocate mmap'ed pages
  */
-#define	NPOOLPAGES	(32*1024/pagesz)
+#define	NPOOLPAGES	(128*1024/pagesz)
 static caddr_t		pagepool_start, pagepool_end;
 static int		morepages();
 
@@ -479,7 +479,7 @@ int	n;
 
 	if ((pagepool_start = mmap(0, n * pagesz,
 			PROT_READ|PROT_WRITE,
-			MAP_ANON|MAP_COPY, fd, 0)) == (caddr_t)-1) {
+			MAP_ANON|MAP_PRIVATE, fd, 0)) == (caddr_t)-1) {
 		rtld_printf("Cannot map anonymous memory\n");
 		return 0;
 	}

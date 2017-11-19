@@ -1311,6 +1311,14 @@ static struct da_quirk_entry da_quirk_table[] =
 	},
 	{
 		/*
+		 * Same as for SAMSUNG MZ7* but enable the quirks for SSD
+		 * starting with MZ7* too
+		 */
+		{ T_DIRECT, SIP_MEDIA_FIXED, "ATA", "MZ7*", "*" },
+		/*quirks*/DA_Q_4K
+	},
+	{
+		/*
 		 * SuperTalent TeraDrive CT SSDs
 		 * 4k optimised & trim only works in 4k requests + 4k aligned
 		 */
@@ -1646,6 +1654,7 @@ dadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t leng
 		return (ENXIO);
 	}
 
+	memset(&csio, 0, sizeof(csio));
 	if (length > 0) {
 		xpt_setup_ccb(&csio.ccb_h, periph->path, CAM_PRIORITY_NORMAL);
 		csio.ccb_h.ccb_state = DA_CCB_DUMP;
