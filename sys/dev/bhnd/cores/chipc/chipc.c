@@ -4,8 +4,8 @@
  * Copyright (c) 2017 The FreeBSD Foundation
  * All rights reserved.
  *
- * This software was developed by Landon Fuller under sponsorship from
- * the FreeBSD Foundation.
+ * Portions of this software were developed by Landon Fuller
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -209,11 +209,17 @@ chipc_attach(device_t dev)
 	if ((error = chipc_add_children(sc)))
 		goto failed;
 
-	if ((error = bus_generic_attach(dev)))
+	/*
+	 * Register ourselves with the bus; we're fully initialized and can
+	 * response to ChipCommin API requests.
+	 * 
+	 * Since our children may need access to ChipCommon, this must be done
+	 * before attaching our children below (via bus_generic_attach).
+	 */
+	if ((error = bhnd_register_provider(dev, BHND_SERVICE_CHIPC)))
 		goto failed;
 
-	/* Register ourselves with the bus */
-	if ((error = bhnd_register_provider(dev, BHND_SERVICE_CHIPC)))
+	if ((error = bus_generic_attach(dev)))
 		goto failed;
 
 	return (0);
@@ -286,12 +292,32 @@ chipc_add_children(struct chipc_softc *sc)
 	 * On AOB ("Always on Bus") devices, the PMU core (if it exists) is
 	 * attached directly to the bhnd(4) bus -- not chipc.
 	 */
-	if (sc->caps.pwr_ctrl || (sc->caps.pmu && !sc->caps.aob)) {
-		child = BUS_ADD_CHILD(sc->dev, 0, "bhnd_pmu", -1);
+	if (sc->caps.pmu && !sc->caps.aob) {
+		child = BUS_ADD_CHILD(sc->dev, 0, "bhnd_pmu", 0);
 		if (child == NULL) {
 			device_printf(sc->dev, "failed to add pmu\n");
 			return (ENXIO);
 		}
+	} else if (sc->caps.pwr_ctrl) {
+		child = BUS_ADD_CHILD(sc->dev, 0, "bhnd_pwrctl", 0);
+		if (child == NULL) {
+			device_printf(sc->dev, "failed to add pwrctl\n");
+			return (ENXIO);
+		}
+	}
+
+	/* GPIO */
+	child = BUS_ADD_CHILD(sc->dev, 0, "gpio", 0);
+	if (child == NULL) {
+		device_printf(sc->dev, "failed to add gpio\n");
+		return (ENXIO);
+	}
+
+	error = chipc_set_mem_resource(sc, child, 0, 0, RM_MAX_END, 0, 0);
+	if (error) {
+		device_printf(sc->dev, "failed to set gpio memory resource: "
+		    "%d\n", error);
+		return (error);
 	}
 
 	/* All remaining devices are SoC-only */
@@ -823,6 +849,25 @@ chipc_alloc_resource(device_t dev, device_t child, int type,
 	if ((cr = chipc_find_region(sc, start, end)) == NULL) {
 		/* Resource requests outside our shared port regions can be
 		 * delegated to our parent. */
+		rv = bus_generic_rl_alloc_resource(dev, child, type, rid,
+		    start, end, count, flags);
+		return (rv);
+	}
+
+	/*
+	 * As a special case, children that map the complete ChipCommon register
+	 * block are delegated to our parent.
+	 *
+	 * The rman API does not support sharing resources that are not
+	 * identical in size; since we allocate subregions to various children,
+	 * any children that need to map the entire register block (e.g. because
+	 * they require access to discontiguous register ranges) must make the
+	 * allocation through our parent, where we hold a compatible
+	 * RF_SHAREABLE allocation.
+	 */
+	if (cr == sc->core_region && cr->cr_addr == start &&
+	    cr->cr_end == end && cr->cr_count == count)
+	{
 		rv = bus_generic_rl_alloc_resource(dev, child, type, rid,
 		    start, end, count, flags);
 		return (rv);
