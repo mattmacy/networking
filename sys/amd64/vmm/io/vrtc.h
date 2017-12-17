@@ -43,8 +43,8 @@ int vrtc_nvram_write(struct vm *vm, int offset, uint8_t value);
 int vrtc_nvram_read(struct vm *vm, int offset, uint8_t *retval);
 
 int vrtc_addr_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-    uint32_t *val);
+    uint32_t *eax, void *arg);
 int vrtc_data_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-    uint32_t *val);
+    uint32_t *eax, void *arg);
 
 #endif

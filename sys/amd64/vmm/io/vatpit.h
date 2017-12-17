@@ -38,8 +38,8 @@ struct vatpit *vatpit_init(struct vm *vm);
 void vatpit_cleanup(struct vatpit *vatpit);
 
 int vatpit_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-    uint32_t *eax);
+    uint32_t *eax, void *arg);
 int vatpit_nmisc_handler(struct vm *vm, int vcpuid, bool in, int port,
-    int bytes, uint32_t *eax);
+    int bytes, uint32_t *eax, void *arg);
 
 #endif	/* _VATPIT_H_ */

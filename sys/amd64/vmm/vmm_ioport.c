@@ -29,6 +29,9 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/kernel.h>
+#include <sys/sysctl.h>
+#include <sys/malloc.h>
 
 #include <machine/vmm.h>
 #include <machine/vmm_instruction_emul.h>
@@ -41,6 +44,8 @@ __FBSDID("$FreeBSD$");
 #include "vmm_ktr.h"
 
 #define	MAX_IOPORTS		1280
+
+static MALLOC_DEFINE(M_VM_IOPORT, "vm_ioport", "vm_ioport");
 
 ioport_handler_func_t ioport_handler[MAX_IOPORTS] = {
 	[TIMER_MODE] = vatpit_handler,
@@ -57,6 +62,17 @@ ioport_handler_func_t ioport_handler[MAX_IOPORTS] = {
 	[IO_PMTMR] = vpmtmr_handler,
 	[IO_RTC] = vrtc_addr_handler,
 	[IO_RTC + 1] = vrtc_data_handler,
+};
+
+#define MAX_SEGS	20
+struct ioport_segs {
+	int numsegs;
+	struct {
+		uint16_t start;
+		uint16_t size;
+		ioport_handler_func_t func;
+		void *arg;
+	} seg[MAX_SEGS];
 };
 
 #ifdef KTR
@@ -97,19 +113,47 @@ inout_instruction(struct vm_exit *vmexit)
 }
 #endif	/* KTR */
 
+static ioport_handler_func_t
+inout_search(struct vm *vm, uint16_t port, void **arg)
+{
+	struct ioport_segs *segs;
+	ioport_handler_func_t handler;
+	int i;
+
+	segs = vm_ioport(vm);
+	handler = NULL;
+
+	for (i = 0; i < segs->numsegs; i++) {
+		if (port >= segs->seg[i].start &&
+			port < (segs->seg[i].start + segs->seg[i].size)) {
+			handler = segs->seg[i].func;
+			*arg = segs->seg[i].arg;
+			break;
+		}
+	}
+
+	return (handler);
+}
+
 static int
 emulate_inout_port(struct vm *vm, int vcpuid, struct vm_exit *vmexit,
     bool *retu)
 {
 	ioport_handler_func_t handler;
+	void *arg;
 	uint32_t mask, val;
 	int error;
 
 	/*
 	 * If there is no handler for the I/O port then punt to userspace.
 	 */
-	if (vmexit->u.inout.port >= MAX_IOPORTS ||
-	    (handler = ioport_handler[vmexit->u.inout.port]) == NULL) {
+	if (vmexit->u.inout.port < MAX_IOPORTS) {
+		handler = ioport_handler[vmexit->u.inout.port];
+		arg = NULL;
+	} else
+		handler = inout_search(vm, vmexit->u.inout.port, &arg);
+
+	if (handler == NULL) {
 		*retu = true;
 		return (0);
 	}
@@ -121,7 +165,8 @@ emulate_inout_port(struct vm *vm, int vcpuid, struct vm_exit *vmexit,
 	}
 
 	error = (*handler)(vm, vcpuid, vmexit->u.inout.in,
-	    vmexit->u.inout.port, vmexit->u.inout.bytes, &val);
+	    vmexit->u.inout.port, vmexit->u.inout.bytes, &val, arg);
+
 	if (error) {
 		/*
 		 * The value returned by this function is also the return value
@@ -173,4 +218,51 @@ vm_handle_inout(struct vm *vm, int vcpuid, struct vm_exit *vmexit, bool *retu)
 	    error ? "error" : (*retu ? "userspace" : "handled"));
 
 	return (error);
+}
+
+void *
+vm_ioport_init(struct vm *vm)
+{
+
+	return (malloc(sizeof(struct ioport_segs), M_VM_IOPORT,
+		    M_WAITOK | M_ZERO));
+}
+
+void
+vm_ioport_cleanup(struct vm *vm, void *hdl)
+{
+
+	free(hdl, M_VM_IOPORT);
+}
+
+int
+vm_register_ioport(struct vm *vm, ioport_handler_func_t func, void *arg,
+    uint16_t start, uint16_t size)
+{
+	struct ioport_segs *segs;
+	int i;
+
+	segs = vm_ioport(vm);
+
+	if (segs->numsegs == MAX_SEGS)
+		return (ENOSPC);
+
+	/*
+	 * No locking needed - assumes all operations are done
+	 * prior to running or in UP context
+	 */
+	for (i = 0; i < segs->numsegs; i++) {
+		/* Make sure existing mappings don't overlap */
+		if (!(start >= (segs->seg[i].start + segs->seg[i].size) ||
+		      (start + size) < segs->seg[i].start))
+			return (EINVAL);
+	}
+
+	segs->seg[i].start = start;
+	segs->seg[i].size = size;
+	segs->seg[i].func = func;
+	segs->seg[i].arg = arg;
+	segs->numsegs++;
+
+	return (0);
 }

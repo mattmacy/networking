@@ -2,7 +2,8 @@
 
 KMOD=	vmm
 
-SRCS=	opt_acpi.h opt_ddb.h device_if.h bus_if.h pci_if.h pcib_if.h acpi_if.h
+SRCS=	opt_acpi.h opt_ddb.h device_if.h bus_if.h pci_if.h pcib_if.h acpi_if.h \
+	ifdi_if.h
 DPSRCS+=	vmx_assym.h svm_assym.h
 DPSRCS+=	vmx_genassym.c svm_genassym.c
 
@@ -34,7 +35,8 @@ SRCS+=	iommu.c		\
 	vioapic.c	\
 	vlapic.c	\
 	vpmtmr.c	\
-	vrtc.c
+	vrtc.c		\
+	vtnet_be.c
 
 # intel-specific files
 .PATH: ${SRCTOP}/sys/amd64/vmm/intel
