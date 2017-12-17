@@ -139,5 +139,7 @@
 #define	SIOCGIFRSSKEY	_IOWR('i', 150, struct ifrsskey)/* get RSS key */
 #define	SIOCGIFRSSHASH	_IOWR('i', 151, struct ifrsshash)/* get the current RSS
 							type/func settings */
+#define	SIOCSIFXCAP	 _IOW('i', 152, struct ifreq)	/* set IF features extended */
+#define	SIOCGIFXCAP	_IOWR('i', 153, struct ifreq)	/* get IF features extended */
 
 #endif /* !_SYS_SOCKIO_H_ */

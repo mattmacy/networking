@@ -167,7 +167,8 @@ struct pkthdr {
 			uint8_t		 l3hlen;	/* layer 3 hdr len */
 			uint8_t		 l4hlen;	/* layer 4 hdr len */
 			uint8_t		 l5hlen;	/* layer 5 hdr len */
-			uint32_t	 spare;
+			uint32_t	 spare:8;
+			uint32_t	 vxlanid:24;
 		};
 	};
 	union {
@@ -285,6 +286,61 @@ struct mbuf {
 	};
 };
 
+#define	MVEC_MANAGED	0x0		/* cluster should be freed when refcnt goes to 0 */
+#define	MVEC_UNMANAGED	0x1		/* memory managed elsewhere */
+#define	MVEC_MBUF	0x2		/* free to mbuf zone */
+#define	MVEC_MALLOC	0x3		/* free temporary w/ type M_DEVBUF */
+
+// if we want > 16k for larger segments we could use the
+// bottom 3 bits of cl
+struct mvec_ent {
+	caddr_t		me_cl;
+	uint16_t	me_eop:1;
+	uint16_t	me_off:15;
+	uint16_t	me_type:2;
+	uint16_t	me_len:14;
+};
+
+/*
+struct mvec {
+	uint64_t m_count:8;
+	uint64_t m_flags:56;
+	struct mvec_ent m_ents[0];
+};
+*/
+
+/*
+ * (LP64) 120 bytes
+ */
+struct mvec9 {
+	caddr_t	m_tmp;
+	uint32_t m_count:8;
+	uint32_t m_flags:24;
+	struct mvec_ent m_ents[9];
+};
+
+/*
+ * (LP64) 384 bytes
+ */
+struct mvec31 {
+	caddr_t	m_tmp;
+	uint32_t m_count:8;
+	uint32_t m_flags:24;
+	struct mvec_ent m_ents[31];
+};
+
+/*
+ * (LP64) 768 bytes
+ */
+struct mvec64 {
+	caddr_t	m_tmp;
+	uint32_t m_count:8;
+	uint32_t m_flags:24;
+	struct mvec_ent m_ents[63];
+};
+
+
+
 /*
  * mbuf flags of global significance and layer crossing.
  * Those of only protocol/layer specific significance are to be mapped
@@ -318,6 +374,7 @@ struct mbuf {
 #define	M_PROTO10	0x00200000 /* protocol-specific */
 #define	M_PROTO11	0x00400000 /* protocol-specific */
 #define	M_PROTO12	0x00800000 /* protocol-specific */
+#define	M_VXLANTAG	0x01000000 /* vxlanid is valid */
 
 #define MB_DTOR_SKIP	0x1	/* don't pollute the cache by touching a freed mbuf */
 
@@ -333,7 +390,7 @@ struct mbuf {
  */
 #define M_COPYFLAGS \
     (M_PKTHDR|M_EOR|M_RDONLY|M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_TSTMP| \
-     M_TSTMP_HPREC|M_PROTOFLAGS)
+     M_TSTMP_HPREC|M_PROTOFLAGS|M_VXLANTAG)
 
 /*
  * Mbuf flag description for use with printf(9) %b identifier.
