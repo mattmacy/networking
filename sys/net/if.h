@@ -243,6 +243,12 @@ struct if_data {
 #define	IFCAP_HWSTATS		0x800000 /* manages counters internally */
 #define	IFCAP_TXRTLMT		0x1000000 /* hardware supports TX rate limiting */
 #define	IFCAP_HWRXTSTMP		0x2000000 /* hardware rx timestamping */
+#define	IFCAP_TXBATCH		0x4000000 /* interface supports multiple packets at once */
+#define	IFCAP_RXBATCH		0x8000000 /* interface can produce multiple packets at once */
+#define	IFCAP_TXMVEC		0x10000000 /* interface supports mbuf vectors in tx */
+#define	IFCAP_RXMVEC		0x20000000 /* interface can produce mbuf vectors in rx */
+#define	IFCAP_VXLANDECAP	0x40000000 /* interface can do VXLAN decap */
+#define	IFCAP_VXLANENCAP	0x80000000 /* interface can do VXLAN encap */
 
 #define IFCAP_HWCSUM_IPV6	(IFCAP_RXCSUM_IPV6 | IFCAP_TXCSUM_IPV6)
 
@@ -395,7 +401,7 @@ struct	ifreq {
 		int	ifru_phys;
 		int	ifru_media;
 		caddr_t	ifru_data;
-		int	ifru_cap[2];
+		int	ifru_cap[4];
 		u_int	ifru_fib;
 		u_char	ifru_vlan_pcp;
 	} ifr_ifru;
@@ -413,6 +419,8 @@ struct	ifreq {
 #define	ifr_data	ifr_ifru.ifru_data	/* for use by interface */
 #define	ifr_reqcap	ifr_ifru.ifru_cap[0]	/* requested capabilities */
 #define	ifr_curcap	ifr_ifru.ifru_cap[1]	/* current capabilities */
+#define	ifr_reqcap_ext	ifr_ifru.ifru_cap[2]	/* requested capabilities upper */
+#define	ifr_curcap_ext	ifr_ifru.ifru_cap[3]	/* current capabilities upper */
 #define	ifr_index	ifr_ifru.ifru_index	/* interface index */
 #define	ifr_fib		ifr_ifru.ifru_fib	/* interface fib */
 #define	ifr_vlan_pcp	ifr_ifru.ifru_vlan_pcp	/* VLAN priority */

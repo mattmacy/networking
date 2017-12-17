@@ -36,6 +36,8 @@
 #include <sys/nv.h>
 #include <sys/gtaskqueue.h>
 
+struct if_clone;
+
 /*
  * The value type for indexing, limits max descriptors
  * to 65535 can be conditionally redefined to uint32_t
@@ -57,6 +59,8 @@ struct if_shared_ctx;
 typedef struct if_shared_ctx *if_shared_ctx_t;
 struct if_int_delay_info;
 typedef struct if_int_delay_info  *if_int_delay_info_t;
+struct if_pseudo;
+typedef struct if_pseudo *if_pseudo_t;
 
 /*
  * File organization:
@@ -74,14 +78,14 @@ typedef struct if_rxd_frag {
 
 typedef struct if_rxd_info {
 	/* set by iflib */
-	uint16_t iri_qsidx;		/* qset index */
-	uint16_t iri_vtag;		/* vlan tag - if flag set */
-	/* XXX redundant with the new irf_len field */
-	uint16_t iri_len;		/* packet length */
-	qidx_t iri_cidx;		/* consumer index of cq */
 	struct ifnet *iri_ifp;		/* some drivers >1 interface per softc */
+	uint16_t iri_qsidx;		/* qset index */
+	qidx_t iri_cidx;		/* consumer index of cq */
 
 	/* updated by driver */
+	uint16_t iri_vtag;		/* vlan tag - if flag set */
+	uint16_t iri_len;		/* packet length */
+
 	if_rxd_frag_t iri_frags;
 	uint32_t iri_flowid;		/* RSS hash for packet */
 	uint32_t iri_csum_flags;	/* m_pkthdr csum flags */
@@ -92,6 +96,10 @@ typedef struct if_rxd_info {
 	uint8_t	 iri_rsstype;		/* RSS hash type */
 	uint8_t	 iri_pad;		/* any padding in the received data */
 } *if_rxd_info_t;
+
+#define iri_tso_segsz iri_qsidx
+#define iri_cookie1 iri_ifp
+#define iri_cookie2 iri_flowid
 
 typedef struct if_rxd_update {
 	uint64_t	*iru_paddrs;
@@ -178,6 +186,9 @@ typedef struct pci_vendor_info {
 #define IFLIB_PNP_INFO(b, u, t) \
     MODULE_PNP_INFO(IFLIB_PNP_DESCR, b, u, t, sizeof(t[0]), nitems(t) - 1)
 
+/* bnxt supports 64 with hardware LRO enabled */
+#define IFLIB_MAX_RX_SEGS		64
+
 typedef struct if_txrx {
 	int (*ift_txd_encap) (void *, if_pkt_info_t);
 	void (*ift_txd_flush) (void *, uint16_t, qidx_t pidx);
@@ -216,6 +227,7 @@ typedef struct if_softc_ctx {
 	int isc_ntxqsets_max;
 
 	iflib_intr_mode_t isc_intr;
+	uint8_t	isc_min_tx_latency; /* disable doorbell update batching */
 	uint16_t isc_max_frame_size; /* set at init time by driver */
 	uint16_t isc_min_frame_size; /* set at init time by driver, only used if
 					IFLIB_NEED_ETHER_PAD is set. */
@@ -245,6 +257,8 @@ struct if_shared_ctx {
 /* optional function to transform the read values to match the table*/
 	void (*isc_parse_devinfo) (uint16_t *device_id, uint16_t *subvendor_id,
 				   uint16_t *subdevice_id, uint16_t *rev_id);
+	/* optional rx completion handler */
+	m_ext_free_t *isc_rx_completion;
 	int isc_nrxd_min[8];
 	int isc_nrxd_default[8];
 	int isc_nrxd_max[8];
@@ -259,6 +273,7 @@ struct if_shared_ctx {
 	int isc_rx_process_limit;
 	int isc_tx_reclaim_thresh;
 	int isc_flags;
+	const char *isc_name;
 };
 
 typedef struct iflib_dma_info {
@@ -320,7 +335,22 @@ typedef enum {
  * Driver needs frames padded to some minimum length
  */
 #define IFLIB_NEED_ETHER_PAD	0x100
-
+/*
+ * Packets can be freed immediately after encap
+ */
+#define IFLIB_TXD_ENCAP_PIO	0x0100
+/*
+ * Use RX completion handler
+ */
+#define IFLIB_RX_COMPLETION	0x0200
+/*
+ * Skip refilling cluster free lists
+ */
+#define IFLIB_SKIP_CLREFILL	0x0400
+/*
+ * Driver manages cidx
+ */
+#define IFLIB_CIDX_MANAGED	0x0800
 
 
 /*
@@ -367,7 +397,7 @@ int iflib_irq_alloc(if_ctx_t, if_irq_t, int, driver_filter_t, void *filter_arg, 
 int iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 							iflib_intr_type_t type, driver_filter_t *filter,
 							void *filter_arg, int qid, char *name);
-void iflib_softirq_alloc_generic(if_ctx_t ctx, if_irq_t irq, iflib_intr_type_t type,  void *arg, int qid, char *name);
+void iflib_softirq_alloc_generic(if_ctx_t ctx, if_irq_t irq, iflib_intr_type_t type, int qid, char *name);
 
 void iflib_irq_free(if_ctx_t ctx, if_irq_t irq);
 
@@ -403,5 +433,11 @@ void iflib_led_create(if_ctx_t ctx);
 
 void iflib_add_int_delay_sysctl(if_ctx_t, const char *, const char *,
 								if_int_delay_info_t, int, int);
+
+/*
+ * Pseudo device support
+ */
+if_pseudo_t iflib_clone_register(if_shared_ctx_t);
+void iflib_clone_deregister(if_pseudo_t);
 
 #endif /*  __IFLIB_H_ */

@@ -757,7 +757,7 @@ ptnet_ioctl(if_t ifp, u_long cmd, caddr_t data)
 		break;
 
 	case SIOCSIFCAP:
-		device_printf(dev, "SIOCSIFCAP %x %x\n",
+		device_printf(dev, "SIOCSIFCAP %x %lx\n",
 			      ifr->ifr_reqcap, ifp->if_capenable);
 		mask = ifr->ifr_reqcap ^ ifp->if_capenable;
 #ifdef DEVICE_POLLING

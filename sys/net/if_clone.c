@@ -732,3 +732,9 @@ ifc_simple_destroy(struct if_clone *ifc, struct ifnet *ifp)
 
 	return (0);
 }
+
+const char *
+ifc_name(struct if_clone *ifc)
+{
+	return (ifc->ifc_name);
+}

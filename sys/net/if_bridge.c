@@ -947,7 +947,7 @@ bridge_set_ifcap(struct bridge_softc *sc, struct bridge_iflist *bif, int set)
 			    ifp->if_xname, error);
 		if ((ifp->if_capenable & ~set) != 0)
 			if_printf(sc->sc_ifp,
-			    "can't disable some capabilities on %s: 0x%x\n",
+			    "can't disable some capabilities on %s: 0x%lx\n",
 			    ifp->if_xname, ifp->if_capenable & ~set);
 	}
 }

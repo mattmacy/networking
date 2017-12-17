@@ -1967,7 +1967,7 @@ em_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		tx_que = &adapter->tx_queues[i];
 		iflib_softirq_alloc_generic(ctx,
 		    &adapter->rx_queues[i % adapter->rx_num_queues].que_irq,
-		    IFLIB_INTR_TX, tx_que, tx_que->me, buf);
+		    IFLIB_INTR_TX, tx_que->me, buf);
 
 		tx_que->msix = (vector % adapter->tx_num_queues);
 
