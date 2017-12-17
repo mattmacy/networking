@@ -805,6 +805,10 @@ main(int argc, char *argv[])
 	mptgen = 1;
 	rtc_localtime = 1;
 	memflags = 0;
+	/*
+	 * XXX don't upstream --- just for testing vtnet_be
+	 */
+	memflags |= VM_MEM_F_WIRED;
 
 	optstr = "abehuwxACHIPSWYp:g:c:s:m:l:U:";
 	while ((c = getopt(argc, argv, optstr)) != -1) {
@@ -819,10 +823,10 @@ main(int argc, char *argv[])
 			bvmcons = 1;
 			break;
 		case 'p':
-                        if (pincpu_parse(optarg) != 0) {
-                            errx(EX_USAGE, "invalid vcpu pinning "
-                                 "configuration '%s'", optarg);
-                        }
+			if (pincpu_parse(optarg) != 0) {
+				errx(EX_USAGE, "invalid vcpu pinning "
+					 "configuration '%s'", optarg);
+			}
 			break;
                 case 'c':
 			guest_ncpus = atoi(optarg);
@@ -847,7 +851,7 @@ main(int argc, char *argv[])
 		case 'S':
 			memflags |= VM_MEM_F_WIRED;
 			break;
-                case 'm':
+		case 'm':
 			error = vm_parse_memsize(optarg, &memsize);
 			if (error)
 				errx(EX_USAGE, "invalid memsize '%s'", optarg);
@@ -997,8 +1001,10 @@ main(int argc, char *argv[])
 	/*
 	 * Change the proc title to include the VM name.
 	 */
+#if 0
+	/* XXX disable for debugging */
 	setproctitle("%s", vmname); 
-	
+#endif
 	/*
 	 * Add CPU 0
 	 */
