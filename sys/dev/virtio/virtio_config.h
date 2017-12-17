@@ -32,10 +32,14 @@
 #define _VIRTIO_CONFIG_H_
 
 /* Status byte for guest to report progress. */
-#define VIRTIO_CONFIG_STATUS_RESET	0x00
+#define VIRTIO_CONFIG_STATUS_RESET	0x00 /* not in Linux any more */
+
 #define VIRTIO_CONFIG_STATUS_ACK	0x01
-#define VIRTIO_CONFIG_STATUS_DRIVER	0x03
+#define VIRTIO_CONFIG_STATUS_DRIVER	0x03 /* actually 0x02, but flags are OR'd */
 #define VIRTIO_CONFIG_STATUS_DRIVER_OK	0x04
+#define VIRTIO_CONFIG_STATUS_FEATURES_OK	0x08
+
+#define VIRTIO_CONFIG_STATUS_NEEDS_RESET	0x40
 #define VIRTIO_CONFIG_STATUS_FAILED	0x80
 
 /*
@@ -43,6 +47,10 @@
  * completely used, even if we've suppressed them.
  */
 #define VIRTIO_F_NOTIFY_ON_EMPTY (1 << 24)
+
+ /* Can the device handle any descriptor layout? */
+#define VIRTIO_F_ANY_LAYOUT         (1 << 27)
+
 
 /* Support for indirect buffer descriptors. */
 #define VIRTIO_RING_F_INDIRECT_DESC	(1 << 28)
@@ -55,6 +63,8 @@
  * is used to detect faulty drivers.
  */
 #define VIRTIO_F_BAD_FEATURE (1 << 30)
+
+#define VIRTIO_F_VERSION_1 (1UL << 32)
 
 /*
  * Some VirtIO feature bits (currently bits 28 through 31) are

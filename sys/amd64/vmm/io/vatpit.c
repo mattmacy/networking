@@ -317,7 +317,7 @@ vatpit_update_mode(struct vatpit *vatpit, uint8_t val)
 
 int
 vatpit_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-    uint32_t *eax)
+    uint32_t *eax, void *arg)
 {
 	struct vatpit *vatpit;
 	struct channel *c;
@@ -400,7 +400,7 @@ vatpit_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 
 int
 vatpit_nmisc_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-    uint32_t *eax)
+    uint32_t *eax, void *arg)
 {
 	struct vatpit *vatpit;
 

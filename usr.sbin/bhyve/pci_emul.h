@@ -71,6 +71,10 @@ struct pci_devemu {
 	uint64_t  (*pe_barread)(struct vmctx *ctx, int vcpu,
 				struct pci_devinst *pi, int baridx,
 				uint64_t offset, int size);
+
+	/* MSIx global enable/disable callback */
+	void	(*pe_msix)(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+			   int status);
 };
 #define PCI_EMUL_SET(x)   DATA_SET(pci_devemu_set, x);
 

@@ -40,6 +40,7 @@ SRCS=	\
 	pci_virtio_block.c	\
 	pci_virtio_console.c	\
 	pci_virtio_net.c	\
+	pci_kvirtio_net.c	\
 	pci_virtio_rnd.c	\
 	pci_uart.c		\
 	pci_xhci.c		\
