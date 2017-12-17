@@ -6511,8 +6511,12 @@ iflib_clone_create(struct if_clone *ifc, int unit, caddr_t params)
 		MPASS(iflib_pseudodev != NULL);
 	}
 	ip = iflib_ip_lookup(name);
-	if (devclass_get_device(ip->ip_dc, unit) != NULL)
+	if (ip == NULL)
+		return (ENOENT);
+	if (devclass_get_device(ip->ip_dc, unit) != NULL) {
+		printf("unit %d allocated\n", unit);
 		return (EBUSY);
+	}
 	PSEUDO_LOCK();
 	dev = device_add_child(iflib_pseudodev, name, unit);
 	device_set_driver(dev, &pseudodriver);
@@ -6521,8 +6525,6 @@ iflib_clone_create(struct if_clone *ifc, int unit, caddr_t params)
 	MPASS(rc == 0);
 	MPASS(dev != NULL);
 	MPASS(devclass_get_device(ip->ip_dc, unit) == dev);
-	if (ip == NULL)
-		return (ENOENT);
 	rc = iflib_pseudo_register(dev, ip->ip_sctx, &ctx, &clctx);
 	if (rc == 0)
 		device_set_softc(dev, ctx);
