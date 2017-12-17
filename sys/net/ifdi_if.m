@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2014, Matthew Macy (mmacy@mattmacy.io)
+# Copyright (c) 2014-2017, Matthew Macy (mmacy@mattmacy.io)
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,6 +39,7 @@
 #include <net/if_var.h>
 #include <net/if_media.h>
 #include <net/iflib.h>
+#include <net/if_clone.h>
 
 INTERFACE ifdi;
 
@@ -58,6 +59,12 @@ CODE {
 	null_int_op(if_ctx_t _ctx __unused)
 	{
 		return (0);
+	}
+
+	static int
+	null_int_int_op(if_ctx_t _ctx __unused, int arg0 __unused)
+	{
+		return (ENOTSUP);
 	}
 
 	static int
@@ -111,6 +118,24 @@ CODE {
 	{
 		return (ENOTSUP);
 	}
+
+	static void
+	null_media_status(if_ctx_t ctx __unused, struct ifmediareq *_ifm __unused)
+	{
+	}
+
+	static int
+	null_cloneattach(if_ctx_t ctx __unused, struct if_clone *ifc __unused,
+			 const char *name __unused, caddr_t params __unused)
+	{
+	    return (0);
+	}
+
+	static void
+	null_rx_clset(if_ctx_t _ctx __unused, uint16_t _flid __unused,
+		      uint16_t _qid __unused, caddr_t *_sdcl __unused)
+	{
+	}
 };
 
 #
@@ -119,11 +144,18 @@ CODE {
 
 METHOD int attach_pre {
 	if_ctx_t _ctx;
-};
+} DEFAULT null_int_op;
 
 METHOD int attach_post {
 	if_ctx_t _ctx;
-};
+} DEFAULT null_int_op;
+
+METHOD int cloneattach {
+	if_ctx_t _ctx;
+	struct if_clone *_ifc;
+	const char *_name;
+	caddr_t params;
+} DEFAULT null_cloneattach;
 
 METHOD int detach {
 	if_ctx_t _ctx;
@@ -164,7 +196,14 @@ METHOD int rx_queues_alloc {
 
 METHOD void queues_free {
 	if_ctx_t _ctx;
-};
+} DEFAULT null_void_op;
+
+METHOD void rx_clset {
+	if_ctx_t _ctx;
+	uint16_t _fl;
+	uint16_t _qsetid;
+	caddr_t *_sdcl;
+} DEFAULT null_rx_clset;
 
 #
 # interface reset / stop
@@ -185,7 +224,7 @@ METHOD void stop {
 METHOD int msix_intr_assign {
 	if_ctx_t _sctx;
 	int msix;
-};
+} DEFAULT null_int_int_op;
 
 METHOD void intr_enable {
 	if_ctx_t _ctx;
@@ -273,11 +312,11 @@ METHOD void update_admin_status {
 METHOD void media_status {
 	if_ctx_t _ctx;
 	struct ifmediareq *_ifm;
-};
+} DEFAULT null_media_status;
 
 METHOD int media_change {
 	if_ctx_t _ctx;
-};
+} DEFAULT null_int_op;
 
 METHOD uint64_t get_counter {
 	if_ctx_t _ctx;
