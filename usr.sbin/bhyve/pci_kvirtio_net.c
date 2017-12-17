@@ -75,6 +75,7 @@ __FBSDID("$FreeBSD$");
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <err.h>
 
 #include "bhyverun.h"
 #include "pci_emul.h"
@@ -82,6 +83,8 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
+#include <vmmapi.h>
+
 
 #define VTNET_BE_REGSZ		(20 + 4 + 8)	/* virtio + MSI-x + config */
 #define MAX_VMS				256
@@ -297,7 +300,13 @@ static int
 vtnet_be_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 {
 	struct vtnet_be_softc *vbs;
+	int memflags;
 
+	memflags = vm_get_memflags(ctx);
+	if (!(memflags & VM_MEM_F_WIRED)) {
+		warnx("kvirtio-net requires guest memory to be wired");
+		return (1);
+	}
 	vbs = calloc(1, sizeof(struct vtnet_be_softc));
 
 	pi->pi_arg = vbs;
