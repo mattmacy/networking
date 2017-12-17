@@ -1,0 +1,12 @@
+include BHYVE
+
+ident   BHYVE-NODEBUG
+
+nooptions       INVARIANTS
+nooptions       INVARIANT_SUPPORT
+nooptions       WITNESS
+nooptions       WITNESS_SKIPSPIN
+nooptions       BUF_TRACKING
+nooptions       DEADLKRES
+nooptions       FULL_BUF_TRACKING
+
