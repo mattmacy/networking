@@ -84,7 +84,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/vmm_dev.h>
 
 #define VTNET_BE_REGSZ		(20 + 4 + 8)	/* virtio + MSI-x + config */
-#define VTNET_BE			"vtnet_be"
 #define MAX_VMS				256
 
 struct vtnet_be_softc {
@@ -253,9 +252,8 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 
 	strncpy(va.vva_ifparent, vbs->vbs_hw_intf, IFNAMSIZ-1);
 	memcpy(va.vva_macaddr, vbs->vbs_origmac, ETHER_ADDR_LEN);
-
 	for (i = 0; i < MAX_VMS; i++) {
-		sprintf(ifr.ifr_name, "%s%d", VTNET_BE, i);
+		sprintf(ifr.ifr_name, "vmi%d", i);
 		if (ioctl(s, SIOCIFCREATE2, &ifr) == 0) {
 			vbs->vbs_vm_intf = strdup(ifr.ifr_name);
 			break;
