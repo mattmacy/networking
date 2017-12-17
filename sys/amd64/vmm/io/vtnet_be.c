@@ -1114,10 +1114,10 @@ vb_rxswitch(struct ifnet *ifp, struct vb_softc *vs, struct mbuf *m, bool ingress
 	 *   guest. Return true to allow it to be placed into the
 	 *   rx virtqueue.
 	 *
-	 * XXX Note that the in-kernel kvtnet code may choose not to
-	 * make a copy and instead process it inline into the
-	 * virtio descriptor ring. This avoids a potential perf
-	 * hit from doing a copy and mbuf allocations.
+	 * XXX Note that the code may choose not to make a copy
+	 * instead process it inline into the virtio descriptor 
+	 * ring. This avoids a potential perf hit from doing a 
+	 * copy and mbuf allocations.
 	 */
 	do {
 		mp = m->m_nextpkt;
@@ -1447,8 +1447,6 @@ vb_txq_init(struct vb_softc *vs, struct vb_txq *txq)
 	txq->vt_cidx = 0;
 }
 
-
-
 static int
 vb_if_attach(struct vb_softc *vs, struct vb_if_attach *via)
 {
@@ -1512,8 +1510,6 @@ vb_vm_attach(struct vb_softc *vs, struct vb_vm_attach *vva)
 		printf("vm_register_ioport failed: %d\n", rc);
 		vs->vs_proc = NULL;
 		return (rc);
-	} else {
-		vb_dev_reset(vs);
 	}
 	VB_LOCK;
 	SLIST_INSERT_HEAD(&vb->dev, vs, vs_next);
@@ -1536,8 +1532,10 @@ vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t par
 			printf("param copyin failed: %d\n", rc);
 			return (rc);
 		}
-		if ((rc = vb_vm_attach(vs, &va)))
+		if ((rc = vb_vm_attach(vs, &va))) {
+			printf("vb_vm_attach failed %d\n", rc);
 			return (rc);
+		}
 		vs->vs_flags |= VS_OWNED;
 	}
 
@@ -1594,6 +1592,7 @@ vb_attach_post(if_ctx_t ctx)
 		snprintf(buf, sizeof(buf), "txq%d", i);
 		iflib_softirq_alloc_generic(ctx, NULL, IFLIB_INTR_TX, i, buf);
 	}
+	vb_dev_reset(vs);
 	scctx->isc_min_tx_latency = 1;
 
 	/*
