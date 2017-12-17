@@ -4865,11 +4865,6 @@ iflib_pseudo_deregister(if_ctx_t ctx)
 	struct taskqgroup *tqg;
 	iflib_fl_t fl;
 
-	CTX_LOCK(ctx);
-	ctx->ifc_in_detach = 1;
-	iflib_stop(ctx);
-	CTX_UNLOCK(ctx);
-
 	/* Unregister VLAN events */
 	if (ctx->ifc_vlan_attach_event != NULL)
 		EVENTHANDLER_DEREGISTER(vlan_config, ctx->ifc_vlan_attach_event);
@@ -6541,6 +6536,11 @@ iflib_clone_destroy(struct ifnet *ifp)
 	 * Detach device / free / free unit 
 	 *
 	 */
+	CTX_LOCK(ctx);
+	ctx->ifc_in_detach = 1;
+	iflib_stop(ctx);
+	CTX_UNLOCK(ctx);
+
 	mtx_lock(&Giant);
 	rc = device_delete_child(iflib_pseudodev, dev);
 	mtx_unlock(&Giant);
