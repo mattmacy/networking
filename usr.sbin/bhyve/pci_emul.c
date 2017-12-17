@@ -1860,6 +1860,8 @@ pci_cfgrw(struct vmctx *ctx, int vcpu, int in, int bus, int slot, int func,
 
 		} else if (pci_emul_iscap(pi, coff)) {
 			pci_emul_capwrite(pi, coff, bytes, *eax);
+			if (pe->pe_msix != NULL)
+				(*pe->pe_msix)(ctx, vcpu, pi, pi->pi_msix.enabled);
 		} else if (coff >= PCIR_COMMAND && coff < PCIR_REVID) {
 			pci_emul_cmdsts_write(pi, coff, *eax, bytes);
 		} else {

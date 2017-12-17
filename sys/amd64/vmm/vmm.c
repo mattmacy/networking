@@ -53,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_map.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_param.h>
+#include <vm/vm_kern.h>
 
 #include <machine/cpu.h>
 #include <machine/pcb.h>
@@ -75,6 +76,7 @@ __FBSDID("$FreeBSD$");
 #include "vhpet.h"
 #include "vioapic.h"
 #include "vlapic.h"
+#include "vtnet_be.h"
 #include "vpmtmr.h"
 #include "vrtc.h"
 #include "vmm_stat.h"
@@ -128,6 +130,7 @@ struct mem_seg {
 
 struct mem_map {
 	vm_paddr_t	gpa;
+	vm_offset_t	kva;
 	size_t		len;
 	vm_ooffset_t	segoff;
 	int		segid;
@@ -165,6 +168,8 @@ struct vm {
 	struct vmspace	*vmspace;		/* (o) guest's address space */
 	char		name[VM_MAX_NAMELEN];	/* (o) virtual machine name */
 	struct vcpu	vcpu[VM_MAXCPU];	/* (i) guest vcpus */
+	void		*ioport;		/* (i) ioport exit hook */
+	void		*vtnet_be;	       	/* (i) kvt hook */
 };
 
 static int vmm_initialized;
@@ -346,6 +351,8 @@ vmm_init(void)
 
 	vmm_resume_p = vmm_resume;
 
+	vmm_vtnet_be_modinit();
+
 	return (VMM_INIT(vmm_ipinum));
 }
 
@@ -368,6 +375,7 @@ vmm_handler(module_t mod, int what, void *arg)
 			iommu_cleanup();
 			if (vmm_ipinum != IPI_AST)
 				lapic_ipi_free(vmm_ipinum);
+			vmm_vtnet_be_modunload();
 			error = VMM_CLEANUP();
 			/*
 			 * Something bad happened - prevent new
@@ -413,6 +421,8 @@ vm_init(struct vm *vm, bool create)
 	vm->vpmtmr = vpmtmr_init(vm);
 	if (create)
 		vm->vrtc = vrtc_init(vm);
+	vm->ioport = vm_ioport_init(vm);
+	vm->vtnet_be = vtnet_be_init(vm);
 
 	CPU_ZERO(&vm->active_cpus);
 
@@ -474,6 +484,8 @@ vm_cleanup(struct vm *vm, bool destroy)
 	vhpet_cleanup(vm->vhpet);
 	vatpic_cleanup(vm->vatpic);
 	vioapic_cleanup(vm->vioapic);
+	vm_ioport_cleanup(vm, vm->ioport);
+	vtnet_be_cleanup(vm->vtnet_be);
 
 	for (i = 0; i < VM_MAXCPU; i++)
 		vcpu_cleanup(vm, i, destroy);
@@ -656,6 +668,7 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 	struct mem_seg *seg;
 	struct mem_map *m, *map;
 	vm_ooffset_t last;
+	vm_offset_t kva;
 	int i, error;
 
 	if (prot == 0 || (prot & ~(VM_PROT_ALL)) != 0)
@@ -690,29 +703,82 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 	if (map == NULL)
 		return (ENOSPC);
 
+	vm_object_reference(seg->object);
 	error = vm_map_find(&vm->vmspace->vm_map, seg->object, first, &gpa,
 	    len, 0, VMFS_NO_SPACE, prot, prot, 0);
 	if (error != KERN_SUCCESS)
-		return (EFAULT);
+		goto mapfail;
 
-	vm_object_reference(seg->object);
-
+	kva = 0;
 	if (flags & VM_MEMMAP_F_WIRED) {
 		error = vm_map_wire(&vm->vmspace->vm_map, gpa, gpa + len,
 		    VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
 		if (error != KERN_SUCCESS) {
-			vm_map_remove(&vm->vmspace->vm_map, gpa, gpa + len);
-			return (EFAULT);
+			printf("failed to wire user 0x%012lx to 0x%012lx\n", gpa, gpa + len);
+			goto wirefail;
+		}
+		 /* first usable address post direct map */
+		kva = 0xfffffe0000000000;
+		vm_object_reference(seg->object);
+		error = vm_map_find(kernel_map, seg->object, first, &kva,
+							len, 0, VMFS_ANY_SPACE, VM_PROT_RW, VM_PROT_RW, 0);
+		if (error != KERN_SUCCESS) {
+			printf("failed to map 0x%lx bytes in to kernel map first: 0x%lx error: %d\n",
+				   len, first, error);
+			goto kernfail;
 		}
 	}
 
 	map->gpa = gpa;
+	map->kva = kva;
 	map->len = len;
 	map->segoff = first;
 	map->segid = segid;
 	map->prot = prot;
 	map->flags = flags;
 	return (0);
+ kernfail:
+	vm_map_unwire(&vm->vmspace->vm_map, gpa, gpa + len,
+				  VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+	vm_object_deallocate(seg->object);
+ wirefail:
+	vm_map_remove(&vm->vmspace->vm_map, gpa, gpa + len);
+ mapfail:
+	return (EFAULT);
+}
+
+vm_offset_t
+vm_gpa_to_kva(struct vm *vm, vm_paddr_t gpa, int len, uint16_t *hint)
+{
+	vm_paddr_t curgpa;
+	vm_offset_t curkva;
+	struct mem_map *mm;
+	int i, curlen;
+
+	if (__predict_true(*hint < VM_MAX_MEMMAPS)) {
+		mm = &vm->mem_maps[*hint];
+		curlen = mm->len;
+		curgpa = mm->gpa;
+		curkva = mm->kva;
+		if (__predict_true((mm->flags & VM_MEMMAP_F_WIRED) && curlen &&
+						   !(gpa < curgpa || gpa + len > curgpa + curlen)))
+				return (curkva + (gpa - curgpa));
+	}
+	for (i = 0; i < VM_MAX_MEMMAPS; i++) {
+		mm = &vm->mem_maps[i];
+		if (__predict_false(mm->flags & VM_MEMMAP_F_WIRED) == 0)
+			continue;
+		curlen = mm->len;
+		curgpa = mm->gpa;
+		curkva = mm->kva;
+		if (curlen && !(gpa < curgpa || gpa + len > curgpa + curlen))
+			break;
+	}
+	*hint = i;
+	if (i == VM_MAX_MEMMAPS)
+		return (0);
+	MPASS(curkva);
+	return (curkva + (gpa - curgpa));
 }
 
 int
@@ -756,13 +822,22 @@ vm_free_memmap(struct vm *vm, int ident)
 	int error;
 
 	mm = &vm->mem_maps[ident];
-	if (mm->len) {
-		error = vm_map_remove(&vm->vmspace->vm_map, mm->gpa,
-		    mm->gpa + mm->len);
+	if (mm->len == 0)
+		return;
+
+	error = vm_map_remove(&vm->vmspace->vm_map, mm->gpa,
+						  mm->gpa + mm->len);
+	KASSERT(error == KERN_SUCCESS, ("%s: vm_map_remove error %d",
+									__func__, error));
+	if (mm->flags & VM_MEMMAP_F_WIRED) {
+		MPASS(mm->kva);
+		error = vm_map_remove(kernel_map, mm->kva,
+							  mm->kva + mm->len);
 		KASSERT(error == KERN_SUCCESS, ("%s: vm_map_remove error %d",
-		    __func__, error));
-		bzero(mm, sizeof(struct mem_map));
+										__func__, error));
+
 	}
+	bzero(mm, sizeof(struct mem_map));
 }
 
 static __inline bool
@@ -2451,6 +2526,13 @@ vm_rtc(struct vm *vm)
 {
 
 	return (vm->vrtc);
+}
+
+void *
+vm_ioport(struct vm *vm)
+{
+
+	return (vm->ioport);
 }
 
 enum vm_reg_name

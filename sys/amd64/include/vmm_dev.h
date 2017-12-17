@@ -386,6 +386,68 @@ enum {
 	_IOW('v', IOCNUM_ACTIVATE_CPU, struct vm_activate_cpu)
 #define	VM_GET_CPUS	\
 	_IOW('v', IOCNUM_GET_CPUSET, struct vm_cpuset)
+
+/* kvtnet ioctls */
+
+#define VMNAMSIZ 40
+#ifndef IFNAMSIZ
+#define IFNAMSIZ 16
+#endif
+
+#define VB_MAGIC 0x20171202
+struct vb_ioctl_header {
+	uint64_t vih_magic;
+	uint64_t vih_type;
+};
+
+struct vb_msix {
+	struct vb_ioctl_header va_ioh;
+	struct {
+		uint64_t msg;
+		uint64_t addr;
+	} queue[3];
+	int status;
+};
+
+struct vb_vm_attach {
+	struct vb_ioctl_header vva_ioh;
+	char vva_ifparent[IFNAMSIZ];
+	char vva_vmparent[VMNAMSIZ];
+	uint16_t	vva_io_start;
+	uint16_t	vva_io_size;
+	uint8_t		vva_num_queues;
+	uint16_t	vva_queue_size;
+	uint8_t		vva_macaddr[6];
+};
+
+struct vb_if_attach {
+	struct vb_ioctl_header via_ioh;
+	char via_ifparent[IFNAMSIZ];
+};
+
+struct vb_vni {
+	struct vb_ioctl_header vv_ioh;
+	uint32_t		vv_vni;
+};
+
+struct vb_macaddr {
+	struct vb_ioctl_header vm_ioh;
+	uint8_t		vm_macaddr[6];
+};
+
+#define VB_MSIX									\
+	_IOW('k', 1, struct vb_msix)
+#define VB_VM_ATTACH							\
+	_IOW('k', 2, struct vb_vm_attach)
+#define VB_IF_ATTACH							\
+	_IOW('k', 3, struct vb_if_attach)
+#define VB_VNI_SET								\
+	_IOW('k', 4, struct vb_vni)
+#define VB_MACADDR_SET							\
+	_IOW('k', 5, struct vb_macaddr)
+
+
+
 #define	VM_SET_INTINFO	\
 	_IOW('v', IOCNUM_SET_INTINFO, struct vm_intinfo)
 #define	VM_GET_INTINFO	\
