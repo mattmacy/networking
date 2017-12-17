@@ -87,8 +87,8 @@ if_show_ifnet(struct ifnet *ifp)
 	IF_DB_PRINTF("%p", if_netmap);
 	IF_DB_PRINTF("0x%08x", if_flags);
 	IF_DB_PRINTF("0x%08x", if_drv_flags);
-	IF_DB_PRINTF("0x%08x", if_capabilities);
-	IF_DB_PRINTF("0x%08x", if_capenable);
+	IF_DB_PRINTF("0x%016lx", if_capabilities);
+	IF_DB_PRINTF("0x%016lx", if_capenable);
 	IF_DB_PRINTF("%p", if_snd.ifq_head);
 	IF_DB_PRINTF("%p", if_snd.ifq_tail);
 	IF_DB_PRINTF("%d", if_snd.ifq_len);

@@ -59,6 +59,7 @@ void	if_clone_detach(struct if_clone *);
 int	ifc_name2unit(const char *name, int *unit);
 int	ifc_alloc_unit(struct if_clone *, int *);
 void	ifc_free_unit(struct if_clone *, int);
+const char *ifc_name(struct if_clone *);
 
 #ifdef _SYS_EVENTHANDLER_H_
 /* Interface clone event. */
@@ -73,7 +74,6 @@ int	if_clone_destroy(const char *);
 int	if_clone_list(struct if_clonereq *);
 struct if_clone *if_clone_findifc(struct ifnet *);
 void	if_clone_addgroup(struct ifnet *, struct if_clone *);
-
 /* The below interface used only by epair(4). */
 int	if_clone_destroyif(struct if_clone *, struct ifnet *);
 

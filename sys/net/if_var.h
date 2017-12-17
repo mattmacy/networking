@@ -254,8 +254,8 @@ struct ifnet {
 	/* Variable fields that are touched by the stack and drivers. */
 	int	if_flags;		/* up/down, broadcast, etc. */
 	int	if_drv_flags;		/* driver-managed status flags */
-	int	if_capabilities;	/* interface features & capabilities */
-	int	if_capenable;		/* enabled features & capabilities */
+	uint64_t	if_capabilities;	/* interface features & capabilities */
+	uint64_t	if_capenable;		/* enabled features & capabilities */
 	void	*if_linkmib;		/* link-type-specific MIB data */
 	size_t	if_linkmiblen;		/* length of above data */
 	u_int	if_refcount;		/* reference count */
@@ -371,6 +371,10 @@ struct ifnet {
 	 * binary interface.
 	 */
 	int	if_ispare[4];		/* general use */
+
+	void *if_pspare[4];		/* XXX temporary until we have some
+							 * lookup mechanism in vtnet_be
+							 */
 };
 
 /* for compatibility with other BSDs */

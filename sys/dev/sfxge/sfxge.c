@@ -459,11 +459,11 @@ sfxge_if_ioctl(struct ifnet *ifp, unsigned long command, caddr_t data)
 		 * to reject attempts to disable capabilities that we
 		 * can't (yet) disable.
 		 */
-		KASSERT((reqcap & ~ifp->if_capabilities) == 0,
+		KASSERT((reqcap & ~((int)ifp->if_capabilities)) == 0,
 		    ("Unsupported capabilities 0x%x requested 0x%x vs "
 		     "supported 0x%x",
-		     reqcap & ~ifp->if_capabilities,
-		     reqcap , ifp->if_capabilities));
+		     reqcap & ~(int)ifp->if_capabilities,
+		     reqcap , (int)ifp->if_capabilities));
 		if (capchg_mask & SFXGE_CAP_FIXED) {
 			error = EINVAL;
 			SFXGE_ADAPTER_UNLOCK(sc);
