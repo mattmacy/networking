@@ -103,8 +103,6 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_VTNETBE, "vtnet", "virtio-net backend");
 
-#define VB_DEBUG
-
 #ifdef VB_DEBUG
 
 #define DPRINTF printf
@@ -1392,16 +1390,8 @@ vtnet_be_cleanup(struct vtnet_be *vb)
 		vs = SLIST_FIRST(&vb->dev);
 		SLIST_REMOVE(&vb->dev, vs, vb_softc, vs_next);
 		VB_UNLOCK;
-		vs->vs_flags &= ~(VS_READY|VS_ENQUEUED);
-		vs->vs_vn = NULL;
-		vs->vs_proc = NULL;
-		vs->vs_negotiated_caps = 0;
-		vs->vs_io_start = 0;
-		vs->vs_io_size = 0;
-		for (i = 0; i < vs->shared->isc_nrxqsets; i++)
-			bzero(&vs->vs_rx_queues[i], sizeof(struct vb_rxq));
-		for (i = 0; i < vs->shared->isc_ntxqsets; i++)
-			bzero(&vs->vs_tx_queues[i], sizeof(struct vb_txq));		
+		vs->vs_flags &= ~VS_ENQUEUED;
+
 		/*
 		 * Only destroy the interface if it was
 		 * created by bhyve
@@ -1409,6 +1399,16 @@ vtnet_be_cleanup(struct vtnet_be *vb)
 		if (vs->vs_flags & VS_OWNED) {
 			dev = iflib_get_dev(vs->vs_ctx);
 			if_clone_destroy(device_get_nameunit(dev));
+		} else {
+			vs->vs_vn = NULL;
+			vs->vs_proc = NULL;
+			vs->vs_negotiated_caps = 0;
+			vs->vs_io_start = 0;
+			vs->vs_io_size = 0;
+			for (i = 0; i < vs->shared->isc_nrxqsets; i++)
+				bzero(&vs->vs_rx_queues[i], sizeof(struct vb_rxq));
+			for (i = 0; i < vs->shared->isc_ntxqsets; i++)
+				bzero(&vs->vs_tx_queues[i], sizeof(struct vb_txq));
 		}
 		VB_LOCK;
 	}
