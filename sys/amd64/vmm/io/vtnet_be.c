@@ -172,11 +172,12 @@ struct vtnet_be {
 
 /* Packet parse info */
 struct pinfo {
+	uint16_t *csum;
 	uint16_t etype;
-	int	 ehdrlen;	/* eth header len, includes VLAN tag */
-	int	 l3valid;	/* layer 3 info valid */
-	int	 l3size;	/* size of l3 header */
-	int	 l4type;	/* layer 4 protocol type */
+	uint8_t	 ehdrlen;	/* eth header len, includes VLAN tag */
+	uint8_t	 l3size;	/* size of l3 header */
+	uint8_t	 l3valid;	/* size of l3 header */
+	uint8_t	 l4type;	/* layer 4 protocol type */
 };
 
 static SLIST_HEAD(, vtnet_be) vb_head;
@@ -539,10 +540,14 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 	struct ether_vlan_header *eh;
 	struct ip *ip;
 	struct ip6_hdr *ip6;
+	struct tcphdr *tcp;
+	struct udphdr *udp;
 	int ehdrlen;
 	int l3valid, l3size, l4type;
 	uint16_t etype;
+	uint16_t *csum;
 
+	csum = NULL;
 	eh = (struct ether_vlan_header *)data;
 	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
 		etype = ntohs(eh->evl_proto);
@@ -571,13 +576,27 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 		l3size = 0;
 		l4type = 0;
 	}
-
 	pinfo->etype = etype;
 	pinfo->ehdrlen = ehdrlen;
 	pinfo->l3valid = l3valid;
 	pinfo->l3size = l3size;
 	pinfo->l4type = l4type;
+	if (!l3valid) {
+		pinfo->csum = NULL;
+		return (1);
+	}
 
+	switch (l4type) {
+		case IPPROTO_TCP:
+			tcp = (struct tcphdr *)(data + ehdrlen + l3size);
+			csum = &tcp->th_sum;
+			break;
+		case IPPROTO_UDP:
+			udp = (struct udphdr *)(data + ehdrlen + l3size);
+			csum = &udp->uh_sum;
+			break;
+	}
+	pinfo->csum = csum;
 	return (1);
 }
 
@@ -990,7 +1009,9 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 		case VIRTIO_PCI_HOST_FEATURES:
 			/* r/o reg */
 			break;
-		case VIRTIO_PCI_GUEST_FEATURES:
+			case VIRTIO_PCI_GUEST_FEATURES:
+				printf("hv_caps: %08x hv_capenable: %08x",
+					   vs->vs_hv_caps, *val & vs->vs_hv_caps);
 			vs->vs_negotiated_caps = *val & vs->vs_hv_caps;
 			break;
 		case VIRTIO_PCI_QUEUE_PFN:
@@ -1047,25 +1068,29 @@ vb_intr_msix(struct vb_softc *vs, int q)
 	}
 }
 
-
 static void
-vb_txflags(struct mbuf *m, struct pinfo *pinfo)
+vb_txflags(struct ifnet *ifp, struct mbuf *m, struct pinfo *pinfo)
 {
 	int len;
 	bool tso;
 
 	len = m->m_pkthdr.len;
 	/* XXX blindly assume we're using 1500b MTU on the wire */
-	tso = (len > ETHERMTU);
+	tso = (len > ifp->if_mtu);
 	if (pinfo->etype == ETHERTYPE_IP) {
 		switch (pinfo->l4type) {
 			case IPPROTO_TCP:
-				m->m_pkthdr.csum_flags |= CSUM_IP_TCP;
-				if (tso)
-					m->m_pkthdr.csum_flags |= CSUM_IP_TSO;
+				if (*pinfo->csum == 0)
+					m->m_pkthdr.csum_flags |= CSUM_IP_TCP;
+				if (tso) {
+					m->m_pkthdr.csum_flags |= CSUM_IP_TCP|CSUM_IP_TSO;
+					if (*pinfo->csum != 0)
+						*pinfo->csum = 0;
+				}
 				break;
 			case IPPROTO_UDP:
-				m->m_pkthdr.csum_flags |= CSUM_IP_UDP;
+				if (*pinfo->csum == 0)
+					m->m_pkthdr.csum_flags |= CSUM_IP_UDP;
 				break;
 			case IPPROTO_SCTP:
 				m->m_pkthdr.csum_flags |= CSUM_IP_SCTP;
@@ -1074,12 +1099,17 @@ vb_txflags(struct mbuf *m, struct pinfo *pinfo)
 	} else if (pinfo->etype == ETHERTYPE_IPV6) {
 		switch (pinfo->l4type) {
 			case IPPROTO_TCP:
-				m->m_pkthdr.csum_flags |= CSUM_IP6_TCP;
-				if (tso)
+				if (*pinfo->csum == 0)
+					m->m_pkthdr.csum_flags |= CSUM_IP6_TCP;
+				if (tso) {
 					m->m_pkthdr.csum_flags |= CSUM_IP6_TSO;
+					if (*pinfo->csum != 0)
+						*pinfo->csum = 0;
+				}
 				break;
 			case IPPROTO_UDP:
-				m->m_pkthdr.csum_flags |= CSUM_IP6_UDP;
+				if (*pinfo->csum == 0)
+					m->m_pkthdr.csum_flags |= CSUM_IP6_UDP;
 				break;
 			case IPPROTO_SCTP:
 				m->m_pkthdr.csum_flags |= CSUM_IP6_SCTP;
@@ -1124,7 +1154,7 @@ vb_rxswitch(struct ifnet *ifp, struct vb_softc *vs, struct mbuf *m, bool ingress
 		/* set mbuf flags for transmit */
 		hdr = mtod(m, caddr_t);
 		vb_pparse(hdr, &pinfo);
-		vb_txflags(m, &pinfo);
+		vb_txflags(vs->vs_ifparent, m, &pinfo);
 
 		ETHER_BPF_MTAP(ifp, m);
 
@@ -1230,9 +1260,21 @@ vb_vring_munmap(struct vb_softc *vs, int q)
 		vs->vs_queues[q].vq_m[i] = NULL;
 	}
 
+#endif
 	vs->vs_queues[q].vq_lastpfn = 0;
 	vs->vs_queues[q].vq_addr = 0;
-#endif
+	vs->vs_queues[q].vq_avail = NULL;
+	vs->vs_queues[q].vq_used = NULL;
+
+	if (q == VB_RXQ_IDX) {
+		/* XXX multiq fix ... */
+		vs->vs_tx_queues[0].vt_base = NULL;
+	} else if (q == VB_TXQ_IDX) {
+		vs->vs_rx_queues[0].vr_base = NULL;
+		vs->vs_rx_queues[0].vr_avail = NULL;
+	}
+
+	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(25));
 }
 
 static void
@@ -1312,9 +1354,11 @@ vb_dev_pfn(struct vb_softc *vs,  uint32_t pfn)
 	if (q >= vs->vs_nvq)
 		return;
 
-	/* The PFN should only be written once without a reset */
-	KASSERT(pfn != 0, ("vtnet_be: write with zero pfn"));
-
+	/* Only map if the pfn has changed */
+	if (vs->vs_queues[q].vq_lastpfn != pfn && pfn == 0) {
+		vb_vring_munmap(vs, q);
+		return;
+	}
 	/* Only map if the pfn has changed */
 	if (vs->vs_queues[q].vq_lastpfn != pfn)
 		vb_vring_mmap(vs, pfn, q);
@@ -1472,6 +1516,12 @@ vb_if_attach(struct vb_softc *vs, struct vb_if_attach *via)
 		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO4;
 	if (vs->vs_ifparent->if_capabilities & IFCAP_TSO6)
 		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO6;
+	if ((vs->vs_ifparent->if_capabilities & (IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6)) ==
+		(IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6))
+		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_CSUM;
+	if (vs->vs_ifparent->if_capabilities & IFCAP_LRO)
+		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6;
+
 	return (0);
 }
 
@@ -1751,18 +1801,18 @@ static struct if_shared_ctx vb_sctx_init = {
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = USHRT_MAX,
 	.isc_nfl = 1,
-	.isc_nrxqs = 1,
+	.isc_nrxqs = 2,
 	.isc_ntxqs = 1,
 	.isc_driver_version = vb_driver_version,
 	.isc_driver = &vb_iflib_driver,
 	.isc_flags = IFLIB_TXD_ENCAP_PIO | IFLIB_RX_COMPLETION |	\
-	IFLIB_SKIP_CLREFILL | IFLIB_CIDX_MANAGED,
+	IFLIB_SKIP_CLREFILL | IFLIB_HAS_RXCQ,
 
-	.isc_nrxd_min = {VB_MIN_RXD},
+	.isc_nrxd_min = {VB_MIN_RXD, VB_MIN_RXD},
 	.isc_ntxd_min = {VB_MIN_TXD},
-	.isc_nrxd_max = {VB_MAX_RXD},
+	.isc_nrxd_max = {VB_MAX_RXD, VB_MAX_RXD},
 	.isc_ntxd_max = {VB_MAX_TXD},
-	.isc_nrxd_default = {VB_DEFAULT_RXD},
+	.isc_nrxd_default = {VB_DEFAULT_RXD, VB_MAX_RXD},
 	.isc_ntxd_default = {VB_DEFAULT_TXD},
 	.isc_name = "vmi",
 	.isc_rx_completion = vb_rx_completion,
