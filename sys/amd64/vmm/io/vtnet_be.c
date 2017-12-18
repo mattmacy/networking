@@ -688,6 +688,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		return (ENXIO);
 	}
 	vh = (struct virtio_net_hdr_mrg_rxbuf *)rxq->vr_sdcl[vcidx];
+	KASSERT(vh != NULL, ("NULL vh found at %d\n", vcidx));
 	if (__predict_true(rxd->len == sizeof(*vh))) {
 		rxq->vr_sdcl[vcidx] = NULL;
 		if (rxd->flags & VRING_DESC_F_NEXT)
@@ -780,6 +781,7 @@ vb_rx_completion(struct mbuf *m)
 	vm_gpa_release(vb->vb_mb[vidx].cookie);
 #endif
 	rxq = (struct vb_rxq *)m->m_ext.ext_arg1;
+	MPASS(rxq != NULL);
 	vs = rxq->vr_vs;
 	idx = (int)m->m_ext.ext_arg2;
 	MPASS(idx & VB_CIDX_VALID);
