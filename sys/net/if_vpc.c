@@ -73,6 +73,8 @@ struct vpc_softc {
 	if_transmit_fn_t vs_parent_transmit;   /* initiate output routine */
 };
 
+static int clone_count;
+
 static void
 m_freechain(struct mbuf *m)
 {
@@ -124,9 +126,9 @@ vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 	struct vpc_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
-
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	vs->vs_ctx = ctx;
+	atomic_add_int(&clone_count, 1);
 	return (0);
 }
 
@@ -144,6 +146,7 @@ vpc_attach_post(if_ctx_t ctx)
 static int
 vpc_detach(if_ctx_t ctx)
 {
+	atomic_add_int(&clone_count, -1);
 	return (0);
 }
 
@@ -249,16 +252,19 @@ vpc_module_event_handler(module_t mod, int what, void *arg)
 	int err;
 
 	switch (what) {
-	case MOD_LOAD:
-		if ((err = vpc_module_init()) != 0)
-			return (err);
-		break;
-	case MOD_UNLOAD:
-		return (EBUSY);
-	default:
-		return (EOPNOTSUPP);
+		case MOD_LOAD:
+			if ((err = vpc_module_init()) != 0)
+				return (err);
+			break;
+		case MOD_UNLOAD:
+			if (clone_count == 0)
+				iflib_clone_deregister(vpc_pseudo);
+			else
+				return (EBUSY);
+			break;
+		default:
+			return (EOPNOTSUPP);
 	}
-
 	return (0);
 }
 
