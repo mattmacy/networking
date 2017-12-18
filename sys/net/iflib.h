@@ -347,10 +347,6 @@ typedef enum {
  * Skip refilling cluster free lists
  */
 #define IFLIB_SKIP_CLREFILL	0x0400
-/*
- * Driver manages cidx
- */
-#define IFLIB_CIDX_MANAGED	0x0800
 
 
 /*
