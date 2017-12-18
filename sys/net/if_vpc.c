@@ -217,7 +217,7 @@ static device_method_t vpc_if_methods[] = {
 };
 
 static driver_t vpc_iflib_driver = {
-	"vmi", vpc_if_methods, sizeof(struct vpc_softc)
+	"vpc", vpc_if_methods, sizeof(struct vpc_softc)
 };
 
 char vpc_driver_version[] = "0.0.1";
