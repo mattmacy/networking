@@ -1718,18 +1718,6 @@ vb_if_rxq_intr_enable(if_ctx_t ctx, uint16_t rxqid)
 }
 
 static device_method_t vb_if_methods[] = {
-#ifdef notyet
-	DEVMETHOD(ifdi_intr_enable, vb_if_enable_intr),
-	DEVMETHOD(ifdi_intr_disable, vb_if_disable_intr),
-	DEVMETHOD(ifdi_rx_queues_alloc, vb_if_rx_queues_alloc),
-	DEVMETHOD(ifdi_queues_free, vb_if_queues_free),
-	DEVMETHOD(ifdi_update_admin_status, vb_if_update_admin_status),
-	DEVMETHOD(ifdi_multi_set, vb_if_multi_set),
-	DEVMETHOD(ifdi_mtu_set, vb_if_mtu_set),
-	DEVMETHOD(ifdi_promisc_set, vb_if_set_promisc),
-	DEVMETHOD(ifdi_timer, vb_if_timer),
-	DEVMETHOD(ifdi_get_counter, vb_if_get_counter),
-#endif
 	DEVMETHOD(ifdi_rx_queue_intr_enable, vb_if_rxq_intr_enable),
 	DEVMETHOD(ifdi_tx_queue_intr_enable, vb_if_txq_intr_enable),
 	DEVMETHOD(ifdi_cloneattach, vb_cloneattach),
