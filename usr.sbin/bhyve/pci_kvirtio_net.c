@@ -32,7 +32,7 @@
  *
  *  -s <bsd>,kvirtio-net,<ifname><unit>[,macaddr=x:x:x:x:x:x,]
  *
- *    e.g.   -s  2:3:0,kvirtio-net,<vxlan1|igb0>,macaddr=00:bd:5d:32:00:e7
+ *    e.g.   -s  2:3:0,kvirtio-net,<vxlan1|igb0>,mac=00:bd:5d:32:00:e7
  *
  *
  * Where the MAC address can be specified on the command line. If not, 
