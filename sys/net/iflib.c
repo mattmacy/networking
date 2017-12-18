@@ -1969,7 +1969,7 @@ __iflib_fl_refill_lt(if_ctx_t ctx, iflib_fl_t fl, int max)
 #endif
 
 	MPASS(fl->ifl_credits <= fl->ifl_size);
-	MPASS(reclaimable == delta);
+	KASSERT(reclaimable == delta, ("reclaimable=%d != delta=%d", reclaimable, delta));
 
 	if (reclaimable > 0)
 		_iflib_fl_refill(ctx, fl, min(max, reclaimable));
@@ -2370,7 +2370,7 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 	sd->ifsd_cidx = cidx;
 	sd->ifsd_m = &fl->ifl_sds.ifsd_m[cidx];
 	sd->ifsd_cl = &fl->ifl_sds.ifsd_cl[cidx];
-	if (*sd->ifsd_m == NULL)
+	if (__predict_false(*sd->ifsd_m == NULL))
 		*sd->ifsd_m = m_gethdr(M_NOWAIT, MT_NOINIT);
 	MPASS(*sd->ifsd_cl != NULL);
 	fl->ifl_credits--;
@@ -2664,8 +2664,6 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 
 		/* will advance the cidx on the corresponding free lists */
 		m = iflib_rxd_pkt_get(rxq, &ri);
-		if (ctx->ifc_sctx->isc_flags & IFLIB_CIDX_MANAGED)
-			*cidxp = ri.iri_cidx;
 		if (avail == 0 && budget_left)
 			avail = iflib_rxd_avail(ctx, rxq, *cidxp, budget_left);
 
