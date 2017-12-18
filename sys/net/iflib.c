@@ -2478,21 +2478,40 @@ static void
 iflib_check_rx_notify(iflib_rxq_t rxq, if_rxd_info_t ri, struct mbuf *m)
 {
 	if_ctx_t ctx = rxq->ifr_ctx;
+	struct mbuf *mnext;
+	void *arg1;
+	void *arg2;
+
+	arg1 = (void *)(uintptr_t)ri->iri_cookie1;
+	arg2 = (void *)(uintptr_t)ri->iri_cookie2;
+	ri->iri_cookie1 = NULL;
+	ri->iri_cookie2 = 0;
 
 	MPASS(ctx->ifc_sctx->isc_rx_completion != NULL);
-
-	m->m_ext.ext_arg1 = (void *)(uintptr_t)ri->iri_cookie1;
-	m->m_ext.ext_arg2 = (void *)(uintptr_t)ri->iri_cookie2;
+#ifdef notyet
+	/*
+	 * Handle small packet synchronously
+	 *
+	 * XXX would require locking as this is potentially running
+	 * concurrently with transmit
+	 */
 	if (m->m_len == m->m_pkthdr.len && !(m->m_flags & M_EXT)) {
+		m->m_ext.ext_arg1 = arg1;
+		m->m_ext.ext_arg2 = arg2;
 		ctx->ifc_sctx->isc_rx_completion(m);
-	} else {
+		return;
+	}
+#endif
+	do {
+		mnext = m->m_next;
 		m->m_ext.ext_count = 1;
+		m->m_ext.ext_arg1 = arg1;
+		m->m_ext.ext_arg2 = arg2;
 		m->m_ext.ext_flags = EXT_FLAG_EMBREF;
 		m->m_ext.ext_type = EXT_NET_DRV;
 		m->m_ext.ext_free = ctx->ifc_sctx->isc_rx_completion;
-	}
-	ri->iri_cookie1 = NULL;
-	ri->iri_cookie2 = 0;
+		m = mnext;
+	} while (m);
 }
 
 
