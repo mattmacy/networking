@@ -1878,13 +1878,14 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 	MPASS(n > 0);
 	MPASS(credits + n <= fl->ifl_size);
 
-	if (pidx < fl->ifl_cidx)
-		MPASS(pidx + n <= fl->ifl_cidx);
-	if (pidx == fl->ifl_cidx && (credits < fl->ifl_size))
-		MPASS(fl->ifl_gen == 0);
-	if (pidx > fl->ifl_cidx)
-		MPASS(n <= fl->ifl_size - pidx + fl->ifl_cidx);
-
+	if (!(ctx->ifc_sctx->isc_flags & IFLIB_HAS_RXCQ)) {
+		if (pidx < fl->ifl_cidx)
+			MPASS(pidx + n <= fl->ifl_cidx);
+		if (pidx == fl->ifl_cidx && (credits < fl->ifl_size))
+			MPASS(fl->ifl_gen == 0);
+		if (pidx > fl->ifl_cidx)
+			MPASS(n <= fl->ifl_size - pidx + fl->ifl_cidx);
+	}
 	DBG_COUNTER_INC(fl_refills);
 	if (n > 8)
 		DBG_COUNTER_INC(fl_refills_large);
@@ -1966,11 +1967,11 @@ __iflib_fl_refill_lt(if_ctx_t ctx, iflib_fl_t fl, int max)
 	int32_t reclaimable = fl->ifl_size - fl->ifl_credits - 1;
 #ifdef INVARIANTS
 	int32_t delta = fl->ifl_size - get_inuse(fl->ifl_size, fl->ifl_cidx, fl->ifl_pidx, fl->ifl_gen) - 1;
+	if (!(ctx->ifc_sctx->isc_flags & IFLIB_HAS_RXCQ))
+		KASSERT(reclaimable == delta, ("reclaimable=%d != delta=%d", reclaimable, delta));
 #endif
 
 	MPASS(fl->ifl_credits <= fl->ifl_size);
-	KASSERT(reclaimable == delta, ("reclaimable=%d != delta=%d", reclaimable, delta));
-
 	if (reclaimable > 0)
 		_iflib_fl_refill(ctx, fl, min(max, reclaimable));
 }
@@ -2370,10 +2371,13 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 	sd->ifsd_cidx = cidx;
 	sd->ifsd_m = &fl->ifl_sds.ifsd_m[cidx];
 	sd->ifsd_cl = &fl->ifl_sds.ifsd_cl[cidx];
-	if (__predict_false(*sd->ifsd_m == NULL))
+	MPASS(fl->ifl_credits);
+	if (__predict_false(*sd->ifsd_m == NULL)) {
+		MPASS(rxq->ifr_ctx->ifc_sctx->isc_flags & IFLIB_SKIP_CLREFILL);
 		*sd->ifsd_m = m_gethdr(M_NOWAIT, MT_NOINIT);
+	} else
+		fl->ifl_credits--;
 	MPASS(*sd->ifsd_cl != NULL);
-	fl->ifl_credits--;
 #if MEMORY_LOGGING
 	fl->ifl_m_dequeued++;
 #endif
@@ -2388,12 +2392,12 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 		prefetch(&fl->ifl_sds.ifsd_flags[next]);
 		bus_dmamap_sync(di->idi_tag, di->idi_map,
 				BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-
-	/* not valid assert if bxe really does SGE from non-contiguous elements */
-		MPASS(fl->ifl_cidx == cidx);
 		if (unload)
 			bus_dmamap_unload(fl->ifl_desc_tag, map);
 	}
+	/*
+	 * XXX This is a no-op for RXCQ
+	 */
 	fl->ifl_cidx = (fl->ifl_cidx + 1) & (fl->ifl_size-1);
 	if (__predict_false(fl->ifl_cidx == 0))
 		fl->ifl_gen = 0;
@@ -3795,7 +3799,7 @@ _task_fn_rx(void *context)
 #endif
 	budget = ctx->ifc_sysctl_rx_budget;
 	if (budget == 0)
-		budget = 16;	/* XXX */
+		budget = 64;	/* XXX */
 	if (more == false || (more = iflib_rxeof(rxq, budget)) == false) {
 		if (ctx->ifc_flags & IFC_LEGACY)
 			IFDI_INTR_ENABLE(ctx);
