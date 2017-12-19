@@ -125,6 +125,8 @@ vb_print_vhdr(struct virtio_net_hdr_mrg_rxbuf *vh)
 static void  vb_print_vhdr(struct virtio_net_hdr_mrg_rxbuf *vh __unused) {}
 #endif
 
+#define RXDEBUG
+
 #ifdef RXDEBUG
 #define RXDPRINTF printf
 #else
@@ -510,7 +512,7 @@ vb_rxd_available(void *arg, qidx_t rxqid, qidx_t idx, qidx_t budget)
 	/*
 	 * XXX flush the ring mappings to iflib
 	 */
-	for (cnt = 0, curidx = idx; curidx != *idxp; curidx = (curidx+1)&mask, cnt++) {
+	for (cnt = 0, curidx = idx; curidx != *idxp && cnt < budget; curidx = (curidx+1)&mask, cnt++) {
 		vcidx = rxq->vr_avail[curidx];
 		RXDPRINTF("%s curidx: %d vcidx:%d\n", __func__, curidx, vcidx);
 		do {
@@ -688,6 +690,10 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		return (ENXIO);
 	}
 	vh = (struct virtio_net_hdr_mrg_rxbuf *)rxq->vr_sdcl[vcidx];
+	if (__predict_false(vh == NULL)) {
+		vb_rxd_available(vs, ri->iri_qsidx, cidx, 1);
+		vh = (struct virtio_net_hdr_mrg_rxbuf *)rxq->vr_sdcl[vcidx];
+	}
 	KASSERT(vh != NULL, ("NULL vh found at %d\n", vcidx));
 	if (__predict_true(rxd->len == sizeof(*vh))) {
 		rxq->vr_sdcl[vcidx] = NULL;
@@ -1329,10 +1335,14 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	qsz = vs->vs_queues[q].vq_qsize;
 	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, qsz*sizeof(struct vring_desc),
 						  &vs->vs_gpa_hint);
+	MPASS(vaddr);
 	vs->vs_queues[q].vq_addr = vaddr;
 	vs->vs_queues[q].vq_desc = (struct vring_desc *)vaddr;
 
-	vaddr += qsz * sizeof(struct vring_desc);
+	gpa += qsz * sizeof(struct vring_desc);
+	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, (2 + qsz + 1) * sizeof(uint16_t),
+						  &vs->vs_gpa_hint);
+	MPASS(vaddr);
 	vs->vs_queues[q].vq_avail = (struct vring_avail *)vaddr;
 	if (q == VB_RXQ_IDX) {
 		vs->vs_tx_queues[0].vt_base = (void *)(uintptr_t)vs->vs_queues[VB_RXQ_IDX].vq_desc;
@@ -1340,10 +1350,14 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 		vs->vs_rx_queues[0].vr_base = (void *)(uintptr_t)vs->vs_queues[VB_TXQ_IDX].vq_desc;
 		vs->vs_rx_queues[0].vr_avail = (void *)(uintptr_t)vs->vs_queues[VB_TXQ_IDX].vq_avail->ring;
 	}
-	vaddr += (2 + qsz + 1) * sizeof(uint16_t);
-	vaddr = roundup2(vaddr, PAGE_SIZE);
-
+	gpa += (2 + qsz + 1) * sizeof(uint16_t); 
+	gpa = roundup2(gpa, PAGE_SIZE);
+	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, (2 + qsz + 1) * sizeof(uint16_t),
+						  &vs->vs_gpa_hint);
+	/* XXX should fail out if it's outside the range of the guest */
+	MPASS(vaddr);
 	vs->vs_queues[q].vq_used = (struct vring_used *)vaddr;
+	printf("[%d].vq_used = %p flags: %d\n", q, (void *)vaddr, vs->vs_queues[q].vq_used->flags);
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
 }
 
@@ -1814,7 +1828,7 @@ static struct if_shared_ctx vb_sctx_init = {
 	.isc_ntxd_min = {VB_MIN_TXD},
 	.isc_nrxd_max = {VB_MAX_RXD, VB_MAX_RXD},
 	.isc_ntxd_max = {VB_MAX_TXD},
-	.isc_nrxd_default = {VB_DEFAULT_RXD, VB_MAX_RXD},
+	.isc_nrxd_default = {VB_DEFAULT_RXD, VB_DEFAULT_RXD},
 	.isc_ntxd_default = {VB_DEFAULT_TXD},
 	.isc_name = "vmi",
 	.isc_rx_completion = vb_rx_completion,
