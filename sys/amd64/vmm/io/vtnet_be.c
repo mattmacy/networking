@@ -97,7 +97,7 @@ __FBSDID("$FreeBSD$");
 #define VB_TSO_SEG_SIZE		USHRT_MAX
 #define VB_MAX_SCATTER VB_MAX_TX_SEGS
 #define VB_CAPS									\
-	IFCAP_TSO4 | IFCAP_TXCSUM | IFCAP_LRO | IFCAP_RXCSUM | IFCAP_VLAN_HWFILTER | IFCAP_WOL_MAGIC | \
+	IFCAP_TSO4 | IFCAP_TXCSUM | IFCAP_RXCSUM | IFCAP_VLAN_HWFILTER | IFCAP_WOL_MAGIC | \
 	IFCAP_WOL_MCAST | IFCAP_WOL | IFCAP_VLAN_HWTSO | IFCAP_HWCSUM | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM | \
 	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU;
 
@@ -709,6 +709,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 				rxd->len);
 		ri->iri_pad = sizeof(*vh);
 	}
+
 	vb_print_vhdr(vh);
 	switch (vh->hdr.gso_type) {
 		case VIRTIO_NET_HDR_GSO_TCPV4:
@@ -731,6 +732,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 			return (ENXIO);
 		ri->iri_csum_data = vh->hdr.csum_offset;
 	}
+
 	do {
 		if (__predict_false(vcidx >= scctx->isc_nrxd[0])) {
 			DPRINTF("descriptor out of range: %d\n", vcidx);
@@ -1018,7 +1020,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 			/* r/o reg */
 			break;
 			case VIRTIO_PCI_GUEST_FEATURES:
-				printf("hv_caps: %08x hv_capenable: %08x",
+				printf("hv_caps: %08x hv_capenable: %08x\n",
 					   vs->vs_hv_caps, *val & vs->vs_hv_caps);
 			vs->vs_negotiated_caps = *val & vs->vs_hv_caps;
 			break;
@@ -1077,53 +1079,15 @@ vb_intr_msix(struct vb_softc *vs, int q)
 }
 
 static void
-vb_txflags(struct ifnet *ifp, struct mbuf *m, struct pinfo *pinfo)
+vb_txflags(struct mbuf *m, struct pinfo *pinfo)
 {
-	int len;
-	bool tso;
+	if ((m->m_pkthdr.csum_flags &
+		 (CSUM_TCP|CSUM_IP6_TCP|CSUM_IP6_TSO|CSUM_IP_TSO)) &&
+		pinfo->csum && (*pinfo->csum != 0))
+		*pinfo->csum = 0;
 
-	len = m->m_pkthdr.len;
-	/* XXX blindly assume we're using 1500b MTU on the wire */
-	tso = (len > ifp->if_mtu);
-	if (pinfo->etype == ETHERTYPE_IP) {
-		switch (pinfo->l4type) {
-			case IPPROTO_TCP:
-				if (*pinfo->csum == 0)
-					m->m_pkthdr.csum_flags |= CSUM_IP_TCP;
-				if (tso) {
-					m->m_pkthdr.csum_flags |= CSUM_IP_TCP|CSUM_IP_TSO;
-					if (*pinfo->csum != 0)
-						*pinfo->csum = 0;
-				}
-				break;
-			case IPPROTO_UDP:
-				if (*pinfo->csum == 0)
-					m->m_pkthdr.csum_flags |= CSUM_IP_UDP;
-				break;
-			case IPPROTO_SCTP:
-				m->m_pkthdr.csum_flags |= CSUM_IP_SCTP;
-				break;
-		}
-	} else if (pinfo->etype == ETHERTYPE_IPV6) {
-		switch (pinfo->l4type) {
-			case IPPROTO_TCP:
-				if (*pinfo->csum == 0)
-					m->m_pkthdr.csum_flags |= CSUM_IP6_TCP;
-				if (tso) {
-					m->m_pkthdr.csum_flags |= CSUM_IP6_TSO;
-					if (*pinfo->csum != 0)
-						*pinfo->csum = 0;
-				}
-				break;
-			case IPPROTO_UDP:
-				if (*pinfo->csum == 0)
-					m->m_pkthdr.csum_flags |= CSUM_IP6_UDP;
-				break;
-			case IPPROTO_SCTP:
-				m->m_pkthdr.csum_flags |= CSUM_IP6_SCTP;
-				break;
-		}
-	}
+	m->m_pkthdr.tso_segsz = m->m_pkthdr.fibnum;
+	m->m_pkthdr.fibnum = 0;
 }
 
 static struct mbuf *
@@ -1162,10 +1126,9 @@ vb_rxswitch(struct ifnet *ifp, struct vb_softc *vs, struct mbuf *m, bool ingress
 		/* set mbuf flags for transmit */
 		hdr = mtod(m, caddr_t);
 		vb_pparse(hdr, &pinfo);
-		vb_txflags(vs->vs_ifparent, m, &pinfo);
+		vb_txflags(m, &pinfo);
 
 		ETHER_BPF_MTAP(ifp, m);
-
 		eh = mtod(m, struct ether_header *);
 		keep = 1;
 
@@ -1290,7 +1253,7 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 {
 	vm_offset_t vaddr;
 	uint64_t gpa;
-	int qsz;
+	int qsz, len;
 
 	gpa = pfn << PAGE_SHIFT;
 
@@ -1340,8 +1303,8 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	vs->vs_queues[q].vq_desc = (struct vring_desc *)vaddr;
 
 	gpa += qsz * sizeof(struct vring_desc);
-	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, (2 + qsz + 1) * sizeof(uint16_t),
-						  &vs->vs_gpa_hint);
+	len = (2 + qsz + 1) * sizeof(uint16_t);
+	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, len, &vs->vs_gpa_hint);
 	MPASS(vaddr);
 	vs->vs_queues[q].vq_avail = (struct vring_avail *)vaddr;
 	if (q == VB_RXQ_IDX) {
@@ -1352,12 +1315,13 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	}
 	gpa += (2 + qsz + 1) * sizeof(uint16_t); 
 	gpa = roundup2(gpa, PAGE_SIZE);
+	len = (2 + qsz + 1) * sizeof(uint16_t);
 	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, (2 + qsz + 1) * sizeof(uint16_t),
 						  &vs->vs_gpa_hint);
 	/* XXX should fail out if it's outside the range of the guest */
 	MPASS(vaddr);
 	vs->vs_queues[q].vq_used = (struct vring_used *)vaddr;
-	printf("[%d].vq_used = %p flags: %d\n", q, (void *)vaddr, vs->vs_queues[q].vq_used->flags);
+	printf("[%d].vq_used = %p flags: %d qsize: %d len: %d\n", q, (void *)vaddr, vs->vs_queues[q].vq_used->flags, qsz, len);
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
 }
 
