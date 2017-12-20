@@ -185,7 +185,7 @@ vtnet_be_macaddr(struct vtnet_be_softc *vbs, char *macaddr)
 		 * Generate a pseudo-random, deterministic MAC
 		 * address based on the UUID (if passed),the VM name,
 		 * and the guest b/s/f.
-		 * The (obsolete) DEC OUI of aa-00-00 is used.
+		 * The FreeBSD Foundation OUI of 58-9C-FC is used.
 		 */
 		pi = vbs->vbs_pi;
 		snprintf(nstr, sizeof(nstr), "%s: %d-%d-%d %s\n",
@@ -197,9 +197,9 @@ vtnet_be_macaddr(struct vtnet_be_softc *vbs, char *macaddr)
                 MD5Update(&mdctx, nstr, strlen(nstr));
                 MD5Final(digest, &mdctx);
 
-		vbs->vbs_origmac[0] = 0xAA;
-		vbs->vbs_origmac[1] = 0x00;
-		vbs->vbs_origmac[2] = 0x00;
+		vbs->vbs_origmac[0] = 0x58;
+		vbs->vbs_origmac[1] = 0x9C;
+		vbs->vbs_origmac[2] = 0xFC;
 		vbs->vbs_origmac[3] = digest[0];
 		vbs->vbs_origmac[4] = digest[1];
 		vbs->vbs_origmac[5] = digest[2];
