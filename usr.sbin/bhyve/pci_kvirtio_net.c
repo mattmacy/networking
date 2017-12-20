@@ -232,7 +232,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 {
 	struct vb_vm_attach va;
 	struct ifreq ifr;
-	int i, s, flags;
+	int i, s, flags, err;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
 	cap_ioctl_t vb_ioctls[] = { SIOCGPRIVATE_0 };
@@ -241,13 +241,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP)) < 0) {
 		return (errno);
 	}
-#ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_IOCTL);
-	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
-		errx(EX_OSERR, "Unable to apply rights for sandbox");
-	if (cap_ioctls_limit(s, vb_ioctls, nitems(vb_ioctls)) == -1 && errno != ENOSYS)
-		errx(EX_OSERR, "Unable to apply rights for sandbox");
-#endif
+	err = 0;
 	vbs->vbs_fd = s;
 	bzero(&va, sizeof(va));
 	ifr.ifr_data = (caddr_t)&va;
@@ -265,7 +259,8 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 		strncpy(ifr.ifr_name, vbs->vbs_vm_intf, IFNAMSIZ-1);
 		va.vva_ioh.vih_magic = VB_MAGIC;
 		va.vva_ioh.vih_type = VB_VM_ATTACH;;
-		return (ioctl(s, SIOCGPRIVATE_0, &ifr));
+		err = ioctl(s, SIOCGPRIVATE_0, &ifr);
+		goto drop_rights;
 	}
 
 	strncpy(va.vva_ifparent, vbs->vbs_hw_intf, IFNAMSIZ-1);
@@ -307,8 +302,16 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 		perror("SIOCSIFFLAGS");
 		return (errno);
 	}
-#endif	
-	return (0);
+#endif
+ drop_rights:
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_init(&rights, CAP_IOCTL);
+	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
+		errx(EX_OSERR, "Unable to apply rights for sandbox");
+	if (cap_ioctls_limit(s, vb_ioctls, nitems(vb_ioctls)) == -1 && errno != ENOSYS)
+		errx(EX_OSERR, "Unable to apply rights for sandbox");
+#endif
+	return (err);
 }
 
 static int
