@@ -60,6 +60,9 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#ifndef WITHOUT_CAPSICUM
+#include <sys/capsicum.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/cpuset.h>
 
@@ -76,6 +79,7 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <string.h>
 #include <err.h>
+#include <sysexits.h>
 
 #include "bhyverun.h"
 #include "pci_emul.h"
@@ -229,10 +233,18 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	struct vb_vm_attach va;
 	struct ifreq ifr;
 	int i, s, flags;
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_t rights;
+#endif
 
 	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP)) < 0) {
 		return (errno);
 	}
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_init(&rights, CAP_IOCTL);
+	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
+		errx(EX_OSERR, "Unable to apply rights for sandbox");
+#endif
 	vbs->vbs_fd = s;
 	bzero(&va, sizeof(va));
 	ifr.ifr_data = (caddr_t)&va;
