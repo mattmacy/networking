@@ -235,6 +235,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	int i, s, flags;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
+	cap_ioctl_t vb_ioctls[] = { SIOCGPRIVATE_0 };
 #endif
 
 	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP)) < 0) {
@@ -243,6 +244,8 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_IOCTL);
 	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
+		errx(EX_OSERR, "Unable to apply rights for sandbox");
+	if (cap_ioctls_limit(s, vb_ioctls, nitems(vb_ioctls)) == -1 && errno != ENOSYS)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
 	vbs->vbs_fd = s;
