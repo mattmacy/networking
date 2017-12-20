@@ -1058,9 +1058,6 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 	return (0);
 }
 
-/*
- * Virtio data movement
- */
 static void
 vb_intr_msix(struct vb_softc *vs, int q)
 {
@@ -1090,71 +1087,20 @@ vb_txflags(struct mbuf *m, struct pinfo *pinfo)
 	m->m_pkthdr.fibnum = 0;
 }
 
-static struct mbuf *
-vb_rxswitch(struct ifnet *ifp, struct vb_softc *vs, struct mbuf *m, bool ingress)
+static void
+vb_input_process(struct ifnet *ifp, struct mbuf *m)
 {
-	struct ether_header *eh;
-	struct mbuf *newm, *mh, *mt, *mp;
 	struct pinfo pinfo;
-	int keep;
 	caddr_t hdr;
-
-	newm = mh = mt = NULL;
-	mp = m;
-	/*
-	 * The logic here is simple:
-	 * - if the packet is multicast or broadcast, create a
-	 *   copy and send to the original input routine.
-	 *   Return true to allow the source mbuf to be sent to
-	 *   the guest.
-	 * - if the packet is unicast and matches the original
-	 *   MAC address, pass on to the original input routine
-	 *   and return false, since the mbuf has been consumed.
-	 * - else, the address is unicast so should belong to the
-	 *   guest. Return true to allow it to be placed into the
-	 *   rx virtqueue.
-	 *
-	 * XXX Note that the code may choose not to make a copy
-	 * instead process it inline into the virtio descriptor 
-	 * ring. This avoids a potential perf hit from doing a 
-	 * copy and mbuf allocations.
-	 */
+	
 	do {
-		mp = m->m_nextpkt;
-		m->m_nextpkt = NULL;
-
 		/* set mbuf flags for transmit */
+		ETHER_BPF_MTAP(ifp, m);
 		hdr = mtod(m, caddr_t);
 		vb_pparse(hdr, &pinfo);
 		vb_txflags(m, &pinfo);
-
-		ETHER_BPF_MTAP(ifp, m);
-		eh = mtod(m, struct ether_header *);
-		keep = 1;
-
-		if (ETHER_IS_MULTICAST(eh->ether_dhost)) {
-			newm = m_dup(m, M_NOWAIT);
-		} else if (ingress && bcmp(vs->vs_cfg.mac, eh->ether_dhost, 6)) {
-			newm = m;
-			keep = 0;
-		}
-		if (newm) {
-			newm->m_pkthdr.rcvif = vs->vs_ifparent;
-			(*vs->vs_oinput)(vs->vs_ifparent, newm);
-		}
-		newm = NULL;
-		if (keep) {
-			if (mt) {
-				mt->m_nextpkt = m;
-				mt = m;
-			} else {
-				mh = mt = m;
-			}
-		}
-		m = mp;
+		m = m->m_nextpkt;
 	} while (m != NULL);
-
-	return (mh);
 }
 
 /*
@@ -1166,11 +1112,9 @@ vb_if_input(struct ifnet *vbifp, struct mbuf *m)
 	if_ctx_t ctx = vbifp->if_softc;
 	struct vb_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *hwifp = vs->vs_ifparent;
-	struct mbuf *mp;
 
-	mp = vb_rxswitch(vbifp, vs, m, false);
-	if (mp)
-		(void)hwifp->if_transmit(hwifp, mp);
+	vb_input_process(vbifp, m);
+	(void)hwifp->if_transmit(hwifp, m);
 }
 
 /*
@@ -1181,20 +1125,15 @@ vb_hw_if_input(struct ifnet *hwifp, struct mbuf *m)
 {
 	struct vb_softc *vs;
 	struct ifnet *vbifp;
-	struct mbuf *mp;
 
 	/* XXX UGH - add parent ifp -> to vs mapping */
 	vs = hwifp->if_pspare[3];
 	vbifp = iflib_get_ifp(vs->vs_ctx);
 
-	mp = vb_rxswitch(hwifp, vs, m, true);
-	if (mp)
-		(void)vbifp->if_transmit(vbifp, mp);
+	vb_input_process(hwifp, m);
+	(void)vbifp->if_transmit(vbifp, m);
 }
 
-/*
- * Virtio device alloc/free/ioctl
- */
 static void
 vb_dev_kick(struct vb_softc *vs, uint32_t q)
 {
