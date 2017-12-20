@@ -64,6 +64,18 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
+/*
+ * ifconfig ixl0 alias 10.1.3.4
+ *
+ * # Virtual Private Cloud
+ * ifconfig vpc0 create
+ * ifconfig vpc0 az az0
+ * ifconfig vpc0 listen 10.1.3.4:3947
+ *
+ * ifconfig vmb0 addm vpc0
+ *
+ */
+
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 
 struct vpc_softc {
