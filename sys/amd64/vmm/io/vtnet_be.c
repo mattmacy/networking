@@ -497,43 +497,14 @@ vb_rxcl_map(struct vb_softc *vs, struct vring_desc *rxd)
 static int
 vb_rxd_available(void *arg, qidx_t rxqid, qidx_t idx, qidx_t budget)
 {
-	struct vb_softc *vs = arg;
-	if_softc_ctx_t scctx = vs->shared;
-	struct vb_rxq *rxq = &vs->vs_rx_queues[rxqid];
-	struct vring_desc *rxd;
-	caddr_t cl;
-	int cnt, curidx, mask, vcidx;
 	volatile uint16_t *idxp;
+	struct vb_softc *vs = arg;
+	int cnt;
 
 	idxp = &vs->vs_queues[VB_TXQ_IDX].vq_avail->idx;
-	mask = (vs->shared->isc_nrxd[0]-1);
-	if (idx == *idxp)
-		return (0);
-	/*
-	 * XXX flush the ring mappings to iflib
-	 */
-	RXDPRINTF("%s avail_idx: %d curidx: %d\n", __func__, *idxp, idx);
-	for (cnt = 0, curidx = idx; curidx != *idxp && cnt < budget; curidx = (curidx+1)&mask, cnt++) {
-		vcidx = rxq->vr_avail[curidx];
-		RXDPRINTF("curidx: %d vcidx:%d avail_idx: %d\n", curidx, vcidx, *idxp);
-		do {
-			if (__predict_false(vcidx >= scctx->isc_nrxd[0])) {
-				DPRINTF("invalid buffer index: %d\n", vcidx);
-				goto err;
-			}
-			rxd = &rxq->vr_base[vcidx];
-			RXDPRINTF("rxd - addr: 0x%lx len: %d flags: 0x%04x next: %d\n",
-					rxd->addr, rxd->len, rxd->flags, rxd->next);
-			if (rxq->vr_sdcl[vcidx] == NULL) {
-				if ((cl = vb_rxcl_map(vs, rxd)) == NULL)
-					goto err;
-				rxq->vr_sdcl[vcidx] = cl;
-				RXDPRINTF("vcidx[%d] = %p\n", vcidx, cl);
-			}
-			vcidx = rxd->next;
-		} while (rxd->flags & VRING_DESC_F_NEXT);
-	}
- err:
+	cnt = (int32_t)*idxp - (int32_t)idx;
+	if (cnt < 0)
+		cnt += vs->shared->isc_nrxd[0];
 	return (cnt);
 }
 
@@ -753,7 +724,8 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 			DPRINTF("indirect not supported!!!!\n");
 			return (ENXIO);
 		}
-
+		if ((rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd)) == NULL)
+			return (ENXIO);
 		ri->iri_frags[i].irf_idx = vcidx;
 		ri->iri_frags[i].irf_len = rxd->len;
 		ri->iri_len += rxd->len;
