@@ -740,12 +740,12 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
  wirefail:
 	vm_map_remove(kernel_map, kva, kva + len);
 	vm_map_remove(&vm->vmspace->vm_map, gpa, gpa + len);
-	return (EFAULT);
+	return (vm_mmap_to_errno(error));
  kernfail:
 	vm_map_remove(&vm->vmspace->vm_map, gpa, gpa + len);
  mapfail:
 	vm_object_deallocate(seg->object);
-	return (EFAULT);
+	return (vm_mmap_to_errno(error));
 }
 
 vm_offset_t
