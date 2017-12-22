@@ -512,9 +512,10 @@ vb_rxd_available(void *arg, qidx_t rxqid, qidx_t idx, qidx_t budget)
 	/*
 	 * XXX flush the ring mappings to iflib
 	 */
+	RXDPRINTF("%s avail_idx: %d curidx: %d\n", __func__, *idxp, idx);
 	for (cnt = 0, curidx = idx; curidx != *idxp && cnt < budget; curidx = (curidx+1)&mask, cnt++) {
 		vcidx = rxq->vr_avail[curidx];
-		RXDPRINTF("%s curidx: %d vcidx:%d\n", __func__, curidx, vcidx);
+		RXDPRINTF("curidx: %d vcidx:%d avail_idx: %d\n", curidx, vcidx, *idxp);
 		do {
 			if (__predict_false(vcidx >= scctx->isc_nrxd[0])) {
 				DPRINTF("invalid buffer index: %d\n", vcidx);
