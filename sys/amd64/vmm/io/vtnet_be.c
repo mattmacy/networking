@@ -1112,9 +1112,19 @@ vb_if_input(struct ifnet *vbifp, struct mbuf *m)
 	if_ctx_t ctx = vbifp->if_softc;
 	struct vb_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *hwifp = vs->vs_ifparent;
+	struct mbuf *mnext;
 
 	vb_input_process(vbifp, m);
-	(void)hwifp->if_transmit(hwifp, m);
+	if (hwifp->if_capabilities & IFCAP_TXBATCH) {
+		(void)hwifp->if_transmit(hwifp, m);
+	} else {
+		do {
+			mnext = m->m_nextpkt;
+			m->m_nextpkt = NULL;
+			(void)hwifp->if_transmit(hwifp, m);
+			m = mnext;
+		} while (m);
+	}
 }
 
 /*
