@@ -65,6 +65,15 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_VMB, "vmb", "virtual machine bridge");
 
+/*
+ * ifconfig vmb0 create
+ * ifconfig vmb0 addm vpc0
+ * ifconfig vmb0 priority vpc0 200
+ * ifconfig vmb0 vpc-resolver 127.0.0.1:5000
+ * ifconfig vmb0 addm vmi7
+ * ifconfig vmb0 pathcost vmi7 2000000
+ */
+
 struct vmb_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
