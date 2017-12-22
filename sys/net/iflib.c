@@ -314,7 +314,7 @@ typedef struct iflib_sw_tx_desc_array {
 #define IFLIB_MAX_TX_QUEUES		128
 #define IFLIB_MAX_TX_BATCH		64
 /* XXX --- make this an attach time value so we don't lose that space for !PSEUDO */
-#define IFLIB_RX_COPY_THRESH		112 /* (256 - (m_pktdat + sizeof(m_ext) + 8) */
+#define IFLIB_RX_COPY_THRESH		128
 #define IFLIB_MAX_RX_REFRESH		32
 /* The minimum descriptors per second before we start coalescing */
 #define IFLIB_MIN_DESC_SEC		16384
@@ -2540,13 +2540,13 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 
 	/* should I merge this back in now that the two paths are basically duplicated? */
 	if (ri->iri_nfrags == 1 &&
-	    ri->iri_frags[0].irf_len <= IFLIB_RX_COPY_THRESH) {
+	    ri->iri_frags[0].irf_len <= IFLIB_RX_COPY_THRESH &&
+		!(ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION)) {
 		rxd_frag_to_sd(rxq, &ri->iri_frags[0], FALSE, &sd);
 
 		m = *sd.ifsd_m;
 		*sd.ifsd_m = NULL;
 		m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
-		m->m_data = m->m_pktdat + sizeof(struct m_ext);
 #ifndef __NO_STRICT_ALIGNMENT
 		if (!IP_ALIGNED(m))
 			m->m_data += 2;
@@ -2730,11 +2730,11 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		rx_bytes += m->m_pkthdr.len;
 		rx_pkts++;
 #if defined(INET6) || defined(INET)
+		if (vxlan_enabled) {
+			if (iflib_vxlan_decap(ctx, m))
+				continue; /* not a valid VNI/DMAC */
+		}
 		if (lro_enabled) {
-			if (vxlan_enabled) {
-				if (iflib_vxlan_decap(ctx, m))
-					continue; /* not a valid VNI/DMAC */
-			}
 			if (!lro_possible) {
 				lro_possible = iflib_check_lro_possible(m, v4_forwarding, v6_forwarding);
 				if (lro_possible && mf != NULL) {
