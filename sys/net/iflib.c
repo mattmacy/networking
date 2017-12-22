@@ -2554,9 +2554,10 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	} else {
 		m = assemble_segments(rxq, ri, &sd);
 	}
-	if (ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION)
+	if (ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION) {
 		iflib_check_rx_notify(rxq, ri, m);
-
+		MPASS(memcmp(m->m_data, *sd.ifsd_cl, min(64, ri->iri_len)) == 0);
+	}
 	m->m_pkthdr.len = ri->iri_len;
 	if (ri->iri_ifp == NULL)
 		m->m_pkthdr.rcvif = rxq->ifr_ctx->ifc_ifp;
