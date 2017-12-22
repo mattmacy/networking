@@ -661,12 +661,9 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		DPRINTF("%s rxd->len short: %d\n", __func__, rxd->len);
 		return (ENXIO);
 	}
+	if ((rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd)) == NULL)
+		return (ENXIO);
 	vh = (struct virtio_net_hdr_mrg_rxbuf *)rxq->vr_sdcl[vcidx];
-	if (__predict_false(vh == NULL)) {
-		vb_rxd_available(vs, ri->iri_qsidx, cidx, 1);
-		vh = (struct virtio_net_hdr_mrg_rxbuf *)rxq->vr_sdcl[vcidx];
-	}
-	KASSERT(vh != NULL, ("NULL vh found at %d\n", vcidx));
 	if (__predict_true(rxd->len == sizeof(*vh))) {
 		rxq->vr_sdcl[vcidx] = NULL;
 		if (rxd->flags & VRING_DESC_F_NEXT)
