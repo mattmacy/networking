@@ -711,12 +711,6 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 
 	kva = 0;
 	if (flags & VM_MEMMAP_F_WIRED) {
-		error = vm_map_wire(&vm->vmspace->vm_map, gpa, gpa + len,
-		    VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
-		if (error != KERN_SUCCESS) {
-			printf("failed to wire user 0x%012lx to 0x%012lx\n", gpa, gpa + len);
-			goto wirefail;
-		}
 		 /* first usable address post direct map */
 		kva = 0xfffffe0000000000;
 		vm_object_reference(seg->object);
@@ -726,6 +720,12 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 			printf("failed to map 0x%lx bytes in to kernel map first: 0x%lx error: %d\n",
 				   len, first, error);
 			goto kernfail;
+		}
+		error = vm_map_wire(kernel_map, kva, kva + len,
+		    VM_MAP_WIRE_NOHOLES);
+		if (error != KERN_SUCCESS) {
+			printf("failed to wire kva 0x%012lx to 0x%012lx\n", kva, kva + len);
+			goto wirefail;
 		}
 	}
 
@@ -737,13 +737,14 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 	map->prot = prot;
 	map->flags = flags;
 	return (0);
- kernfail:
-	vm_map_unwire(&vm->vmspace->vm_map, gpa, gpa + len,
-				  VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
-	vm_object_deallocate(seg->object);
  wirefail:
+	vm_map_remove(kernel_map, kva, kva + len);
+	vm_map_remove(&vm->vmspace->vm_map, gpa, gpa + len);
+	return (EFAULT);
+ kernfail:
 	vm_map_remove(&vm->vmspace->vm_map, gpa, gpa + len);
  mapfail:
+	vm_object_deallocate(seg->object);
 	return (EFAULT);
 }
 
