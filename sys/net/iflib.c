@@ -2291,11 +2291,14 @@ iflib_stop(if_ctx_t ctx)
 		for (j = 0; j < txq->ift_size; j++) {
 			iflib_txsd_free(ctx, txq, j);
 		}
-		txq->ift_processed = txq->ift_cleaned = txq->ift_cidx_processed = 0;
-		txq->ift_in_use = txq->ift_gen = txq->ift_cidx = txq->ift_pidx = txq->ift_no_desc_avail = 0;
-		txq->ift_closed = txq->ift_mbuf_defrag = txq->ift_mbuf_defrag_failed = 0;
-		txq->ift_no_tx_dma_setup = txq->ift_txd_encap_efbig = txq->ift_map_failed = 0;
-		txq->ift_pullups = 0;
+		txq->ift_processed = txq->ift_cleaned = \
+		  txq->ift_cidx_processed = txq->ift_in_use = \
+		  txq->ift_gen = txq->ift_cidx = txq->ift_pidx = \
+		  txq->ift_no_desc_avail = txq->ift_closed = \
+		  txq->ift_mbuf_defrag = txq->ift_mbuf_defrag_failed =\
+		  txq->ift_no_tx_dma_setup =\
+		  txq->ift_txd_encap_efbig = txq->ift_map_failed =\
+		  txq->ift_pullups = 0;
 		ifmp_ring_reset_stats(txq->ift_br);
 		for (j = 0, di = txq->ift_ifdi; j < ctx->ifc_nhwtxqs; j++, di++)
 			bzero((void *)di->idi_vaddr, di->idi_size);
@@ -2308,6 +2311,8 @@ iflib_stop(if_ctx_t ctx)
 		/* also resets the free lists pidx/cidx */
 		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
 			iflib_fl_bufs_free(fl);
+		rxq->ifr_cq_cidx = rxq->ifr_cq_pidx =\
+		  rxq->ifr_cq_gen = 0;
 	}
 }
 
@@ -2556,7 +2561,6 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	}
 	if (ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION) {
 		iflib_check_rx_notify(rxq, ri, m);
-		MPASS(memcmp(m->m_data, *sd.ifsd_cl, min(64, ri->iri_len)) == 0);
 	}
 	m->m_pkthdr.len = ri->iri_len;
 	if (ri->iri_ifp == NULL)
