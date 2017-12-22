@@ -1204,6 +1204,7 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	vm_offset_t vaddr;
 	uint64_t gpa;
 	int qsz, len;
+	struct ifnet *ifp;
 
 	gpa = pfn << PAGE_SHIFT;
 
@@ -1272,6 +1273,14 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	MPASS(vaddr);
 	vs->vs_queues[q].vq_used = (struct vring_used *)vaddr;
 	printf("[%d].vq_used = %p flags: %d qsize: %d len: %d\n", q, (void *)vaddr, vs->vs_queues[q].vq_used->flags, qsz, len);
+
+	ifp = iflib_get_ifp(vs->vs_ctx);
+	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(25));
+	/* XXX unsafe */
+	if_setflagbits(ifp, 0, IFF_UP);
+	ifp->if_init(vs->vs_ctx);
+	if_setflagbits(ifp, IFF_UP, 0);
+	ifp->if_init(vs->vs_ctx);
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
 }
 
