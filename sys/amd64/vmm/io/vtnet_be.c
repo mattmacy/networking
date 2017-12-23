@@ -765,8 +765,7 @@ vb_rx_completion(struct mbuf *m)
 	/* Update the element in the used ring */
 	vu = vs->vs_queues[VB_TXQ_IDX].vq_used;
 	vidx = vu->idx;
-	vue = &vu->ring[vidx];
-	vidx = (vidx + 1) & mask;
+	vue = &vu->ring[vidx++ & mask];
 	vue->id = idx;
 	vue->len = m->m_pkthdr.len;
 	CTR4(KTR_SPARE3, "%s -- cidx: %d vidx: %d len: %d\n",
