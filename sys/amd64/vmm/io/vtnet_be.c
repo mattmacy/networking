@@ -726,8 +726,9 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 	count = i;
 	for (i = 0; i < count; i++)
-		RXDPRINTF("frags[%d].irf_idx: %d frags[%d].irf_len: %d\n",
-				i, ri->iri_frags[i].irf_idx, i, ri->iri_frags[i].irf_len);
+		RXDPRINTF("cidx: %d [%d].irf_idx: %d [%d].irf_len: %d\n",
+				  cidx, i, ri->iri_frags[i].irf_idx, i,
+				  ri->iri_frags[i].irf_len);
 	ri->iri_nfrags = count;
 	return (0);
 }
