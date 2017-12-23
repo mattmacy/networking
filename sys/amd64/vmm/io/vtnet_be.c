@@ -495,6 +495,7 @@ vb_rxcl_map(struct vb_softc *vs, struct vring_desc *rxd)
 
 	return ((caddr_t)vm_gpa_to_kva(vm, rxd->addr, rxd->len, &vs->vs_gpa_hint));
 }
+
 static int
 vb_rxd_available(void *arg, qidx_t rxqid, qidx_t cidx, qidx_t budget)
 {
@@ -643,7 +644,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 	/* later passed to ext_free to return used descriptors */
 	ri->iri_cookie1 = (void *)rxq;
-	ri->iri_cookie2 = (cidx | VB_CIDX_VALID);
+	ri->iri_cookie2 = (vcidx | VB_CIDX_VALID);
 
 	if (__predict_false(rxd->len < sizeof(*vh))) {
 		DPRINTF("%s rxd->len short: %d\n", __func__, rxd->len);
@@ -742,7 +743,7 @@ vb_rx_completion(struct mbuf *m)
 	struct vb_rxq *rxq;
 	struct vb_softc *vs;
 	uint16_t vidx;
-	int cidx, idx, mask;
+	int idx, mask;
 
 	if ((m->m_flags & M_PKTHDR) == 0)
 		return;
@@ -757,10 +758,9 @@ vb_rx_completion(struct mbuf *m)
 	rxq = (struct vb_rxq *)m->m_ext.ext_arg1;
 	MPASS(rxq != NULL);
 	vs = rxq->vr_vs;
-	cidx = (int)m->m_ext.ext_arg2;
-	MPASS(cidx & VB_CIDX_VALID);
-	cidx &= ~VB_CIDX_VALID;
-	idx = rxq->vr_avail[cidx];
+	idx = (int)m->m_ext.ext_arg2;
+	MPASS(idx & VB_CIDX_VALID);
+	idx &= ~VB_CIDX_VALID;
 	mask = vs->shared->isc_nrxd[0]-1;
 
 	/* Update the element in the used ring */
