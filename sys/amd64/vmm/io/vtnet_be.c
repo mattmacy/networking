@@ -575,37 +575,23 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 }
 
 static int
-vb_rxflags(struct vring_desc **rxdp, struct vb_rxq *rxq, if_rxd_info_t ri)
+vb_rxflags(struct vring_desc **rxdp, struct vb_rxq *rxq, if_rxd_info_t ri,
+		   uint16_t vcidx)
 {
-	vm_offset_t kva;
-	caddr_t scratch;
+	caddr_t cl;
+	//	caddr_t scratch;
 	struct pinfo pinfo;
 	struct vring_desc *rxd = *rxdp;
-	struct vb_softc *vs = rxq->vr_vs;
-	struct vm *vm = vs->vs_vn->vm;
 	uint32_t flags = 0;
 
-	if ((kva = vm_gpa_to_kva(vm, rxd->addr, rxd->len, &vs->vs_gpa_hint))) {
-		if (__predict_true(rxd->len >= VB_HDR_MAX)) {
-			vb_pparse((caddr_t)kva + ri->iri_pad, &pinfo);
-		} else {
-			/* XXX copy packet header to tmp */
-			panic("XXX");
-		}
-	} else {
-		void *cookie;
-		/* Temporarily map this page to extract the header */
-		scratch = (caddr_t) vm_gpa_hold(vm, 0 /* XXX */, rxd->addr,
-										rxd->len, VM_PROT_RW, &cookie);
-		if (__predict_true(rxd->len >= VB_HDR_MAX)) {
-			vb_pparse(scratch + ri->iri_pad, &pinfo);
-		} else {
-			panic("XXX");
-			/* XXX copy packet header to tmp */
-		}
-		vm_gpa_release(cookie);
-	}
+	cl = rxq->vr_sdcl[vcidx];
 
+	if (__predict_true(rxd->len >= VB_HDR_MAX)) {
+		vb_pparse(cl + ri->iri_pad, &pinfo);
+	} else {
+		/* XXX copy packet header to tmp */
+		panic("XXX");
+	}
 	switch (pinfo.etype) {
 		case ETHERTYPE_IP:
 			switch (pinfo.l4type) {
@@ -661,14 +647,18 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		DPRINTF("%s rxd->len short: %d\n", __func__, rxd->len);
 		return (ENXIO);
 	}
-	if ((rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd)) == NULL)
+	rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+	if (__predict_false(rxq->vr_sdcl[vcidx] == NULL))
 		return (ENXIO);
 	vh = (struct virtio_net_hdr_mrg_rxbuf *)rxq->vr_sdcl[vcidx];
 	if (__predict_true(rxd->len == sizeof(*vh))) {
 		rxq->vr_sdcl[vcidx] = NULL;
-		if (rxd->flags & VRING_DESC_F_NEXT)
+		if (__predict_true(rxd->flags & VRING_DESC_F_NEXT)) {
 			vcidx = rxd->next;
-		else {
+			rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+			if (__predict_false(rxq->vr_sdcl[vcidx] == NULL))
+				return (ENXIO);
+		} else {
 			return (ENXIO);
 		}
 		if (__predict_false(vcidx >= scctx->isc_nrxd[0]))
@@ -697,7 +687,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	}
 	if ((vh->hdr.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) && parse_header) {
 		rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
-		if (vb_rxflags(&rxd, rxq, ri))
+		if (vb_rxflags(&rxd, rxq, ri, vcidx))
 			return (ENXIO);
 		ri->iri_csum_data = vh->hdr.csum_offset;
 	}
