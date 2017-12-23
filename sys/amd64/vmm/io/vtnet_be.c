@@ -664,7 +664,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		if (__predict_false(vcidx >= scctx->isc_nrxd[0]))
 			return (ENXIO);
 	} else {
-		DPRINTF("didn't get separate vhdr assuming it's inplace rxd->len: %d\n",
+		RXDPRINTF("didn't get separate vhdr assuming it's inplace rxd->len: %d\n",
 				rxd->len);
 		ri->iri_pad = sizeof(*vh);
 	}
@@ -694,25 +694,28 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 	do {
 		if (__predict_false(vcidx >= scctx->isc_nrxd[0])) {
-			DPRINTF("descriptor out of range: %d\n", vcidx);
+			RXDPRINTF("descriptor out of range: %d\n", vcidx);
 			return (ENXIO);
 		}
 		if (__predict_false(i == IFLIB_MAX_RX_SEGS)) {
-			DPRINTF("descriptor chain too long: %d\n", vcidx);
+			RXDPRINTF("descriptor chain too long: %d\n", vcidx);
 			return (ENXIO);
 		}
 		rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
 		if ((int)ri->iri_len + (int)rxd->len > VB_TSO_SIZE) {
-			DPRINTF("chain exceeds maximum size: %d\n",
+			RXDPRINTF("chain exceeds maximum size: %d\n",
 					(int)ri->iri_len + (int)rxd->len);
 			return (ENXIO);
 		}
 		if (__predict_false(rxd->flags & VRING_DESC_F_INDIRECT)) {
-			DPRINTF("indirect not supported!!!!\n");
+			RXDPRINTF("indirect not supported!!!!\n");
 			return (ENXIO);
 		}
-		if ((rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd)) == NULL)
+		rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+		if (__predict_false(rxq->vr_sdcl[vcidx] == NULL)) {
+			RXDPRINTF("failed cluster map\n");
 			return (ENXIO);
+		}
 		ri->iri_frags[i].irf_idx = vcidx;
 		ri->iri_frags[i].irf_len = rxd->len;
 		ri->iri_len += rxd->len;
