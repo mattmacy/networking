@@ -454,7 +454,7 @@ vb_txd_credits_update(void *arg, uint16_t txqid, bool clear)
 	int16_t vpidx;
 	int32_t delta;
 
-	vpidx = vs->vs_queues[VB_RXQ_IDX].vq_avail->idx;
+	vpidx = vs->vs_queues[VB_RXQ_IDX].vq_avail->idx % scctx->isc_ntxd[0];
 
 	/* credits updated should reflect new
 	 * descriptors available in the ring --
@@ -469,6 +469,7 @@ vb_txd_credits_update(void *arg, uint16_t txqid, bool clear)
 
 	if (clear && delta)
 		txq->vt_cidx = vpidx;
+	MPASS(delta < scctx->isc_ntxd[0]);
 	return (delta);
 }
 
