@@ -338,7 +338,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	DPRINTF("\n");
 	if (__predict_false(freespc < pi->ipi_len)) {
 		DPRINTF("freespc=%d < len=%d\n", freespc, pi->ipi_len);
-		return (ENOBUFS);
+		return (EFBIG);
 	}
 	vhd = (void *)tx_segs[0].ds_addr;
 	bzero(vhd, sizeof(*vhd));
@@ -432,6 +432,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	/* Update used ring to reflect final state */
 	wmb();
 	vu->idx = vidx;
+	wmb();
 	return (0);
 }
 
@@ -769,8 +770,8 @@ vb_rx_completion(struct mbuf *m)
 	vue = &vu->ring[vidx++ & mask];
 	vue->id = idx;
 	vue->len = m->m_pkthdr.len;
-	CTR4(KTR_SPARE3, "%s -- cidx: %d vidx: %d len: %d\n",
-		   __func__, cidx, vidx, vue->len);
+	CTR4(KTR_SPARE3, "%s -- idx: %d vidx: %d len: %d\n",
+		   __func__, idx, vidx, vue->len);
 	/* ensure that all prior vue updates are written first */
 	wmb();
 	vu->idx = vidx;
