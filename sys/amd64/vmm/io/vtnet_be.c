@@ -495,14 +495,15 @@ vb_rxcl_map(struct vb_softc *vs, struct vring_desc *rxd)
 	return ((caddr_t)vm_gpa_to_kva(vm, rxd->addr, rxd->len, &vs->vs_gpa_hint));
 }
 static int
-vb_rxd_available(void *arg, qidx_t rxqid, qidx_t idx, qidx_t budget)
+vb_rxd_available(void *arg, qidx_t rxqid, qidx_t cidx, qidx_t budget)
 {
-	volatile uint16_t *idxp;
 	struct vb_softc *vs = arg;
+	uint16_t idx;
 	int cnt;
 
-	idxp = &vs->vs_queues[VB_TXQ_IDX].vq_avail->idx;
-	cnt = (int32_t)*idxp - (int32_t)idx;
+	idx =  vs->vs_queues[VB_TXQ_IDX].vq_avail->idx;
+	idx %= vs->shared->isc_nrxd[0];
+	cnt = (int32_t)idx - (int32_t)cidx;
 	if (cnt < 0)
 		cnt += vs->shared->isc_nrxd[0];
 	return (cnt);
@@ -641,7 +642,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 	/* later passed to ext_free to return used descriptors */
 	ri->iri_cookie1 = (void *)rxq;
-	ri->iri_cookie2 = (vcidx | VB_CIDX_VALID);
+	ri->iri_cookie2 = (cidx | VB_CIDX_VALID);
 
 	if (__predict_false(rxd->len < sizeof(*vh))) {
 		DPRINTF("%s rxd->len short: %d\n", __func__, rxd->len);
@@ -739,7 +740,7 @@ vb_rx_completion(struct mbuf *m)
 	struct vb_rxq *rxq;
 	struct vb_softc *vs;
 	uint16_t vidx;
-	int idx, mask;
+	int cidx, idx, mask;
 
 	if ((m->m_flags & M_PKTHDR) == 0)
 		return;
@@ -754,9 +755,10 @@ vb_rx_completion(struct mbuf *m)
 	rxq = (struct vb_rxq *)m->m_ext.ext_arg1;
 	MPASS(rxq != NULL);
 	vs = rxq->vr_vs;
-	idx = (int)m->m_ext.ext_arg2;
-	MPASS(idx & VB_CIDX_VALID);
-	idx &= ~VB_CIDX_VALID;
+	cidx = (int)m->m_ext.ext_arg2;
+	MPASS(cidx & VB_CIDX_VALID);
+	cidx &= ~VB_CIDX_VALID;
+	idx = rxq->vr_avail[cidx];
 	mask = vs->shared->isc_nrxd[0]-1;
 
 	/* Update the element in the used ring */
@@ -766,8 +768,8 @@ vb_rx_completion(struct mbuf *m)
 	vidx = (vidx + 1) & mask;
 	vue->id = idx;
 	vue->len = m->m_pkthdr.len;
-	RXDPRINTF("%s -- idx: %d vidx: %d len: %d\n",
-		   __func__, idx, vidx, vue->len);
+	RXDPRINTF("%s -- cidx: %d vidx: %d len: %d\n",
+		   __func__, cidx, vidx, vue->len);
 	/* ensure that all prior vue updates are written first */
 	wmb();
 	vu->idx = vidx;
