@@ -359,6 +359,7 @@ struct iflib_txq {
 	uint16_t	ift_npending;
 	uint16_t	ift_db_pending;
 	uint16_t	ift_rs_pending;
+	int		ift_ticks;
 	/* implicit pad */
 	uint8_t		ift_txd_size[8];
 	uint64_t	ift_processed;
@@ -2138,6 +2139,15 @@ iflib_timer(void *arg)
 
 	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
 		return;
+
+	/* handle any laggards */
+	if (txq->ift_db_pending)
+		GROUPTASK_ENQUEUE(&txq->ift_task);
+
+	if (ticks - txq->ift_ticks < hz/2)
+		return;
+
+	txq->ift_ticks = ticks;
 	/*
 	** Check on the state of the TX queue(s), this
 	** can be done without the lock because its RO
@@ -2152,9 +2162,6 @@ iflib_timer(void *arg)
 	if (ifmp_ring_is_stalled(txq->ift_br))
 		txq->ift_qstatus = IFLIB_QUEUE_HUNG;
 	txq->ift_cleaned_prev = txq->ift_cleaned;
-	/* handle any laggards */
-	if (txq->ift_db_pending)
-		GROUPTASK_ENQUEUE(&txq->ift_task);
 
 	sctx->isc_pause_frames = 0;
 	if (if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING) 
@@ -3695,6 +3702,11 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	/* deliberate use of bitwise or to avoid gratuitous short-circuit */
 	ring = rang ? false  : (ctx->ifc_softc_ctx.isc_min_tx_latency | err) || (TXQ_AVAIL(txq) < MAX_TX_DESC(ctx));
 	iflib_txd_db_check(ctx, txq, ring, txq->ift_in_use);
+	if (i < count && avail < MAX_TX_DESC(ctx) + 2) {
+		txq->ift_db_pending++;
+		callout_reset_on(&txq->ift_timer, 1, iflib_timer, txq,
+						 txq->ift_timer.c_cpu);
+	}
 	if_inc_counter(ifp, IFCOUNTER_OBYTES, bytes_sent);
 	if_inc_counter(ifp, IFCOUNTER_OPACKETS, pkt_sent);
 	if (mcast_sent)
