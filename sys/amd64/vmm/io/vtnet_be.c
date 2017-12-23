@@ -418,12 +418,11 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 		total -= len;
 		bcopy(src, dst, len);
 		if (update_used) {
-			vue = &vu->ring[vidx];
+			vue = &vu->ring[vidx++ & mask];
 			vue->id = /* pi->ipi_pidx + didx */ vpidxs[didx]; 
 			vue->len = dlen;
 			DPRINTF("vidx: %d vue->id: %d vue->len: %d vpidxs[%d]: %d\n",
 				   vidx, vue->id, vue->len, didx, vpidxs[didx]);
-			vidx = (vidx + 1) & mask;
 			didx++;
 		}
 	} while (didx < ndesc);
