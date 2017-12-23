@@ -726,7 +726,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 	count = i;
 	for (i = 0; i < count; i++)
-		RXDPRINTF("cidx: %d [%d].irf_idx: %d [%d].irf_len: %d\n",
+		CTR5(KTR_SPARE3, "cidx: %d [%d].irf_idx: %d [%d].irf_len: %d\n",
 				  cidx, i, ri->iri_frags[i].irf_idx, i,
 				  ri->iri_frags[i].irf_len);
 	ri->iri_nfrags = count;
@@ -769,7 +769,7 @@ vb_rx_completion(struct mbuf *m)
 	vidx = (vidx + 1) & mask;
 	vue->id = idx;
 	vue->len = m->m_pkthdr.len;
-	RXDPRINTF("%s -- cidx: %d vidx: %d len: %d\n",
+	CTR4(KTR_SPARE3, "%s -- cidx: %d vidx: %d len: %d\n",
 		   __func__, cidx, vidx, vue->len);
 	/* ensure that all prior vue updates are written first */
 	wmb();
