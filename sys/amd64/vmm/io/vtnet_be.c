@@ -174,12 +174,11 @@ struct vtnet_be {
 
 /* Packet parse info */
 struct pinfo {
-	uint16_t *csum;
 	uint16_t etype;
 	uint8_t	 ehdrlen;	/* eth header len, includes VLAN tag */
-	uint8_t	 l3size;	/* size of l3 header */
-	uint8_t	 l3valid;	/* size of l3 header */
 	uint8_t	 l4type;	/* layer 4 protocol type */
+	uint8_t	 l3size:7;	/* size of l3 header */
+	uint8_t	 l3valid:1;	/* size of l3 header */
 };
 
 static SLIST_HEAD(, vtnet_be) vb_head;
@@ -521,14 +520,10 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 	struct ether_vlan_header *eh;
 	struct ip *ip;
 	struct ip6_hdr *ip6;
-	struct tcphdr *tcp;
-	struct udphdr *udp;
 	int ehdrlen;
 	int l3valid, l3size, l4type;
 	uint16_t etype;
-	uint16_t *csum;
 
-	csum = NULL;
 	eh = (struct ether_vlan_header *)data;
 	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
 		etype = ntohs(eh->evl_proto);
@@ -562,22 +557,6 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 	pinfo->l3valid = l3valid;
 	pinfo->l3size = l3size;
 	pinfo->l4type = l4type;
-	if (!l3valid) {
-		pinfo->csum = NULL;
-		return (1);
-	}
-
-	switch (l4type) {
-		case IPPROTO_TCP:
-			tcp = (struct tcphdr *)(data + ehdrlen + l3size);
-			csum = &tcp->th_sum;
-			break;
-		case IPPROTO_UDP:
-			udp = (struct udphdr *)(data + ehdrlen + l3size);
-			csum = &udp->uh_sum;
-			break;
-	}
-	pinfo->csum = csum;
 	return (1);
 }
 
@@ -1059,11 +1038,10 @@ vb_intr_msix(struct vb_softc *vs, int q)
 static void
 vb_txflags(struct mbuf *m, struct pinfo *pinfo)
 {
-	if ((m->m_pkthdr.csum_flags &
-		 (CSUM_TCP|CSUM_IP6_TCP|CSUM_IP6_TSO|CSUM_IP_TSO)) &&
-		pinfo->csum && (*pinfo->csum != 0))
-		*pinfo->csum = 0;
+	int16_t data = (int16_t)m->m_pkthdr.csum_data;
 
+	if (data > 0)
+		*(uint16_t *)(m->m_data + pinfo->ehdrlen + pinfo->l3size + data) = 0;
 	m->m_pkthdr.tso_segsz = m->m_pkthdr.fibnum;
 	m->m_pkthdr.fibnum = 0;
 }
