@@ -828,6 +828,7 @@ vq_ring_free_chain(struct virtqueue *vq, uint16_t desc_idx)
 {
 	struct vring_desc *dp;
 	struct vq_desc_extra *dxp;
+	int ndescs;
 
 	VQ_RING_ASSERT_VALID_IDX(vq, desc_idx);
 	dp = &vq->vq_ring.desc[desc_idx];
@@ -836,20 +837,27 @@ vq_ring_free_chain(struct virtqueue *vq, uint16_t desc_idx)
 	if (vq->vq_free_cnt == 0)
 		VQ_RING_ASSERT_CHAIN_TERM(vq);
 
-	vq->vq_free_cnt += dxp->ndescs;
-	dxp->ndescs--;
+	ndescs = dxp->ndescs;
+	vq->vq_free_cnt += ndescs;
+	ndescs--;
 
 	if ((dp->flags & VRING_DESC_F_INDIRECT) == 0) {
 		while (dp->flags & VRING_DESC_F_NEXT) {
 			VQ_RING_ASSERT_VALID_IDX(vq, dp->next);
 			dp = &vq->vq_ring.desc[dp->next];
-			dxp->ndescs--;
+#ifdef INVARIANTS
+			MPASS(dp->addr);
+			dp->addr = 0;
+			MPASS(ndescs);
+#endif
+			ndescs--;
 		}
 	}
 
-	VQASSERT(vq, dxp->ndescs == 0,
-	    "failed to free entire desc chain, remaining: %d", dxp->ndescs);
-
+	VQASSERT(vq, ndescs == 0,
+			 "failed to free entire desc chain, remaining: %d originally: %d",
+			 ndescs, dxp->ndescs);
+	dxp->ndescs = ndescs;
 	/*
 	 * We must append the existing free chain, if any, to the end of
 	 * newly freed chain. If the virtqueue was completely used, then
