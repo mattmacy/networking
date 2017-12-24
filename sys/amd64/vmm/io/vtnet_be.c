@@ -1431,18 +1431,19 @@ vb_if_attach(struct vb_softc *vs, struct vb_if_attach *via)
 	}
 	vs->vs_ifparent = ifp;
 	/* Add additional capabilities based on underlying ifnet */
-	if (vs->vs_ifparent->if_capabilities & IFCAP_TXCSUM)
+	if (ifp->if_capabilities & IFCAP_TXCSUM)
 		vs->vs_hv_caps |= VIRTIO_NET_F_CSUM;
-	if (vs->vs_ifparent->if_capabilities & IFCAP_TSO4)
+	if (ifp->if_capabilities & IFCAP_TSO4)
 		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO4;
-	if (vs->vs_ifparent->if_capabilities & IFCAP_TSO6)
+	if (ifp->if_capabilities & IFCAP_TSO6)
 		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO6;
-	if ((vs->vs_ifparent->if_capabilities & (IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6)) ==
+	if ((ifp->if_capabilities & (IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6)) ==
 		(IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6))
 		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_CSUM;
-	if (vs->vs_ifparent->if_capabilities & IFCAP_LRO)
+	if (ifp->if_capabilities & IFCAP_LRO)
 		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6;
-
+	printf("caps: %016lx encaps: %016lx hv_caps: %08x\n",
+		   ifp->if_capabilities, ifp->if_capenable, vs->vs_hv_caps);
 	return (0);
 }
 
@@ -1531,7 +1532,7 @@ vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t par
 	vs->vs_nvq = 2;	/* tx and rx, for now */
 
 	/* Set up host capabilities */
-	vs->vs_hv_caps = VIRTIO_NET_F_MAC | VIRTIO_NET_F_MRG_RXBUF |
+	vs->vs_hv_caps |= VIRTIO_NET_F_MAC | VIRTIO_NET_F_MRG_RXBUF |
 		VIRTIO_NET_F_STATUS | VIRTIO_F_NOTIFY_ON_EMPTY;
 
 	return (0);
