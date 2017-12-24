@@ -1729,7 +1729,7 @@ static struct if_shared_ctx vb_sctx_init = {
 	.isc_driver_version = vb_driver_version,
 	.isc_driver = &vb_iflib_driver,
 	.isc_flags = IFLIB_TXD_ENCAP_PIO | IFLIB_RX_COMPLETION |	\
-	IFLIB_SKIP_CLREFILL | IFLIB_HAS_RXCQ,
+	IFLIB_SKIP_CLREFILL | IFLIB_HAS_RXCQ | IFLIB_NO_HANG_RESET,
 
 	.isc_nrxd_min = {VB_MIN_RXD, VB_MIN_RXD},
 	.isc_ntxd_min = {VB_MIN_TXD},
