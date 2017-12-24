@@ -2154,9 +2154,16 @@ iflib_timer(void *arg)
 	** and the HUNG state will be static if set.
 	*/
 	IFDI_TIMER(ctx, txq->ift_id);
-	if ((txq->ift_qstatus == IFLIB_QUEUE_HUNG) &&
-	    ((txq->ift_cleaned_prev == txq->ift_cleaned) ||
-	     (sctx->isc_pause_frames == 0)))
+	if (ctx->ifc_sctx->isc_flags & IFLIB_NO_HANG_RESET) {
+		if (txq->ift_qstatus == IFLIB_QUEUE_HUNG) {
+			device_printf(ctx->ifc_dev,  "TX(%d) desc avail = %d, pidx = %d\n",
+						  txq->ift_id, TXQ_AVAIL(txq), txq->ift_pidx);
+			txq->ift_db_pending++;
+			GROUPTASK_ENQUEUE(&txq->ift_task);
+		}
+	} else if ((txq->ift_qstatus == IFLIB_QUEUE_HUNG) &&
+			  ((txq->ift_cleaned_prev == txq->ift_cleaned) ||
+			   (sctx->isc_pause_frames == 0)))
 		goto hung;
 
 	if (ifmp_ring_is_stalled(txq->ift_br))
