@@ -344,7 +344,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	bzero(vhd, sizeof(*vhd));
 	vhd->num_buffers = i;
 
-	if (pi->ipi_csum_flags) {
+	if (pi->ipi_csum_flags & CSUM_DATA_VALID) {
 		vhd->hdr.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM |
 		    VIRTIO_NET_HDR_F_DATA_VALID;
 		vhd->hdr.csum_start = pi->ipi_ehdrlen + pi->ipi_ip_hlen;
@@ -588,12 +588,12 @@ vb_rxflags(struct vring_desc **rxdp, struct vb_rxq *rxq, if_rxd_info_t ri,
 	uint32_t flags = 0;
 
 	cl = rxq->vr_sdcl[vcidx];
+	pinfo.etype = 0;
 
 	if (__predict_true(rxd->len >= VB_HDR_MAX)) {
 		vb_pparse(cl + ri->iri_pad, &pinfo);
 	} else {
-		/* XXX copy packet header to tmp */
-		panic("XXX");
+		/* XXX --- too small */
 	}
 	switch (pinfo.etype) {
 		case ETHERTYPE_IP:
