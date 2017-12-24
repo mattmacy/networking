@@ -3693,6 +3693,10 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		txq->ift_db_pending += (txq->ift_in_use - in_use_prev);
 		desc_used += (txq->ift_in_use - in_use_prev);
 		ETHER_BPF_MTAP(ifp, m);
+		if (__predict_false(avail < (txq->ift_size >> 2))) {
+			reclaimed += iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(ctx));
+			avail = TXQ_AVAIL(txq);
+		}
 		if (ctx->ifc_sctx->isc_flags & IFLIB_TXD_ENCAP_PIO)
 			m_freem(m);
 		if (__predict_false(!(ifp->if_drv_flags & IFF_DRV_RUNNING)))
@@ -3704,7 +3708,6 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	ring = rang ? false  : (ctx->ifc_softc_ctx.isc_min_tx_latency | err) || (TXQ_AVAIL(txq) < MAX_TX_DESC(ctx));
 	iflib_txd_db_check(ctx, txq, ring, txq->ift_in_use);
 	if (i < count && avail < MAX_TX_DESC(ctx) + 2) {
-		txq->ift_db_pending++;
 		callout_reset_on(&txq->ift_timer, 1, iflib_timer, txq,
 						 txq->ift_timer.c_cpu);
 	}
