@@ -347,7 +347,10 @@ typedef enum {
  * Skip refilling cluster free lists
  */
 #define IFLIB_SKIP_CLREFILL	0x0400
-
+/*
+ * Don't reset on hang
+ */
+#define IFLIB_NO_HANG_RESET	0x0800
 
 /*
  * field accessors
