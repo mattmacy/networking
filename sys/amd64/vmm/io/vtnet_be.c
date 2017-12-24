@@ -207,7 +207,7 @@ struct vb_queue {
 #define VS_READY 0x04
 #define VS_OWNED 0x08
 
-#define VB_CIDX_VALID (1 << 16)
+#define VB_CIDX_VALID (1 << 18)
 
 struct vb_softc {
 	if_softc_ctx_t shared;
@@ -250,6 +250,7 @@ struct vb_softc {
 #define VB_HDR_MAX 18 + 40
 
 struct vb_rxq {
+	uint16_t vr_cidx;
 	struct vb_softc *vr_vs;
 	caddr_t *vr_sdcl;
 	uint16_t *vr_avail;
@@ -632,21 +633,24 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	if_softc_ctx_t scctx = vs->shared;
 	struct vb_rxq *rxq = &vs->vs_rx_queues[ri->iri_qsidx];
 	struct vring_desc *rxd;
-	int i, cidx, vcidx, count;
+	int i, cidx, vcidx, count, mask;
 	bool parse_header;
 
 	MPASS(ri->iri_cidx < scctx->isc_nrxd[0]);
 	i = 0;
 	parse_header = false;
 	cidx = ri->iri_cidx;
-	ri->iri_cidx = (cidx + 1) & (scctx->isc_nrxd[0]-1);
 	vcidx = rxq->vr_avail[cidx];
-	rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
-
+	mask = scctx->isc_nrxd[0]-1;
+	MPASS(cidx == (rxq->vr_cidx & mask));
+	rxq->vr_used[rxq->vr_cidx & 4095] = vcidx;
 	/* later passed to ext_free to return used descriptors */
 	ri->iri_cookie1 = (void *)rxq;
-	ri->iri_cookie2 = (cidx | VB_CIDX_VALID);
-	rxq->vr_used[cidx] = vcidx;
+	ri->iri_cookie2 = (rxq->vr_cidx | VB_CIDX_VALID);
+
+	ri->iri_cidx = (rxq->vr_cidx++) & (scctx->isc_nrxd[0]-1);
+	rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
+
 
 	if (__predict_false(rxd->len < sizeof(*vh))) {
 		DPRINTF("%s rxd->len short: %d\n", __func__, rxd->len);
@@ -763,14 +767,14 @@ vb_rx_completion(struct mbuf *m)
 	cidx = (int)m->m_ext.ext_arg2;
 	MPASS(cidx & VB_CIDX_VALID);
 	cidx &= ~VB_CIDX_VALID;
-	idx = rxq->vr_used[cidx];
+	idx = rxq->vr_used[cidx & 4095];
 	mask = vs->shared->isc_nrxd[0]-1;
 
 	/* Update the element in the used ring */
 	vu = vs->vs_queues[VB_TXQ_IDX].vq_used;
 	vidx = vu->idx;
-	if (cidx != (vidx & mask))
-		printf("mismatch cidx: %d vidx: %d\n", cidx, vidx & mask);
+	if (cidx != vidx)
+		printf("mismatch cidx: %d vidx: %d\n", cidx, vidx);
 
 	vue = &vu->ring[vidx++ & mask];
 	vue->id = idx;
