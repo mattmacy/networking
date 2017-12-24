@@ -1130,10 +1130,10 @@ vb_dev_kick(struct vb_softc *vs, uint32_t q)
 {
 
 	switch (q) {
-		case 0:
+		case VB_RXQ_IDX:
 			iflib_tx_intr_deferred(vs->vs_ctx, 0 /* XXX single queue */);
 			break;
-		case 1:
+		case VB_TXQ_IDX:
 			iflib_rx_intr_deferred(vs->vs_ctx, 0 /* XXX single queue */);
 			break;
 	default:
