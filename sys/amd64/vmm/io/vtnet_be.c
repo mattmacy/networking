@@ -651,9 +651,9 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	rxq->vr_used[rxq->vr_cidx & 4095] = vcidx;
 	/* later passed to ext_free to return used descriptors */
 	ri->iri_cookie1 = (void *)rxq;
-	ri->iri_cookie2 = (rxq->vr_cidx | VB_CIDX_VALID);
+	ri->iri_cookie2 = (rxq->vr_cidx++ | VB_CIDX_VALID);
 
-	ri->iri_cidx = (rxq->vr_cidx++) & (scctx->isc_nrxd[0]-1);
+	ri->iri_cidx = rxq->vr_cidx & (scctx->isc_nrxd[0]-1);
 	rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
 
 
@@ -1625,13 +1625,13 @@ vb_stop(if_ctx_t ctx)
 	MPASS(scctx->isc_nrxqsets);
 	MPASS(scctx->isc_nrxd[0]);
 
-	for (i = 0; i < scctx->isc_nrxqsets; i++)
+	for (i = 0; i < scctx->isc_nrxqsets; i++) {
+		vb_rxq_init(vs, &vs->vs_rx_queues[i]);
 		for (j = 0; j < scctx->isc_nrxd[0]; j++)
 			vs->vs_rx_queues[i].vr_sdcl[j] = NULL;
+	}
 	for (i = 0; i < scctx->isc_ntxqsets; i++)
 		vs->vs_tx_queues[i].vt_cidx = 0;
-	for (i = 0; i < scctx->isc_nrxqsets; i++)
-		vb_rxq_init(vs, &vs->vs_rx_queues[i]);
 }
 
 static void
