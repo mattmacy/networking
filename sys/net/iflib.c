@@ -2466,6 +2466,7 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 		 */
 		m->m_data += padlen;
 		ri->iri_len -= padlen;
+		ri->iri_frags[i].irf_len -= padlen;
 		m->m_len = ri->iri_frags[i].irf_len;
 	} while (++i < ri->iri_nfrags);
 
