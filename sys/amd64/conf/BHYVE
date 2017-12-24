@@ -237,3 +237,10 @@ device		crypto			# Required by IPSEC
 device		vmx
 
 options         VM_NUMA_ALLOC
+
+options		ALT_BREAK_TO_DEBUGGER
+#options KTR
+#options KTR_COMPILE=(KTR_SPARE3)
+#options KTR_ENTRIES=8192
+#options KTR_MASK=(KTR_SPARE3)
+
