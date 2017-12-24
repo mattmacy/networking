@@ -1183,9 +1183,8 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 {
 	vm_offset_t vaddr;
 	uint64_t gpa;
-	int i, qsz, len;
+	int qsz, len;
 	struct ifnet *ifp;
-	if_softc_ctx_t scctx;
 
 	gpa = pfn << PAGE_SHIFT;
 
@@ -1260,14 +1259,6 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	/* XXX unsafe */
 	if_setflagbits(ifp, 0, IFF_UP);
 	ifp->if_init(vs->vs_ctx);
-
-	scctx = vs->shared;
-	for (i = 0; i < scctx->isc_nrxqsets; i++) {
-		vb_rxq_init(vs, &vs->vs_rx_queues[i]);
-	}
-	for (i = 0; i < scctx->isc_ntxqsets; i++) {
-		vb_txq_init(vs, &vs->vs_tx_queues[i]);
-	}
 
 	if_setflagbits(ifp, IFF_UP, 0);
 	ifp->if_init(vs->vs_ctx);
@@ -1639,6 +1630,8 @@ vb_stop(if_ctx_t ctx)
 			vs->vs_rx_queues[i].vr_sdcl[j] = NULL;
 	for (i = 0; i < scctx->isc_ntxqsets; i++)
 		vs->vs_tx_queues[i].vt_cidx = 0;
+	for (i = 0; i < scctx->isc_nrxqsets; i++)
+		vb_rxq_init(vs, &vs->vs_rx_queues[i]);
 }
 
 static void
