@@ -838,6 +838,7 @@ vq_ring_free_chain(struct virtqueue *vq, uint16_t desc_idx)
 		VQ_RING_ASSERT_CHAIN_TERM(vq);
 
 	ndescs = dxp->ndescs;
+	MPASS(ndescs);
 	vq->vq_free_cnt += ndescs;
 	ndescs--;
 
