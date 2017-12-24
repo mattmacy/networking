@@ -3557,6 +3557,8 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 	iflib_tx_desc_free(txq, reclaim);
 	txq->ift_cleaned += reclaim;
 	txq->ift_in_use -= reclaim;
+	if (reclaim)
+		txq->ift_qstatus = IFLIB_QUEUE_IDLE;
 
 	return (reclaim);
 }
@@ -3634,8 +3636,6 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		DBG_COUNTER_INC(txq_drain_oactive);
 		return (0);
 	}
-	if (reclaimed)
-		txq->ift_qstatus = IFLIB_QUEUE_IDLE;
 	consumed = mcast_sent = bytes_sent = pkt_sent = 0;
 	count = MIN(avail, TX_BATCH_SIZE);
 #ifdef INVARIANTS
