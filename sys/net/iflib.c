@@ -5823,7 +5823,7 @@ iflib_led_create(if_ctx_t ctx)
 void
 iflib_tx_intr_deferred(if_ctx_t ctx, int txqid)
 {
-
+	ctx->ifc_txqs[txqid].ift_db_pending++;
 	GROUPTASK_ENQUEUE(&ctx->ifc_txqs[txqid].ift_task);
 }
 
