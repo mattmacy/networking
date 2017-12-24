@@ -2472,24 +2472,6 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 
 	return (mh);
 }
-#if 0
-static void
-print_pkt_(int line, unsigned char *pkt, int bytes)
-{
- int i, j, lines;
-
- lines = (bytes + 15)/16;
- printf("pkt on line: %d\n", line);
-	for (i = 0; i < lines; i++) {
-		printf("\t0x%04x: ", i*16);
-		for (j = 0; j < 16; j += 2)
-			printf("%02x%02x ",  pkt[i*16 + j], pkt[i*16 + j + 1]);
-		printf("\n");
-	}
-}
-
-#define print_pkt(pkt, bytes) print_pkt_(__LINE__, (pkt), (bytes))
-#endif
 
 static void
 iflib_check_rx_notify(iflib_rxq_t rxq, if_rxd_info_t ri, struct mbuf *m)
@@ -3693,15 +3675,18 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		txq->ift_db_pending += (txq->ift_in_use - in_use_prev);
 		desc_used += (txq->ift_in_use - in_use_prev);
 		ETHER_BPF_MTAP(ifp, m);
+		ring = false;
 		if (__predict_false(avail < (txq->ift_size >> 2))) {
 			reclaimed += iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(ctx));
 			avail = TXQ_AVAIL(txq);
+			if (ctx->ifc_sctx->isc_flags & IFLIB_TXD_ENCAP_PIO)
+				ring = true;
 		}
 		if (ctx->ifc_sctx->isc_flags & IFLIB_TXD_ENCAP_PIO)
 			m_freem(m);
 		if (__predict_false(!(ifp->if_drv_flags & IFF_DRV_RUNNING)))
 			break;
-		rang = iflib_txd_db_check(ctx, txq, false, in_use_prev);
+		rang = iflib_txd_db_check(ctx, txq, ring, in_use_prev);
 	}
 
 	/* deliberate use of bitwise or to avoid gratuitous short-circuit */
