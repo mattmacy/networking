@@ -269,6 +269,8 @@ struct vb_txq {
 
 static if_pseudo_t vb_clone_register(void);
 static void vb_intr_msix(struct vb_softc *vs, int q);
+static void vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq);
+static void vb_txq_init(struct vb_softc *vs, struct vb_txq *txq);
 
 static int
 vb_txd_encap(void *arg, if_pkt_info_t pi)
@@ -642,7 +644,10 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	cidx = ri->iri_cidx;
 	vcidx = rxq->vr_avail[cidx];
 	mask = scctx->isc_nrxd[0]-1;
-	MPASS(cidx == (rxq->vr_cidx & mask));
+	if (cidx != (rxq->vr_cidx & mask))
+		printf("mismatch cidx: %d vr_cidx_masked:%d vr_cidx: %d",
+			   cidx, rxq->vr_cidx & mask, rxq->vr_cidx);
+
 	rxq->vr_used[rxq->vr_cidx & 4095] = vcidx;
 	/* later passed to ext_free to return used descriptors */
 	ri->iri_cookie1 = (void *)rxq;
@@ -1178,8 +1183,9 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 {
 	vm_offset_t vaddr;
 	uint64_t gpa;
-	int qsz, len;
+	int i, qsz, len;
 	struct ifnet *ifp;
+	if_softc_ctx_t scctx;
 
 	gpa = pfn << PAGE_SHIFT;
 
@@ -1254,6 +1260,15 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	/* XXX unsafe */
 	if_setflagbits(ifp, 0, IFF_UP);
 	ifp->if_init(vs->vs_ctx);
+
+	scctx = vs->shared;
+	for (i = 0; i < scctx->isc_nrxqsets; i++) {
+		vb_rxq_init(vs, &vs->vs_rx_queues[i]);
+	}
+	for (i = 0; i < scctx->isc_ntxqsets; i++) {
+		vb_txq_init(vs, &vs->vs_tx_queues[i]);
+	}
+
 	if_setflagbits(ifp, IFF_UP, 0);
 	ifp->if_init(vs->vs_ctx);
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
@@ -1396,6 +1411,7 @@ static void
 vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq)
 {
 	rxq->vr_vs = vs;
+	rxq->vr_cidx = 0;
 }
 
 static void
