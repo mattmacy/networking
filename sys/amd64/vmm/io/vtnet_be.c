@@ -684,7 +684,18 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 			return (ENXIO);
 		ri->iri_csum_data = vh->hdr.csum_offset;
 	}
+#ifdef RXDEBUG
+	if (ri->iri_csum_data) {
+		uint16_t csum;
+		caddr_t data;
 
+		rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
+		data = rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+		csum = *(uint16_t *)(data + vh->hdr.csum_start + vh->hdr.csum_offset);
+		if (csum != 0)
+			printf("csum_offset set, but csum not zero %d\n", csum);
+	}
+#endif
 	do {
 		if (__predict_false(vcidx >= scctx->isc_nrxd[0])) {
 			RXDPRINTF("descriptor out of range: %d\n", vcidx);
