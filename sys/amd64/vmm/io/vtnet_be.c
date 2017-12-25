@@ -559,25 +559,39 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 	pinfo->l4type = l4type;
 	return (1);
 }
-
-static int
-vb_rxflags(struct vring_desc **rxdp, struct vb_rxq *rxq, if_rxd_info_t ri,
-		   uint16_t vcidx)
+static void
+vb_rx_vhdr_process(struct virtio_net_hdr_mrg_rxbuf *vh,
+				   struct vring_desc *rxd, caddr_t buf,
+				   if_rxd_info_t ri)
 {
-	caddr_t cl;
-	//	caddr_t scratch;
 	struct pinfo pinfo;
-	struct vring_desc *rxd = *rxdp;
-	uint32_t flags = 0;
+	int flags;
 
-	cl = rxq->vr_sdcl[vcidx];
-	pinfo.etype = 0;
+	vb_print_vhdr(vh);
 
-	if (__predict_true(rxd->len >= VB_HDR_MAX)) {
-		vb_pparse(cl + ri->iri_pad, &pinfo);
-	} else {
-		/* XXX --- too small */
+	switch (vh->hdr.gso_type) {
+		case VIRTIO_NET_HDR_GSO_TCPV4:
+			ri->iri_tso_segsz = vh->hdr.gso_size;
+			ri->iri_csum_data = vh->hdr.csum_offset;
+			ri->iri_csum_flags = CSUM_TSO | CSUM_TCP;
+			break;
+		case VIRTIO_NET_HDR_GSO_TCPV6:
+			ri->iri_tso_segsz = vh->hdr.gso_size;
+			ri->iri_csum_data = vh->hdr.csum_offset;
+			ri->iri_csum_flags = CSUM_IP6_TSO | CSUM_TCP_IPV6;
+			break;
+		default:
+			return;
+			break;
 	}
+	if ((vh->hdr.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) == 0)
+		return;
+	if (__predict_false(rxd->len < VB_HDR_MAX)) {
+		printf("short header %d\n", rxd->len);
+		return;
+	}
+	vb_pparse(buf, &pinfo);
+
 	switch (pinfo.etype) {
 		case ETHERTYPE_IP:
 			switch (pinfo.l4type) {
@@ -595,15 +609,20 @@ vb_rxflags(struct vring_desc **rxdp, struct vb_rxq *rxq, if_rxd_info_t ri,
 			switch (pinfo.l4type) {
 				case IPPROTO_TCP:
 					flags = CSUM_TCP_IPV6;
+					break;
 				case IPPROTO_UDP:
 					flags = CSUM_UDP_IPV6;
+					break;
 				case IPPROTO_SCTP:
 					flags = CSUM_SCTP_IPV6;
+					break;
 			}
 			break;
 	}
+	if (__predict_false(flags == 0))
+		printf("no flags, l4type: %d\n", pinfo.l4type);
 	ri->iri_csum_flags = flags;
-	return (0);
+	ri->iri_csum_data = vh->hdr.csum_offset;
 }
 
 static int
@@ -615,6 +634,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	struct vb_rxq *rxq = &vs->vs_rx_queues[ri->iri_qsidx];
 	struct vring_desc *rxd;
 	int i, cidx, vcidx, count, mask;
+	caddr_t data;
 	bool parse_header;
 
 	MPASS(ri->iri_cidx < scctx->isc_nrxd[0]);
@@ -635,15 +655,14 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	ri->iri_cidx = rxq->vr_cidx & (scctx->isc_nrxd[0]-1);
 	rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
 
-
 	if (__predict_false(rxd->len < sizeof(*vh))) {
 		DPRINTF("%s rxd->len short: %d\n", __func__, rxd->len);
 		return (ENXIO);
 	}
 	rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
-	if (__predict_false(rxq->vr_sdcl[vcidx] == NULL))
+	vh = (void *)rxq->vr_sdcl[vcidx];
+	if (vh == NULL)
 		return (ENXIO);
-	vh = (struct virtio_net_hdr_mrg_rxbuf *)rxq->vr_sdcl[vcidx];
 	if (__predict_true(rxd->len == sizeof(*vh))) {
 		rxq->vr_sdcl[vcidx] = NULL;
 		if (__predict_true(rxd->flags & VRING_DESC_F_NEXT)) {
@@ -661,41 +680,10 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 				rxd->len);
 		ri->iri_pad = sizeof(*vh);
 	}
+	rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
+	data = rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+	vb_rx_vhdr_process(vh, rxd, data, ri);
 
-	vb_print_vhdr(vh);
-	switch (vh->hdr.gso_type) {
-		case VIRTIO_NET_HDR_GSO_TCPV4:
-			ri->iri_tso_segsz = vh->hdr.gso_size;
-			ri->iri_csum_data = vh->hdr.csum_offset;
-			ri->iri_csum_flags = CSUM_TSO | CSUM_TCP;
-			break;
-		case VIRTIO_NET_HDR_GSO_TCPV6:
-			ri->iri_tso_segsz = vh->hdr.gso_size;
-			ri->iri_csum_data = vh->hdr.csum_offset;
-			ri->iri_csum_flags = CSUM_IP6_TSO | CSUM_TCP_IPV6;
-			break;
-		default:
-			parse_header = true;
-			break;
-	}
-	if ((vh->hdr.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) && parse_header) {
-		rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
-		if (vb_rxflags(&rxd, rxq, ri, vcidx))
-			return (ENXIO);
-		ri->iri_csum_data = vh->hdr.csum_offset;
-	}
-#ifdef RXDEBUG
-	if (ri->iri_csum_data) {
-		uint16_t csum;
-		caddr_t data;
-
-		rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
-		data = rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
-		csum = *(uint16_t *)(data + vh->hdr.csum_start + vh->hdr.csum_offset);
-		if (csum != 0)
-			printf("csum_offset set, but csum not zero %d\n", csum);
-	}
-#endif
 	do {
 		if (__predict_false(vcidx >= scctx->isc_nrxd[0])) {
 			RXDPRINTF("descriptor out of range: %d\n", vcidx);
