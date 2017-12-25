@@ -441,7 +441,7 @@ struct vb_macaddr {
 	_IOW('k', 2, struct vb_vm_attach)
 #define VB_IF_ATTACH							\
 	_IOW('k', 3, struct vb_if_attach)
-#define VB_VNI_SET								\
+#define VB_VNI									\
 	_IOW('k', 4, struct vb_vni)
 #define VB_MACADDR_SET							\
 	_IOW('k', 5, struct vb_macaddr)
