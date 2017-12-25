@@ -143,13 +143,15 @@ static void  vb_print_vhdr(struct virtio_net_hdr_mrg_rxbuf *vh __unused) {}
  * and [vb] represents the vtnet_be ifp, the path follows what we see below.
  *
  * On receive:
- * (wire) -> iflib_rxeof -> ifp[hw]->if_input() [vb_hw_if_input] ->
- *	  vb_rxswitch -> ifp[vb]->if_transmit [iflib_if_transmit] ->
+ * (wire) -> iflib_rxeof -> ifp[hw]->if_input() [vmbridge_input] ->
+ *	  vb_hw_if_input() ->
+ *	  ifp[vb]->if_transmit [iflib_if_transmit] ->
  *	  vb_txd_encap -> (guest)
  *
  * On transmit:
  * (guest) -> iflib_rxeof -> vb_rxd_pkt_get();
- *	  ifp[vb]->if_input() [vb_if_input] -> vb_rxswitch ->
+ *	  ifp[vb]->if_input() [vb_if_input] ->
+ *	  vmbridge_transmit() -> [vpc_transmit()] ->
  *	  ifp[hw]->if_transmit() [iflib_if_transmit] -> (wire)
  *
  */
