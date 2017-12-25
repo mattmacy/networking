@@ -574,24 +574,25 @@ vb_rx_vhdr_process(struct virtio_net_hdr_mrg_rxbuf *vh,
 			ri->iri_tso_segsz = vh->hdr.gso_size;
 			ri->iri_csum_data = vh->hdr.csum_offset;
 			ri->iri_csum_flags = CSUM_TSO | CSUM_TCP;
+			return;
 			break;
 		case VIRTIO_NET_HDR_GSO_TCPV6:
 			ri->iri_tso_segsz = vh->hdr.gso_size;
 			ri->iri_csum_data = vh->hdr.csum_offset;
 			ri->iri_csum_flags = CSUM_IP6_TSO | CSUM_TCP_IPV6;
+			return;
 			break;
 		default:
-			return;
 			break;
 	}
 	if ((vh->hdr.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) == 0)
 		return;
 	if (__predict_false(rxd->len < VB_HDR_MAX)) {
-		printf("short header %d\n", rxd->len);
+		printf("XXX short header %d\n", rxd->len);
 		return;
 	}
 	vb_pparse(buf, &pinfo);
-
+	flags = 0;
 	switch (pinfo.etype) {
 		case ETHERTYPE_IP:
 			switch (pinfo.l4type) {
@@ -620,7 +621,7 @@ vb_rx_vhdr_process(struct virtio_net_hdr_mrg_rxbuf *vh,
 			break;
 	}
 	if (__predict_false(flags == 0))
-		printf("no flags, l4type: %d\n", pinfo.l4type);
+		printf("XXX no flags, l4type: %d\n", pinfo.l4type);
 	ri->iri_csum_flags = flags;
 	ri->iri_csum_data = vh->hdr.csum_offset;
 }
