@@ -373,8 +373,7 @@ struct mvec64 {
 #define	M_PROTO9	0x00100000 /* protocol-specific */
 #define	M_PROTO10	0x00200000 /* protocol-specific */
 #define	M_PROTO11	0x00400000 /* protocol-specific */
-#define	M_PROTO12	0x00800000 /* protocol-specific */
-#define	M_VXLANTAG	0x01000000 /* vxlanid is valid */
+#define	M_VXLANTAG	0x00800000 /* vxlanid is valid */
 
 #define MB_DTOR_SKIP	0x1	/* don't pollute the cache by touching a freed mbuf */
 
@@ -383,7 +382,7 @@ struct mvec64 {
  */
 #define	M_PROTOFLAGS \
     (M_PROTO1|M_PROTO2|M_PROTO3|M_PROTO4|M_PROTO5|M_PROTO6|M_PROTO7|M_PROTO8|\
-     M_PROTO9|M_PROTO10|M_PROTO11|M_PROTO12)
+     M_PROTO9|M_PROTO10|M_PROTO11)
 
 /*
  * Flags preserved when copying m_pkthdr.

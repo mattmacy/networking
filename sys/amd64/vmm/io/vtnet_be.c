@@ -201,10 +201,11 @@ struct vb_queue {
 #endif
 };
 
-#define VS_ENQUEUED  0x01
-#define VS_VERSION_1 0x02
-#define VS_READY 0x04
-#define VS_OWNED 0x08
+#define VS_ENQUEUED		0x01
+#define VS_VERS_1		0x02
+#define VS_READY		0x04
+#define VS_OWNED		0x08
+#define VS_VXLANTAG		0x10
 
 #define VB_CIDX_VALID (1 << 18)
 
@@ -232,6 +233,7 @@ struct vb_softc {
 	uint8_t	   vs_nvq;
 	uint8_t    vs_status;
 	uint8_t    vs_origmac[6];
+	uint32_t   vs_vni;
 	uint32_t   vs_hv_caps;
 	uint32_t   vs_negotiated_caps;
 	struct {
@@ -869,7 +871,7 @@ vb_status_change(struct vb_softc *vs, uint32_t val)
 	}
 	if (val & VIRTIO_CONFIG_STATUS_FEATURES_OK) {
 		DPRINTF("VIRTIO_CONFIG_STATUS_FEATURES_OK\n");
-		vs->vs_flags |= VS_VERSION_1;
+		vs->vs_flags |= VS_VERS_1;
 	}
 	if (val & VIRTIO_CONFIG_STATUS_FAILED) {
 		DPRINTF("VIRTIO_CONFIG_STATUS_FAILED");
@@ -1073,6 +1075,10 @@ vb_if_input(struct ifnet *vbifp, struct mbuf *m)
 	struct ifnet *hwifp = vs->vs_ifparent;
 	struct mbuf *mnext;
 
+	if (vs->vs_flags & VS_VXLANTAG) {
+		m->m_flags |= M_VXLANTAG;
+		m->m_pkthdr.vxlanid = vs->vs_vni;
+	}
 	vb_input_process(vbifp, m);
 	if (hwifp->if_capabilities & IFCAP_TXBATCH) {
 		(void)hwifp->if_transmit(hwifp, m);
@@ -1300,6 +1306,19 @@ vb_dev_msix(struct vb_softc *vs, struct vb_msix *vx)
 		vs->vs_msix[2].addr = vx->queue[2].addr;
 		vs->vs_msix[2].data = vx->queue[2].msg;
 	}
+
+	return (0);
+}
+
+static int
+vb_dev_vni(struct vb_softc *vs, struct vb_vni *vn)
+{
+	vs->vs_vni = vn->vv_vni;
+
+	if (vn->vv_vni)
+		vs->vs_flags |= VS_VXLANTAG;
+	else
+		vs->vs_flags &= ~VS_VXLANTAG;
 
 	return (0);
 }
@@ -1648,6 +1667,9 @@ vb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	switch (ioh->vih_type) {
 		case VB_MSIX:
 			rc = vb_dev_msix(sc, (struct vb_msix *)iod);
+			break;
+		case VB_VNI:
+			rc = vb_dev_vni(sc, (struct vb_vni *)iod);
 			break;
 		default:
 			rc = ENOIOCTL;
