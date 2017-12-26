@@ -59,6 +59,14 @@ __FBSDID("$FreeBSD$");
 #include <net/iflib.h>
 #include <net/if.h>
 #include <net/if_clone.h>
+#include <net/route.h>
+
+#include <netinet/in.h>
+#include <netinet/in_var.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
+#include <netinet/if_ether.h>
+#include <netinet6/nd6.h>
 
 #include <net/if_vpc.h>
 
@@ -87,11 +95,20 @@ struct vxlan_header {
     struct vxlanhdr vh_vxlanhdr;
 } __packed;
 
+
+struct vpc_ftable {
+	struct sockaddr vf_addr;
+	uint32_t vf_vni;
+	struct vpc_softc *vf_vs;
+};
+
 struct egress_cache {
 	uint32_t ec_hdr[3];
 	int ec_ticks;
 	struct vxlan_header ec_vh;
 };
+
+DPCPU_DEFINE(struct egress_cache, hdr_cache);
 
 /*
  * ifconfig ixl0 alias 10.1.3.4
@@ -108,6 +125,7 @@ struct egress_cache {
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 
 struct vpc_softc {
+	uint16_t vs_vxlan_port;
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	struct ifnet *vs_ifparent;
@@ -132,35 +150,99 @@ m_freechain(struct mbuf *m)
 static int
 hdrcmp(uint32_t *lhs, uint32_t *rhs)
 {
-	return (lhs[0] ^ rhs[0] |
-			lhs[1] ^ rhs[1] |
-			lhs[2] ^ rhs[2]);
+	return ((lhs[0] ^ rhs[0]) |
+			(lhs[1] ^ rhs[1]) |
+			(lhs[2] ^ rhs[2]));
 }
 
-struct mbuf *
-vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m)
+static struct vpc_ftable *
+vpc_vxlanid_lookup(struct vpc_softc *vs, uint32_t vxlanid)
 {
-
+	return (NULL);
 }
-	
-struct mbuf *
+
+static int
+vpc_ftable_lookup(struct vpc_ftable *vf, struct ether_vlan_header *evh,
+				  struct sockaddr *dst)
+{
+	return (ENOENT);
+}
+
+static uint16_t
+vpc_sport_hash(caddr_t data)
+{
+	return (0);
+}
+
+static void
+vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh, 
+				  struct sockaddr *dstip, struct ifnet *ifp, struct mbuf *m)
+{
+	struct sockaddr_in *sin;
+	struct ether_header *eh;
+	struct ip *ip;
+	struct udphdr *uh;
+	struct vxlanhdr *vhdr;
+	caddr_t smac;
+
+	smac = ifp->if_hw_addr;
+	eh = &vh->vh_ehdr;
+	eh->ether_type = htons(ETHERTYPE_IP); /* v4 only to start */
+	/* arp resolve fills in dest */
+	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
+
+	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
+	ip->ip_hl = sizeof(*ip) >> 2;
+	ip->ip_v = 4; /* v4 only now */
+	ip->ip_tos = 0;
+	/* XXX validate that we won't overrun IP_MAXPACKET first */
+	ip->ip_len = m->m_pkthdr.len + sizeof(*vh) - sizeof(struct ether_header);
+	ip->ip_id = 0;
+	ip->ip_off = 0;
+	ip->ip_ttl = 255;
+	ip->ip_p = IPPROTO_UDP;
+	ip->ip_sum = 0;
+	sin = (struct sockaddr_in *)&vf->vf_addr;
+	ip->ip_src.s_addr = sin->sin_addr.s_addr;
+	sin = (struct sockaddr_in *)dstip;
+	ip->ip_dst.s_addr = sin->sin_addr.s_addr;
+	/* check that CSUM_IP works for all hardware */
+
+	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
+	uh->uh_sport = vpc_sport_hash(m->m_next->m_data);
+	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
+	uh->uh_ulen = ip->ip_len - sizeof(*ip);
+	uh->uh_sum = 0; /* offload */
+
+	vhdr = (struct vxlanhdr *)(uintptr_t)&vh->vh_vxlanhdr;
+	vhdr->v_i = 1;
+	vhdr->v_vxlanid = htonl(vf->vf_vni) >> 8;
+}
+
+static struct mbuf *
 vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 {
-	struct egress_cache ec, *ecp;
+	struct egress_cache *ecp;
 	struct ether_vlan_header *evh, *evhvx;
+	struct vxlan_header *vh;
 	struct mbuf *mh;
 	struct vpc_ftable *vf;
 	struct sockaddr *dst;
 	struct route ro;
+	struct rtentry *rt;
+	uint32_t *src;
+	int rc;
 
 	mh = m_gethdr(M_NOWAIT, MT_NOINIT);
 	if (__predict_false(mh == NULL)) {
 		m_freem(m);
 		return (NULL);
 	}
-	evhvx = m->m_data;
+	evhvx = (struct ether_vlan_header *)m->m_data;
 	bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
-	evh = mh->m_data = m->m_pktdat;
+	mh->m_data = m->m_pktdat;
+	vh = (struct vxlan_header *)mh->m_data;
+	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
 	mh->m_flags &= ~(M_EXT|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
 	mh->m_pkthdr.len += sizeof(struct vxlan_header);
 	mh->m_len = sizeof(struct vxlan_header);
@@ -170,17 +252,17 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	
 	
 	critical_enter();
-	ecp = DPCPU_GET_PTR(hdr_cache);
+	ecp = DPCPU_PTR(hdr_cache);
 	/*
 	 * if ether header matches last ether header
 	 * and less than 250ms have elapsed since it
 	 * was calculated: 
 	 *    re-use last vxlan header and return
 	 */
-	if ((hdrcmp(&ecp->ec_hdr, (uint32_t *)evhvx) == 0) &&
-		ticks - ec->ec_ticks < (hz >> 2)) {
+	if ((hdrcmp(ecp->ec_hdr, (uint32_t *)evhvx) == 0) &&
+		ticks - ecp->ec_ticks < (hz >> 2)) {
 		/* re-use last header */
-		bcopy(ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
+		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
 		critical_exit();
 		return (mh);
 	}
@@ -191,8 +273,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 		goto fail;
 
 	dst = &ro.ro_dst;
-	/*   lookup IP using dmac */
-	rc = vpc_ftable_lookup(vs, evh, dst);
+	/*   lookup IP using encapsulated dmac */
+	rc = vpc_ftable_lookup(vf, evhvx, dst);
 	if (__predict_false(rc))
 		goto fail;
 	/* lookup route to find interface */
@@ -205,27 +287,64 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 						!RT_LINK_IS_UP(rt->rt_ifp))) {
 		goto rtfail;
 	}
+	/* get dmac */
 	switch(dst->sa_family) {
 		case AF_INET:
-			rc = arpresolve(rt->rt_ifp, 0, NULL, &ro.ro_dst,
+			rc = arpresolve(rt->rt_ifp, 0, NULL, dst,
 							evh->evl_dhost, NULL, NULL);
 			break;
 		case AF_INET6:
-			rc = nd6_resolve(rt->rt_ifp, 0, NULL, &ro.ro_dst,
+			rc = nd6_resolve(rt->rt_ifp, 0, NULL, dst,
 							 evh->evl_dhost, NULL, NULL);
 			break;
 		default:
 			goto rtfail;
 	}
 	m->m_pkthdr.rcvif = rt->rt_ifp;
+	m->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
+	m->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+	vpc_vxlanhdr_init(vf, vh, dst, rt->rt_ifp, m);
+	src = (uint32_t *)evhvx;
 	critical_enter();
 	/* update pcpu cache */
+	ecp = DPCPU_PTR(hdr_cache);
+	ecp->ec_hdr[0] = src[0];
+	ecp->ec_hdr[1] = src[1];
+	ecp->ec_hdr[2] = src[2];
+	bcopy(mh->m_data, &ecp->ec_vh, sizeof(*vh));
+	ecp->ec_ticks = ticks;
 	critical_exit();
 	return (mh);
 
  rtfail:
 	RTFREE(rt);
  fail:
+	return (NULL);
+}
+
+static struct mbuf *
+vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m)
+{
+	struct mbuf *mh, *mt, *mnext;
+
+	mh = mt = NULL;
+	do {
+		mnext = m->m_nextpkt;
+		m->m_nextpkt = NULL;
+		m = vpc_vxlan_encap(vs, m);
+		if (m == NULL)
+			goto fail;
+		if (mh != NULL) {
+			mt->m_nextpkt = m;
+			mt = m;
+		} else
+			mh = mt = m;
+		m = mnext;
+	} while (m != NULL);
+	return (mh);
+ fail:
+	if (mnext)
+		m_freechain(mnext);
 	return (NULL);
 }
 
