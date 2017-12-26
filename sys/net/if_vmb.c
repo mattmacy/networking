@@ -63,18 +63,18 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
-static MALLOC_DEFINE(M_VMB, "vmb", "virtual machine bridge");
+static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
 
 /*
- * ifconfig vmb0 create
- * ifconfig vmb0 addm vpc0
- * ifconfig vmb0 priority vpc0 200
- * ifconfig vmb0 vpc-resolver 127.0.0.1:5000
- * ifconfig vmb0 addm vmi7
- * ifconfig vmb0 pathcost vmi7 2000000
+ * ifconfig vpcb0 create
+ * ifconfig vpcb0 addm vpc0
+ * ifconfig vpcb0 priority vpc0 200
+ * ifconfig vpcb0 vpc-resolver 127.0.0.1:5000
+ * ifconfig vpcb0 addm vmi7
+ * ifconfig vpcb0 pathcost vmi7 2000000
  */
 
-struct vmb_softc {
+struct vpcb_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 };
@@ -95,7 +95,7 @@ m_freechain(struct mbuf *m)
 #endif
 
 static int
-vmb_transmit(if_t ifp, struct mbuf *m)
+vpcb_transmit(if_t ifp, struct mbuf *m)
 {
 	/*
 	 * - If ARP + VXLANTAG put in ck_ring and kick grouptask
@@ -107,9 +107,9 @@ vmb_transmit(if_t ifp, struct mbuf *m)
 }
 
 static int
-vmb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
+vpcb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
-	struct vmb_softc *vs = iflib_get_softc(ctx);
+	struct vpcb_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
 
@@ -119,34 +119,34 @@ vmb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 }
 
 static int
-vmb_attach_post(if_ctx_t ctx)
+vpcb_attach_post(if_ctx_t ctx)
 {
 	struct ifnet *ifp;
 
 	ifp = iflib_get_ifp(ctx);
 
-	ifp->if_transmit = vmb_transmit;
+	ifp->if_transmit = vpcb_transmit;
 	return (0);
 }
 
 static int
-vmb_detach(if_ctx_t ctx)
+vpcb_detach(if_ctx_t ctx)
 {
 	return (0);
 }
 
 static void
-vmb_init(if_ctx_t ctx)
+vpcb_init(if_ctx_t ctx)
 {
 }
 
 static void
-vmb_stop(if_ctx_t ctx)
+vpcb_stop(if_ctx_t ctx)
 {
 }
 
 static int
-vmb_set_resolver(struct vmb_softc *vs, struct vmb_resolver *vr)
+vpcb_set_resolver(struct vpcb_softc *vs, struct vpcb_resolver *vr)
 {
 	/*
 	 * Resolve IP -> interface
@@ -157,15 +157,15 @@ vmb_set_resolver(struct vmb_softc *vs, struct vmb_resolver *vr)
 }
 
 static int
-vmb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
+vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 {
-	struct vmb_softc *vs = iflib_get_softc(ctx);
+	struct vpcb_softc *vs = iflib_get_softc(ctx);
 	struct ifreq *ifr = (struct ifreq *)data;
 	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
 	struct vpc_ioctl_header *ioh =
 	    (struct vpc_ioctl_header *)(ifbuf->buffer);
 	int rc = ENOTSUP;
-	struct vmb_ioctl_data *iod = NULL;
+	struct vpcb_ioctl_data *iod = NULL;
 
 	if (command != SIOCGPRIVATE_0)
 		return (EINVAL);
@@ -174,68 +174,68 @@ vmb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 		return (rc);
 #ifdef notyet
 	/* need sx lock for iflib context */
-	iod = malloc(ifbuf->length, M_VMB, M_WAITOK | M_ZERO);
+	iod = malloc(ifbuf->length, M_VPCB, M_WAITOK | M_ZERO);
 #endif
-	iod = malloc(ifbuf->length, M_VMB, M_NOWAIT | M_ZERO);
+	iod = malloc(ifbuf->length, M_VPCB, M_NOWAIT | M_ZERO);
 	copyin(ioh, iod, ifbuf->length);
 
 	switch (ioh->vih_type) {
-		case VMB_RESOLVER:
-			rc = vmb_set_resolver(vs, (struct vmb_resolver *)iod);
+		case VPCB_RESOLVER:
+			rc = vpcb_set_resolver(vs, (struct vpcb_resolver *)iod);
 			break;
 		default:
 			rc = ENOIOCTL;
 			break;
 	}
-	free(iod, M_VMB);
+	free(iod, M_VPCB);
 	return (rc);
 }
 
-static device_method_t vmb_if_methods[] = {
-	DEVMETHOD(ifdi_cloneattach, vmb_cloneattach),
-	DEVMETHOD(ifdi_attach_post, vmb_attach_post),
-	DEVMETHOD(ifdi_detach, vmb_detach),
-	DEVMETHOD(ifdi_init, vmb_init),
-	DEVMETHOD(ifdi_stop, vmb_stop),
-	DEVMETHOD(ifdi_priv_ioctl, vmb_priv_ioctl),
+static device_method_t vpcb_if_methods[] = {
+	DEVMETHOD(ifdi_cloneattach, vpcb_cloneattach),
+	DEVMETHOD(ifdi_attach_post, vpcb_attach_post),
+	DEVMETHOD(ifdi_detach, vpcb_detach),
+	DEVMETHOD(ifdi_init, vpcb_init),
+	DEVMETHOD(ifdi_stop, vpcb_stop),
+	DEVMETHOD(ifdi_priv_ioctl, vpcb_priv_ioctl),
 	DEVMETHOD_END
 };
 
-static driver_t vmb_iflib_driver = {
-	"vmb", vmb_if_methods, sizeof(struct vmb_softc)
+static driver_t vpcb_iflib_driver = {
+	"vpcb", vpcb_if_methods, sizeof(struct vpcb_softc)
 };
 
-char vmb_driver_version[] = "0.0.1";
+char vpcb_driver_version[] = "0.0.1";
 
-static struct if_shared_ctx vmb_sctx_init = {
+static struct if_shared_ctx vpcb_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
-	.isc_driver_version = vmb_driver_version,
-	.isc_driver = &vmb_iflib_driver,
+	.isc_driver_version = vpcb_driver_version,
+	.isc_driver = &vpcb_iflib_driver,
 	.isc_flags = 0,
-	.isc_name = "vmb",
+	.isc_name = "vpcb",
 };
 
-if_shared_ctx_t vmb_sctx = &vmb_sctx_init;
+if_shared_ctx_t vpcb_sctx = &vpcb_sctx_init;
 
 
-static if_pseudo_t vmb_pseudo;	
+static if_pseudo_t vpcb_pseudo;	
 
 static int
-vmb_module_init(void)
+vpcb_module_init(void)
 {
-	vmb_pseudo = iflib_clone_register(vmb_sctx);
+	vpcb_pseudo = iflib_clone_register(vpcb_sctx);
 
-	return (vmb_pseudo != NULL);
+	return (vpcb_pseudo != NULL);
 }
 
 static int
-vmb_module_event_handler(module_t mod, int what, void *arg)
+vpcb_module_event_handler(module_t mod, int what, void *arg)
 {
 	int err;
 
 	switch (what) {
 	case MOD_LOAD:
-		if ((err = vmb_module_init()) != 0)
+		if ((err = vpcb_module_init()) != 0)
 			return (err);
 		break;
 	case MOD_UNLOAD:
@@ -247,12 +247,12 @@ vmb_module_event_handler(module_t mod, int what, void *arg)
 	return (0);
 }
 
-static moduledata_t vmb_moduledata = {
-	"vmb",
-	vmb_module_event_handler,
+static moduledata_t vpcb_moduledata = {
+	"vpcb",
+	vpcb_module_event_handler,
 	NULL
 };
 
-DECLARE_MODULE(vmb, vmb_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
-MODULE_VERSION(vmb, 1);
-MODULE_DEPEND(vmb, iflib, 1, 1, 1);
+DECLARE_MODULE(vpcb, vpcb_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+MODULE_VERSION(vpcb, 1);
+MODULE_DEPEND(vpcb, iflib, 1, 1, 1);
