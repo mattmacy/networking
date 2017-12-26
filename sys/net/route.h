@@ -46,9 +46,9 @@
  */
 
 /*
- * Struct route consiste of a destination address,
- * a route entry pointer, link-layer prepend data pointer along
- * with its length.
+ * Struct route consists of a destination address,
+ * a route entry pointer, link-layer prepend data pointer and
+ * the length of the data pointed to.
  */
 struct route {
 	struct	rtentry *ro_rt;
