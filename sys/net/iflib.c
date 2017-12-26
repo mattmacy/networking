@@ -6688,47 +6688,6 @@ typedef struct vxlan_tables {
 
 #ifdef notyet
 static int
-iflib_vxlan_encap(struct mbuf *m)
-{
-	/* if ether header matches last ether header: 
-	 *    re-use last vxlan header and return
-	 * else:
-	 *    continue
-	 */
-
-	/* laddr = configured VXLAN src ip for this interface */
-
-	/* raddr =
-	 *   lookup MAC->IP table for vxlanid
-	 *   lookup IP using dmac
-	 *   if using VXLAN netmask dest IP is in local subnet:
-	 *      lookup IP -> physical dmac
-	 *   else:
-	 *      lookup physical dmac for VXLAN default route
-	 */
-	return (0);
-}
-
-static int
-vxlanid_insert(vxtbl_t t, uint8_t *ha, uint32_t vxlanid)
-{
-	return (0);
-}
-
-static void
-vxlanid_delete(vxtbl_t t, uint8_t *ha)
-{
-
-}
-
-static uint32_t
-vxlanid_lookup(vxtbl_t t, uint8_t *ha)
-{
-
-	return (0);
-}
-
-static int
 arp_insert(vxtbl_t t, uint8_t *pa, uint8_t *ha)
 {
 	return (0);
