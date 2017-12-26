@@ -123,7 +123,7 @@ DPCPU_DEFINE(struct egress_cache, hdr_cache);
  * ifconfig vpc0 az az0
  * ifconfig vpc0 listen 10.1.3.4:3947
  *
- * ifconfig vmb0 addm vpc0
+ * ifconfig vpcb0 addm vpc0
  *
  */
 
