@@ -60,6 +60,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/if_clone.h>
 #include <net/route.h>
+#include <net/art.h>
 
 #include <netinet/in.h>
 #include <netinet/in_var.h>
@@ -97,15 +98,19 @@ struct vxlan_header {
 
 
 struct vpc_ftable {
-	struct sockaddr vf_addr;
 	uint32_t vf_vni;
 	struct vpc_softc *vf_vs;
+	art_tree *vf_ftable;
 };
 
 struct egress_cache {
 	uint32_t ec_hdr[3];
 	int ec_ticks;
 	struct vxlan_header ec_vh;
+};
+
+struct vf_entry {
+	struct sockaddr ve_addr;
 };
 
 DPCPU_DEFINE(struct egress_cache, hdr_cache);
@@ -125,9 +130,11 @@ DPCPU_DEFINE(struct egress_cache, hdr_cache);
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 
 struct vpc_softc {
+	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
+	art_tree *vs_vxftable; /* vxlanid -> ftable */
 	struct ifnet *vs_ifparent;
 	if_transmit_fn_t vs_parent_transmit;   /* initiate output routine */
 };
@@ -158,20 +165,33 @@ hdrcmp(uint32_t *lhs, uint32_t *rhs)
 static struct vpc_ftable *
 vpc_vxlanid_lookup(struct vpc_softc *vs, uint32_t vxlanid)
 {
-	return (NULL);
+
+	return (art_search(vs->vs_vxftable, (const unsigned char *)&vxlanid));
 }
 
 static int
 vpc_ftable_lookup(struct vpc_ftable *vf, struct ether_vlan_header *evh,
 				  struct sockaddr *dst)
 {
-	return (ENOENT);
+	struct vf_entry *vfe;
+
+	vfe = art_search(vf->vf_ftable, evh->evl_dhost);
+	if (__predict_false(vfe == NULL))
+		return (ENOENT);
+	bcopy(&vfe->ve_addr, dst, sizeof(struct sockaddr *));
+	return (0);
 }
 
 static uint16_t
 vpc_sport_hash(caddr_t data)
 {
-	return (0);
+	uint16_t *hdr;
+	uint16_t src, dst;
+
+	hdr = (uint16_t*)data;
+	src = hdr[0] ^ hdr[1] ^ hdr[2];
+	dst = hdr[3] ^ hdr[4] ^ hdr[5];
+	return (src ^ dst);
 }
 
 static void
@@ -202,7 +222,7 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	ip->ip_ttl = 255;
 	ip->ip_p = IPPROTO_UDP;
 	ip->ip_sum = 0;
-	sin = (struct sockaddr_in *)&vf->vf_addr;
+	sin = (struct sockaddr_in *)&vf->vf_vs->vs_addr;
 	ip->ip_src.s_addr = sin->sin_addr.s_addr;
 	sin = (struct sockaddr_in *)dstip;
 	ip->ip_dst.s_addr = sin->sin_addr.s_addr;
@@ -249,7 +269,6 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	mh->m_next = m;
 	m->m_nextpkt = NULL;
 	m->m_flags &= ~(M_PKTHDR|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
-	
 	
 	critical_enter();
 	ecp = DPCPU_PTR(hdr_cache);
@@ -333,7 +352,7 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m)
 		m->m_nextpkt = NULL;
 		m = vpc_vxlan_encap(vs, m);
 		if (m == NULL)
-			goto fail;
+			break;
 		if (mh != NULL) {
 			mt->m_nextpkt = m;
 			mt = m;
@@ -341,11 +360,9 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m)
 			mh = mt = m;
 		m = mnext;
 	} while (m != NULL);
-	return (mh);
- fail:
-	if (mnext)
+	if (__predict_false(mnext != NULL))
 		m_freechain(mnext);
-	return (NULL);
+	return (mh);
 }
 
 static int
