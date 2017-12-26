@@ -13,21 +13,21 @@ struct vpc_listen {
 	_IOW('k', 1, struct vpc_listen)
 
 
-struct vmb_resolver {
+struct vpcb_resolver {
 };
 
-struct vmb_port_add {
+struct vpcb_port_add {
 };
 
-struct vmb_port_remove {
+struct vpcb_port_remove {
 };
 
-#define VMB_RESOLVER									\
-	_IOW('k', 1, struct vmb_resolver)
-#define VMB_PORT_ADD									\
-	_IOW('k', 1, struct vmb_port_add)
-#define VMB_PORT_REMOVE									\
-	_IOW('k', 1, struct vmb_port_remove)
+#define VPCB_RESOLVER									\
+	_IOW('k', 1, struct vpcb_resolver)
+#define VPCB_PORT_ADD									\
+	_IOW('k', 1, struct vpcb_port_add)
+#define VPCB_PORT_REMOVE									\
+	_IOW('k', 1, struct vpcb_port_remove)
 
 
 #endif
