@@ -156,15 +156,6 @@ static void  vb_print_vhdr(struct virtio_net_hdr_mrg_rxbuf *vh __unused) {}
  *
  */
 
-
-/*
- * TODO:
- *  - completely initialize all structures --- DONE?
- *  - verify the correctnes of tx descriptor updates in rxd_pkt_get
- *  - move the avail/use queue structures in to vb_txq / vb_rxq
- *  - test ...
- */
-
 struct vb_softc;
 
 struct vtnet_be {
