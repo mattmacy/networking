@@ -64,6 +64,35 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
+struct vxlanhdr {
+    uint32_t reserved0:4;
+    uint32_t v_i:1;
+    uint32_t reserved1:13;
+    uint32_t reserved2:14;
+    uint32_t v_vxlanid:24;
+    uint32_t reserved3:8;
+} __packed;
+
+/*
+ * IPv4 w/o VLAN
+ */
+struct vxlan_header {
+    /* outer ether header */
+    struct ether_header vh_ehdr;
+    /* outer IP header */
+    struct ip vh_iphdr;
+	/* outer UDP header */
+    struct udphdr vh_udphdr;
+    /* outer vxlan id header */
+    struct vxlanhdr vh_vxlanhdr;
+} __packed;
+
+struct egress_cache {
+	uint32_t ec_hdr[3];
+	int ec_ticks;
+	struct vxlan_header ec_vh;
+};
+
 /*
  * ifconfig ixl0 alias 10.1.3.4
  *
@@ -101,6 +130,106 @@ m_freechain(struct mbuf *m)
 }
 
 static int
+hdrcmp(uint32_t *lhs, uint32_t *rhs)
+{
+	return (lhs[0] ^ rhs[0] |
+			lhs[1] ^ rhs[1] |
+			lhs[2] ^ rhs[2]);
+}
+
+struct mbuf *
+vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m)
+{
+
+}
+	
+struct mbuf *
+vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
+{
+	struct egress_cache ec, *ecp;
+	struct ether_vlan_header *evh, *evhvx;
+	struct mbuf *mh;
+	struct vpc_ftable *vf;
+	struct sockaddr *dst;
+	struct route ro;
+
+	mh = m_gethdr(M_NOWAIT, MT_NOINIT);
+	if (__predict_false(mh == NULL)) {
+		m_freem(m);
+		return (NULL);
+	}
+	evhvx = m->m_data;
+	bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
+	evh = mh->m_data = m->m_pktdat;
+	mh->m_flags &= ~(M_EXT|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
+	mh->m_pkthdr.len += sizeof(struct vxlan_header);
+	mh->m_len = sizeof(struct vxlan_header);
+	mh->m_next = m;
+	m->m_nextpkt = NULL;
+	m->m_flags &= ~(M_PKTHDR|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
+	
+	
+	critical_enter();
+	ecp = DPCPU_GET_PTR(hdr_cache);
+	/*
+	 * if ether header matches last ether header
+	 * and less than 250ms have elapsed since it
+	 * was calculated: 
+	 *    re-use last vxlan header and return
+	 */
+	if ((hdrcmp(&ecp->ec_hdr, (uint32_t *)evhvx) == 0) &&
+		ticks - ec->ec_ticks < (hz >> 2)) {
+		/* re-use last header */
+		bcopy(ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
+		critical_exit();
+		return (mh);
+	}
+	critical_exit();
+	/* lookup MAC->IP forwarding table */
+	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
+	if (__predict_false(vf == NULL))
+		goto fail;
+
+	dst = &ro.ro_dst;
+	/*   lookup IP using dmac */
+	rc = vpc_ftable_lookup(vs, evh, dst);
+	if (__predict_false(rc))
+		goto fail;
+	/* lookup route to find interface */
+	in_rtalloc_ign(&ro, 0, M_GETFIB(m));
+	rt = ro.ro_rt;
+	if (__predict_false(rt == NULL))
+		goto fail;
+	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
+						(rt->rt_ifp == NULL) ||
+						!RT_LINK_IS_UP(rt->rt_ifp))) {
+		goto rtfail;
+	}
+	switch(dst->sa_family) {
+		case AF_INET:
+			rc = arpresolve(rt->rt_ifp, 0, NULL, &ro.ro_dst,
+							evh->evl_dhost, NULL, NULL);
+			break;
+		case AF_INET6:
+			rc = nd6_resolve(rt->rt_ifp, 0, NULL, &ro.ro_dst,
+							 evh->evl_dhost, NULL, NULL);
+			break;
+		default:
+			goto rtfail;
+	}
+	m->m_pkthdr.rcvif = rt->rt_ifp;
+	critical_enter();
+	/* update pcpu cache */
+	critical_exit();
+	return (mh);
+
+ rtfail:
+	RTFREE(rt);
+ fail:
+	return (NULL);
+}
+
+static int
 vpc_transmit(if_t ifp, struct mbuf *m)
 {
 	if_ctx_t ctx = ifp->if_softc;
@@ -113,8 +242,10 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 		m_freechain(m);
 		return (ENXIO);
 	}
-	/* check for M_VLANTAG do encap */
-
+	if (m->m_flags & M_VXLANTAG)
+		m = vpc_vxlan_encap_chain(vs, m);
+	if (__predict_false(m == NULL))
+		return (ENXIO);
 	if (__predict_true(parent->if_capabilities & IFCAP_TXBATCH))
 		return (vs->vs_parent_transmit(vs->vs_ifparent, m));
 
