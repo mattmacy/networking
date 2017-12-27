@@ -104,7 +104,7 @@ struct vpc_ftable {
 };
 
 struct egress_cache {
-	uint32_t ec_hdr[3];
+	uint16_t ec_hdr[3];
 	int ec_ticks;
 	struct rtentry *ec_rt;
 	struct vxlan_header ec_vh;
@@ -157,7 +157,7 @@ m_freechain(struct mbuf *m)
 }
 
 static int
-hdrcmp(uint32_t *lhs, uint32_t *rhs)
+hdrcmp(uint16_t *lhs, uint16_t *rhs)
 {
 	return ((lhs[0] ^ rhs[0]) |
 			(lhs[1] ^ rhs[1]) |
@@ -252,11 +252,17 @@ vpc_cache_lookup(struct mbuf *m, struct ether_vlan_header *evh)
 	ecp = DPCPU_PTR(hdr_cache);
 	if (__predict_false(ecp->ec_ticks == 0))
 		goto skip;
+	/*
+	 * Is still in caching window
+	 */
 	if (__predict_false(ticks - ecp->ec_ticks < hz/5)) {
 		rt = ecp->ec_rt;
 		ecp->ec_ticks = 0;
 		goto skip;
 	}
+	/*
+	 * Route still usable
+	 */
 	if (__predict_false(!(ecp->ec_rt->rt_flags & RTF_UP) ||
 						(ecp->ec_rt->rt_ifp == NULL) ||
 						!RT_LINK_IS_UP(ecp->ec_rt->rt_ifp))) {
@@ -265,12 +271,10 @@ vpc_cache_lookup(struct mbuf *m, struct ether_vlan_header *evh)
 		goto skip;
 	}
 	/*
-	 * if ether header matches last ether header
-	 * and less than 200ms have elapsed since it
-	 * was calculated: 
-	 *    re-use last vxlan header and return
+	 * dmac & vxlanid match
 	 */
-	if (hdrcmp(ecp->ec_hdr, (uint32_t *)evh) == 0) {
+	if (hdrcmp(ecp->ec_hdr, (uint16_t *)evh->evl_dhost) == 0 &&
+		(m->m_pkthdr.vxlanid == ecp->ec_vh.vh_vxlanhdr.v_vxlanid)) {
 		/* re-use last header */
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
 		critical_exit();
@@ -288,9 +292,9 @@ static int
 vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, struct rtentry *rt)
 {
 	struct egress_cache *ecp;
-	uint32_t *src;
+	uint16_t *src;
 
-	src = (uint32_t *)evh;
+	src = (uint16_t *)evh->evl_dhost;
 	critical_enter();
 	/* update pcpu cache */
 	ecp = DPCPU_PTR(hdr_cache);
