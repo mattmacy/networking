@@ -7,6 +7,8 @@ struct vpc_ioctl_header {
 	uint64_t vih_type;
 };
 struct vpc_listen {
+	struct sockaddr vl_addr;
+	uint16_t vl_port;
 };
 
 #define VPC_LISTEN									\
