@@ -105,8 +105,8 @@ struct vpc_ftable {
 
 struct egress_cache {
 	uint16_t ec_hdr[3];
+	uint16_t ec_ifindex;
 	int ec_ticks;
-	struct rtentry *ec_rt;
 	struct vxlan_header ec_vh;
 };
 
@@ -134,9 +134,11 @@ struct vpc_softc {
 	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
 	uint16_t vs_fibnum;
+	uint16_t vs_ifindex_max;
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	art_tree *vs_vxftable; /* vxlanid -> ftable */
+	struct ifnet **vs_ifps;
 	struct ifnet *vs_ifparent;
 	if_transmit_fn_t vs_parent_transmit;   /* initiate output routine */
 };
@@ -162,6 +164,13 @@ hdrcmp(uint16_t *lhs, uint16_t *rhs)
 	return ((lhs[0] ^ rhs[0]) |
 			(lhs[1] ^ rhs[1]) |
 			(lhs[2] ^ rhs[2]));
+}
+
+static void
+vpc_ifp_free(struct vpc_softc *vs, struct ifnet *ifp)
+{
+	vs->vs_ifps[ifp->if_index] = NULL;
+	if_free(ifp);
 }
 
 static struct vpc_ftable *
@@ -242,12 +251,13 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 }
 
 static int
-vpc_cache_lookup(struct mbuf *m, struct ether_vlan_header *evh)
+vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header *evh)
 {
 	struct egress_cache *ecp;
-	struct rtentry *rt;
+	bool needsfree;
+	struct ifnet *ifp;
 
-	rt = NULL;
+	needsfree = false;
 	critical_enter();
 	ecp = DPCPU_PTR(hdr_cache);
 	if (__predict_false(ecp->ec_ticks == 0))
@@ -256,19 +266,13 @@ vpc_cache_lookup(struct mbuf *m, struct ether_vlan_header *evh)
 	 * Is still in caching window
 	 */
 	if (__predict_false(ticks - ecp->ec_ticks < hz/5)) {
-		rt = ecp->ec_rt;
 		ecp->ec_ticks = 0;
 		goto skip;
 	}
-	/*
-	 * Route still usable
-	 */
-	if (__predict_false(!(ecp->ec_rt->rt_flags & RTF_UP) ||
-						(ecp->ec_rt->rt_ifp == NULL) ||
-						!RT_LINK_IS_UP(ecp->ec_rt->rt_ifp))) {
-		rt = ecp->ec_rt;
+	ifp = vs->vs_ifps[ecp->ec_ifindex];
+	if (ifp->if_flags & IFF_DYING) {
 		ecp->ec_ticks = 0;
-		goto skip;
+		needsfree = true;
 	}
 	/*
 	 * dmac & vxlanid match
@@ -278,18 +282,19 @@ vpc_cache_lookup(struct mbuf *m, struct ether_vlan_header *evh)
 		/* re-use last header */
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
 		critical_exit();
-		m->m_pkthdr.rcvif = rt->rt_ifp;
+		//m->m_pkthdr.rcvif = rt->rt_ifp;
 		return (1);
 	}
 	skip:
 	critical_exit();
-	if (__predict_false(rt != NULL))
-		RTFREE(rt);
+	if (__predict_false(needsfree))
+		vpc_ifp_free(vs, ifp);
+
 	return (0);
 }
 
-static int
-vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, struct rtentry *rt)
+static void
+vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex)
 {
 	struct egress_cache *ecp;
 	uint16_t *src;
@@ -303,8 +308,32 @@ vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, struct rtentry *
 	ecp->ec_hdr[2] = src[2];
 	bcopy(m->m_data, &ecp->ec_vh, sizeof(struct vxlan_header));
 	ecp->ec_ticks = ticks;
-	ecp->ec_rt = rt;
+	ecp->ec_ifindex = ifindex;
 	critical_exit();
+}
+
+static int
+vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
+{
+	struct ifnet **ifps;
+
+	ifps = vs->vs_ifps;
+	if (__predict_false(vs->vs_ifindex_max < ifp->if_index))
+		ifps = realloc(ifps, sizeof(ifp)*ifp->if_index, M_VPC, M_NOWAIT);
+	if (__predict_false(ifps == NULL)) {
+		ifps = malloc(sizeof(ifp)*ifp->if_index, M_VPC, M_NOWAIT);
+		if (__predict_false(ifps == NULL))
+			return (1);
+		bcopy(vs->vs_ifps, ifps, vs->vs_ifindex_max*sizeof(ifp));
+		free(vs->vs_ifps, M_VPC);
+		vs->vs_ifps = ifps;
+		vs->vs_ifindex_max = ifp->if_index;
+	}
+	if (ifps[ifp->if_index] == ifp)
+		return (0);
+	if_ref(ifp);
+	ifps[ifp->if_index] = ifp;
+	return (0);
 }
 
 static struct mbuf *
@@ -317,7 +346,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	struct sockaddr *dst;
 	struct route ro;
 	struct rtentry *rt;
-	uint32_t *src;
+	struct ifnet *ifp;
 	int rc;
 
 	mh = m_gethdr(M_NOWAIT, MT_NOINIT);
@@ -339,59 +368,65 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	m->m_nextpkt = NULL;
 	m->m_flags &= ~(M_PKTHDR|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
 
-	if (__predict_true(vpc_cache_lookup(mh, evhvx)))
+	if (__predict_true(vpc_cache_lookup(vs, mh, evhvx)))
 		return (mh);
 
 	/* lookup MAC->IP forwarding table */
 	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL))
-		goto fail;
+		return (NULL);
 
 	dst = &ro.ro_dst;
 	/*   lookup IP using encapsulated dmac */
 	rc = vpc_ftable_lookup(vf, evhvx, dst);
 	if (__predict_false(rc))
-		goto fail;
+		return (NULL);
 	/* lookup route to find interface */
-	in_rtalloc_ign(&ro, 0, vs->vs_fibnum);
-	rt = ro.ro_rt;
+	rt = rtalloc1_fib(dst, 0, 0, vs->vs_fibnum);
 	if (__predict_false(rt == NULL))
-		goto fail;
+		return (NULL);
 	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
 						(rt->rt_ifp == NULL) ||
 						!RT_LINK_IS_UP(rt->rt_ifp))) {
-		goto rtfail;
+		RTFREE_LOCKED(rt);
+		return (NULL);
 	}
+	ifp = rt->rt_ifp;
+	rc = vpc_ifp_cache(vs, ifp);
+	RTFREE_LOCKED(rt);
+
+	if (__predict_false(rc))
+		return (NULL);
+
 	/* get dmac */
 	switch(dst->sa_family) {
 		case AF_INET:
-			rc = arpresolve(rt->rt_ifp, 0, NULL, dst,
+			rc = arpresolve(ifp, 0, NULL, dst,
 							evh->evl_dhost, NULL, NULL);
 			break;
 		case AF_INET6:
-			rc = nd6_resolve(rt->rt_ifp, 0, NULL, dst,
+			rc = nd6_resolve(ifp, 0, NULL, dst,
 							 evh->evl_dhost, NULL, NULL);
 			break;
 		default:
-			goto rtfail;
+			rc = EOPNOTSUPP;
 	}
-	mh->m_pkthdr.rcvif = rt->rt_ifp;
-	vpc_vxlanhdr_init(vf, vh, dst, rt->rt_ifp, m);
-	vpc_cache_update(mh, evhvx, rt);
+	if (__predict_false(rc))
+		return (NULL);
+	mh->m_pkthdr.rcvif = ifp;
+	vpc_vxlanhdr_init(vf, vh, dst, ifp, m);
+	vpc_cache_update(mh, evhvx, ifp->if_index);
 	return (mh);
-
- rtfail:
-	RTFREE(rt);
- fail:
-	return (NULL);
 }
 
 static struct mbuf *
-vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m)
+vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m, bool *can_batch)
 {
 	struct mbuf *mh, *mt, *mnext;
+	struct ifnet *ifp;
 
 	mh = mt = NULL;
+	*can_batch = true;
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
@@ -399,10 +434,14 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m)
 		if (m == NULL)
 			break;
 		if (mh != NULL) {
+			if (ifp != m->m_pkthdr.rcvif)
+				*can_batch = false;
 			mt->m_nextpkt = m;
 			mt = m;
-		} else
+		} else {
+			ifp = m->m_pkthdr.rcvif;
 			mh = mt = m;
+		}
 		m = mnext;
 	} while (m != NULL);
 	if (__predict_false(mnext != NULL))
@@ -417,17 +456,20 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	struct vpc_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *parent = vs->vs_ifparent;
 	struct mbuf *mp, *mnext;
+	bool can_batch;
 	int lasterr, rc;
 
 	if (__predict_false(parent == NULL)) {
 		m_freechain(m);
 		return (ENXIO);
 	}
-	if (m->m_flags & M_VXLANTAG)
-		m = vpc_vxlan_encap_chain(vs, m);
+	can_batch = true;
+	if ((m->m_flags & M_VXLANTAG) == 0)
+		m_freechain(m);
+	m = vpc_vxlan_encap_chain(vs, m, &can_batch);
 	if (__predict_false(m == NULL))
 		return (ENXIO);
-	if (__predict_true(parent->if_capabilities & IFCAP_TXBATCH))
+	if (__predict_true((parent->if_capabilities & IFCAP_TXBATCH) && can_batch))
 		return (vs->vs_parent_transmit(vs->vs_ifparent, m));
 
 	mp = m;
@@ -435,7 +477,8 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
-		rc = vs->vs_parent_transmit(vs->vs_ifparent, m);
+		ifp = m->m_pkthdr.rcvif;
+		rc = ifp->if_transmit(ifp, m);
 		if (rc)
 			lasterr = rc;
 		mp = mnext;
