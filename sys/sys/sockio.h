@@ -142,4 +142,7 @@
 #define	SIOCSIFXCAP	 _IOW('i', 152, struct ifreq)	/* set IF features extended */
 #define	SIOCGIFXCAP	_IOWR('i', 153, struct ifreq)	/* get IF features extended */
 
+#define	SIOCGIFVXLANPORT	 _IOWR('i', 154, struct ifreq)	/* get vxlan decap port */
+#define	SIOCSIFVXLANPORT	 _IOW('i', 155, struct ifreq)	/* set vxlan decap port */
+
 #endif /* !_SYS_SOCKIO_H_ */
