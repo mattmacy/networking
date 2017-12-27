@@ -66,15 +66,12 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
-static MALLOC_DEFINE(M_VPCI, "vpci", "virtual private cloud bridge");
+static MALLOC_DEFINE(M_VPCI, "vpci", "virtual private cloud internal");
 
 /*
  * ifconfig vpci0 create
- * ifconfig vpci0 addm vpc0
- * ifconfig vpci0 priority vpc0 200
- * ifconfig vpci0 vpc-resolver 127.0.0.1:5000
- * ifconfig vpci0 addm vmi7
- * ifconfig vpci0 pathcost vmi7 2000000
+ * ifconfig vpci0 192.168.0.100
+ * ifconfig vpci0 attach vpc0
  */
 
 struct vpci_softc {
@@ -106,7 +103,11 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 	if_ctx_t ctx = ifp->if_softc;
 	struct vpci_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *parent = vs->vs_ifparent;
-	
+
+	if (__predict_false(vs->vs_ifparent == NULL)) {
+		m_freem(m);
+		return (ENOBUFS);
+	}
 	m->m_flags |= M_VXLANTAG;
 	m->m_pkthdr.vxlanid = vs->vs_vni;
 	return (parent->if_transmit(parent, m));
@@ -191,7 +192,17 @@ vpci_stop(if_ctx_t ctx)
 static int
 vpci_set_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
 {
-	return (EOPNOTSUPP);
+	struct ifnet *ifp;
+
+	if ((ifp = ifunit_ref(va->va_ifname)) == NULL)
+		return (ENXIO);
+	if (ifp == vs->vs_ifparent) {
+		if_rele(ifp);
+	} else {
+		if_rele(vs->vs_ifparent);
+		vs->vs_ifparent = ifp;
+	}
+	return (0);
 }
 
 static int
