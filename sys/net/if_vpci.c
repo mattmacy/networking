@@ -66,7 +66,7 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
-static MALLOC_DEFINE(M_VPCI, "vpci", "virtual private cloud internal");
+static MALLOC_DEFINE(M_VPCI, "vpci", "virtual private cloud interface");
 
 /*
  * ifconfig vpci0 create
@@ -190,10 +190,32 @@ vpci_set_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
 	return (0);
 }
 
-static void
-vpci_set_vni(struct vpci_softc *vs, struct vpci_vni *vv)
+static int
+vpci_get_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
 {
-	vs->vs_vni = vv->vv_vni;
+	if (vs->vs_ifparent == NULL)
+		return (ENOENT);
+	bcopy(vs->vs_ifparent->if_xname, va->va_ifname, IFNAMSIZ);
+	return (0);
+}
+
+static void
+vpci_clear_ifparent(struct vpci_softc *vs)
+{
+	if (vs->vs_ifparent == NULL)
+		return;
+	if_rele(vs->vs_ifparent);
+	vs->vs_ifparent = NULL;
+}
+
+
+static void
+vpci_vni(struct vpci_softc *vs, struct vpci_vni *vv, int set)
+{
+	if (set)
+		vs->vs_vni = vv->vv_vni;
+	else
+		vv->vv_vni = vs->vs_vni;
 }
 
 static int
@@ -212,6 +234,12 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 
 	if ((rc = priv_check(curthread, PRIV_DRIVER)) != 0)
 		return (rc);
+	/*
+	 * XXX --- need to make sure that nothing is in transmit
+	 * while we're fiddling with state
+	 *
+	 */
+
 #ifdef notyet
 	/* need sx lock for iflib context */
 	iod = malloc(ifbuf->length, M_VPCI, M_WAITOK | M_ZERO);
@@ -223,8 +251,20 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 		case VPCI_ATTACH:
 			rc = vpci_set_ifparent(vs, (struct vpci_attach *)iod);
 			break;
-		case VPCI_VNI:
-			vpci_set_vni(vs, (struct vpci_vni *)iod);
+		case VPCI_ATTACHED_GET:
+			rc = vpci_get_ifparent(vs, (struct vpci_attach *)iod);
+			if (!rc)
+				rc = copyout(iod, ioh, sizeof(struct vpci_attach));
+			break;
+		case VPCI_DETACH:
+			vpci_clear_ifparent(vs);
+			break;
+		case VPCI_VNI_SET:
+			vpci_vni(vs, (struct vpci_vni *)iod, 1);
+			break;
+		case VPCI_VNI_GET:
+			vpci_vni(vs, (struct vpci_vni *)iod, 0);
+			rc = copyout(iod, ioh, sizeof(struct vpci_vni));
 			break;
 		default:
 			rc = ENOIOCTL;
