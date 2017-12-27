@@ -50,6 +50,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/gtaskqueue.h>
 #include <sys/limits.h>
 #include <sys/queue.h>
+#include <sys/smp.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -120,8 +121,12 @@ struct vf_entry {
 	struct sockaddr ve_addr;
 };
 
-DPCPU_DEFINE(struct egress_cache, hdr_cache);
-DPCPU_DEFINE(ck_epoch_record_t, vpc_epoch_record);
+extern int mp_ncpus;
+static struct ifp_cache *vpc_ic;
+static struct grouptask vpc_ifp_task;
+
+DPCPU_DEFINE(struct egress_cache *, hdr_cache);
+DPCPU_DEFINE(ck_epoch_record_t *, vpc_epoch_record);
 
 /*
  * ifconfig ixl0 alias 10.1.3.4
@@ -138,20 +143,21 @@ DPCPU_DEFINE(ck_epoch_record_t, vpc_epoch_record);
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 
 struct ifp_cache {
-	uint32_t ic_ifindex_max;
-	struct ifnet **ic_ifps;
+	uint16_t ic_ifindex_max;
+	uint16_t ic_size;
+	uint32_t ic_pad;
+	struct ifnet *ic_ifps[0];
 };
 
 struct vpc_softc {
+	if_softc_ctx_t shared;
+	if_ctx_t vs_ctx;
 	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
 	uint16_t vs_fibnum;
 	uint16_t vs_ifindex_target;
 	struct ifp_cache *vs_ic;
-	if_softc_ctx_t shared;
-	if_ctx_t vs_ctx;
-	art_tree *vs_vxftable; /* vxlanid -> ftable */
-	struct grouptask vs_ifp_task;
+	art_tree vs_vxftable; /* vxlanid -> ftable */
 	ck_epoch_record_t vs_record;
 };
 
@@ -209,7 +215,7 @@ static struct vpc_ftable *
 vpc_vxlanid_lookup(struct vpc_softc *vs, uint32_t vxlanid)
 {
 
-	return (art_search(vs->vs_vxftable, (const unsigned char *)&vxlanid));
+	return (art_search(&vs->vs_vxftable, (const unsigned char *)&vxlanid));
 }
 
 static int
@@ -286,12 +292,10 @@ static int
 vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header *evh)
 {
 	struct egress_cache *ecp;
-	bool needsfree;
 	struct ifnet *ifp;
 
-	needsfree = false;
-	critical_enter();
-	ecp = DPCPU_PTR(hdr_cache);
+	_critical_enter();
+	ecp = DPCPU_GET(hdr_cache);
 	if (__predict_false(ecp->ec_ticks == 0))
 		goto skip;
 	/*
@@ -302,9 +306,13 @@ vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header 
 		goto skip;
 	}
 	ifp = vs->vs_ic->ic_ifps[ecp->ec_ifindex];
+	if (ifp == NULL) {
+		ecp->ec_ticks = 0;
+		goto skip;
+	}
 	if (ifp->if_flags & IFF_DYING) {
 		ecp->ec_ticks = 0;
-		needsfree = true;
+		GROUPTASK_ENQUEUE(&vpc_ifp_task);
 	}
 	/*
 	 * dmac & vxlanid match
@@ -313,15 +321,12 @@ vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header 
 		(m->m_pkthdr.vxlanid == ecp->ec_vh.vh_vxlanhdr.v_vxlanid)) {
 		/* re-use last header */
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
-		critical_exit();
+		_critical_exit();
 		m->m_pkthdr.rcvif = ifp;
 		return (1);
 	}
 	skip:
-	critical_exit();
-	if (__predict_false(needsfree))
-		GROUPTASK_ENQUEUE(&vs->vs_ifp_task);
-
+	_critical_exit();
 	return (0);
 }
 
@@ -332,16 +337,16 @@ vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex
 	uint16_t *src;
 
 	src = (uint16_t *)evh->evl_dhost;
-	critical_enter();
+	_critical_enter();
 	/* update pcpu cache */
-	ecp = DPCPU_PTR(hdr_cache);
+	ecp = DPCPU_GET(hdr_cache);
 	ecp->ec_hdr[0] = src[0];
 	ecp->ec_hdr[1] = src[1];
 	ecp->ec_hdr[2] = src[2];
 	bcopy(m->m_data, &ecp->ec_vh, sizeof(struct vxlan_header));
 	ecp->ec_ticks = ticks;
 	ecp->ec_ifindex = ifindex;
-	critical_exit();
+	_critical_exit();
 }
 
 static int
@@ -355,21 +360,10 @@ vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
 		if (ifps != NULL)
 			vs->vs_ic->ic_ifindex_max = ifp->if_index;
 	}
-	/*
-	  XXX -- not generically safe
-	if (__predict_false(ifps == NULL)) {
-		ifps = malloc(sizeof(ifp)*ifp->if_index, M_VPC, M_NOWAIT);
-		if (__predict_false(ifps == NULL))
-			return (1);
-		bcopy(vs->vs_ifps, ifps, vs->vs_ifindex_max*sizeof(ifp));
-		free(vs->vs_ifps, M_VPC);
-		vs->vs_ifps = ifps;
-		vs->vs_ifindex_max = ifp->if_index;
-	}
-	*/
+
 	if (__predict_false(ifps == NULL)) {
 		vs->vs_ifindex_target = roundup(ifp->if_index, 512);
-		GROUPTASK_ENQUEUE(&vs->vs_ifp_task);
+		GROUPTASK_ENQUEUE(&vpc_ifp_task);
 		return (1);
 	}
 	if (ifps[ifp->if_index] == ifp)
@@ -504,10 +498,10 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	can_batch = true;
 	if ((m->m_flags & M_VXLANTAG) == 0)
 		m_freechain(m);
-	critical_enter();
+	_critical_enter();
 	sched_pin();
-	ck_epoch_begin(DPCPU_PTR(vpc_epoch_record), NULL);
-	critical_exit();
+	ck_epoch_begin(DPCPU_GET(vpc_epoch_record), NULL);
+	_critical_exit();
 
 	m = vpc_vxlan_encap_chain(vs, m, &can_batch);
 	if (__predict_false(m == NULL)) {
@@ -532,10 +526,10 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 		mp = mnext;
 	} while (mp != NULL);
  done:
-	critical_enter();
-	ck_epoch_end(DPCPU_PTR(vpc_epoch_record), NULL);
+	_critical_enter();
+	ck_epoch_end(DPCPU_GET(vpc_epoch_record), NULL);
 	sched_unpin();
-	critical_exit();
+	_critical_exit();
 	return (lasterr);
 }
 
@@ -545,11 +539,15 @@ vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 	struct vpc_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
+	atomic_add_int(&clone_count, 1);
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
+
+	/* register vs_record */
 	ck_epoch_register(&vpc_epoch, &vs->vs_record, NULL);
 	vs->vs_ctx = ctx;
-	iflib_config_gtask_init(ctx, &vs->vs_ifp_task, _task_fn_ifp_update, "ifp update");
-	atomic_add_int(&clone_count, 1);
+
+	/* init vs_vxftable */
+	art_tree_init(&vs->vs_vxftable, 4);
 	return (0);
 }
 
@@ -680,12 +678,41 @@ static struct if_shared_ctx vpc_sctx_init = {
 if_shared_ctx_t vpc_sctx = &vpc_sctx_init;
 
 
+#define IC_START_COUNT 512
 static if_pseudo_t vpc_pseudo;	
 
 static int
 vpc_module_init(void)
 {
+	struct egress_cache **ecpp, *ecp;
+	ck_epoch_record_t **erpp, *erp;
+	int i, ec_size, er_size;
+
 	vpc_pseudo = iflib_clone_register(vpc_sctx);
+
+	iflib_config_gtask_init(NULL, &vpc_ifp_task, _task_fn_ifp_update, "ifp update");
+
+	/* DPCPU hdr_cache init */
+	/* DPCPU vpc epoch record init */
+	ec_size = roundup(sizeof(*ecp), CACHE_LINE_SIZE);
+	er_size = roundup(sizeof(*erp), CACHE_LINE_SIZE);
+
+	ecp = malloc(ec_size*mp_ncpus, M_VPC, M_WAITOK|M_ZERO);
+	erp = malloc(er_size*mp_ncpus, M_VPC, M_WAITOK);
+	vpc_ic = malloc(sizeof(uint64_t) + (sizeof(struct ifnet *)*IC_START_COUNT),
+					M_VPC, M_WAITOK|M_ZERO);
+	vpc_ic->ic_size = IC_START_COUNT;
+
+	CPU_FOREACH(i) {
+		ck_epoch_register(&vpc_epoch, erp, NULL);
+
+		ecpp = DPCPU_ID_PTR(i, hdr_cache);
+		erpp = DPCPU_ID_PTR(i, vpc_epoch_record);
+		*ecpp = ecp;
+		*erpp = erp;
+		ecp = (struct egress_cache *)(((caddr_t)ecp) + ec_size);
+		erp = (ck_epoch_record_t *)(((caddr_t)erp) + er_size);
+	}
 
 	return (vpc_pseudo != NULL);
 }
