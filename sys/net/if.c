@@ -501,6 +501,15 @@ if_free_internal(struct ifnet *ifp)
 	KASSERT((ifp->if_flags & IFF_DYING),
 	    ("if_free_internal: interface not dying"));
 
+	CURVNET_SET_QUIET(ifp->if_vnet);
+	IFNET_WLOCK();
+	KASSERT(ifp == ifnet_byindex_locked(ifp->if_index),
+	    ("%s: freeing unallocated ifnet", ifp->if_xname));
+
+	ifindex_free_locked(ifp->if_index);
+	IFNET_WUNLOCK();
+	CURVNET_RESTORE();
+
 	if (if_com_free[ifp->if_alloctype] != NULL)
 		if_com_free[ifp->if_alloctype](ifp->if_l2com,
 		    ifp->if_alloctype);
@@ -529,17 +538,8 @@ if_free(struct ifnet *ifp)
 
 	ifp->if_flags |= IFF_DYING;			/* XXX: Locking */
 
-	CURVNET_SET_QUIET(ifp->if_vnet);
-	IFNET_WLOCK();
-	KASSERT(ifp == ifnet_byindex_locked(ifp->if_index),
-	    ("%s: freeing unallocated ifnet", ifp->if_xname));
-
-	ifindex_free_locked(ifp->if_index);
-	IFNET_WUNLOCK();
-
 	if (refcount_release(&ifp->if_refcount))
 		if_free_internal(ifp);
-	CURVNET_RESTORE();
 }
 
 /*
