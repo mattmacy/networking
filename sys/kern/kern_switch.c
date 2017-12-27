@@ -188,71 +188,38 @@ choosethread(void)
 	return (td);
 }
 
-/*
- * Kernel thread preemption implementation.  Critical sections mark
- * regions of code in which preemptions are not allowed.
- *
- * It might seem a good idea to inline critical_enter() but, in order
- * to prevent instructions reordering by the compiler, a __compiler_membar()
- * would have to be used here (the same as sched_pin()).  The performance
- * penalty imposed by the membar could, then, produce slower code than
- * the function call itself, for most cases.
- */
+void
+critical_preempt(struct thread *td)
+{
+	int flags;
+
+	/*
+	 * Microoptimization: we committed to switch,
+	 * disable preemption in interrupt handlers
+	 * while spinning for the thread lock.
+	 */
+	td->td_critnest = 1;
+	thread_lock(td);
+	td->td_critnest--;
+	flags = SW_INVOL | SW_PREEMPT;
+	if (TD_IS_IDLETHREAD(td))
+		flags |= SWT_IDLE;
+	else
+		flags |= SWT_OWEPREEMPT;
+	mi_switch(flags, NULL);
+	thread_unlock(td);
+}
+
 void
 critical_enter(void)
 {
-	struct thread *td;
-
-	td = curthread;
-	td->td_critnest++;
-	CTR4(KTR_CRITICAL, "critical_enter by thread %p (%ld, %s) to %d", td,
-	    (long)td->td_proc->p_pid, td->td_name, td->td_critnest);
+	_critical_enter();
 }
 
 void
 critical_exit(void)
 {
-	struct thread *td;
-	int flags;
-
-	td = curthread;
-	KASSERT(td->td_critnest != 0,
-	    ("critical_exit: td_critnest == 0"));
-
-	if (td->td_critnest == 1) {
-		td->td_critnest = 0;
-
-		/*
-		 * Interrupt handlers execute critical_exit() on
-		 * leave, and td_owepreempt may be left set by an
-		 * interrupt handler only when td_critnest > 0.  If we
-		 * are decrementing td_critnest from 1 to 0, read
-		 * td_owepreempt after decrementing, to not miss the
-		 * preempt.  Disallow compiler to reorder operations.
-		 */
-		__compiler_membar();
-		if (td->td_owepreempt && !kdb_active) {
-			/*
-			 * Microoptimization: we committed to switch,
-			 * disable preemption in interrupt handlers
-			 * while spinning for the thread lock.
-			 */
-			td->td_critnest = 1;
-			thread_lock(td);
-			td->td_critnest--;
-			flags = SW_INVOL | SW_PREEMPT;
-			if (TD_IS_IDLETHREAD(td))
-				flags |= SWT_IDLE;
-			else
-				flags |= SWT_OWEPREEMPT;
-			mi_switch(flags, NULL);
-			thread_unlock(td);
-		}
-	} else
-		td->td_critnest--;
-
-	CTR4(KTR_CRITICAL, "critical_exit by thread %p (%ld, %s) to %d", td,
-	    (long)td->td_proc->p_pid, td->td_name, td->td_critnest);
+	_critical_exit();
 }
 
 /************************************************************************

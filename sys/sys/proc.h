@@ -51,6 +51,7 @@
 #include <sys/lock_profile.h>
 #include <sys/_mutex.h>
 #include <sys/osd.h>
+#include <sys/ktr.h>
 #include <sys/priority.h>
 #include <sys/rtprio.h>			/* XXX. */
 #include <sys/runq.h>
@@ -1144,6 +1145,52 @@ td_softdep_cleanup(struct thread *td)
 
 	if (td->td_su != NULL && softdep_ast_cleanup != NULL)
 		softdep_ast_cleanup(td);
+}
+
+extern u_char kdb_active;
+void critical_preempt(struct thread *td);
+
+static __inline void
+_critical_enter()
+{
+	struct thread *td;
+
+	td = curthread;
+	td->td_critnest++;
+	__compiler_membar();
+
+	CTR4(KTR_CRITICAL, "critical_enter by thread %p (%ld, %s) to %d", td,
+	    (long)td->td_proc->p_pid, td->td_name, td->td_critnest);
+}
+
+static __inline void
+_critical_exit()
+{
+	struct thread *td;
+
+	td = curthread;
+	KASSERT(td->td_critnest != 0,
+	    ("critical_exit: td_critnest == 0"));
+	__compiler_membar();
+	if (__predict_true(td->td_critnest == 1)) {
+		td->td_critnest = 0;
+
+		/*
+		 * Interrupt handlers execute critical_exit() on
+		 * leave, and td_owepreempt may be left set by an
+		 * interrupt handler only when td_critnest > 0.  If we
+		 * are decrementing td_critnest from 1 to 0, read
+		 * td_owepreempt after decrementing, to not miss the
+		 * preempt.  Disallow compiler to reorder operations.
+		 */
+		__compiler_membar();
+		if (__predict_false(td->td_owepreempt && !kdb_active))
+			critical_preempt(td);
+	} else
+		td->td_critnest--;
+
+	CTR4(KTR_CRITICAL, "critical_exit by thread %p (%ld, %s) to %d", td,
+	    (long)td->td_proc->p_pid, td->td_name, td->td_critnest);
 }
 
 #endif	/* _KERNEL */
