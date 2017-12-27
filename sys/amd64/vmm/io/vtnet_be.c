@@ -1564,6 +1564,7 @@ vb_attach_post(if_ctx_t ctx)
 	if (vs->vs_flags & VS_OWNED) {
 		ifp = iflib_get_ifp(ctx);
 		ifp->if_input = vb_if_input;
+		iflib_set_mac(ctx, vs->vs_origmac);
 		/* XXX provide state pointer for hw if_input :-( */
 		vs->vs_ifparent->if_pspare[3] = vs;
 		vs->vs_oinput = vs->vs_ifparent->if_input;
