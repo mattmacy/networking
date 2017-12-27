@@ -24,11 +24,16 @@ struct vpci_vni {
 	uint32_t vv_vni;
 };
 
-#define VPCI_ATTACH									\
+#define VPCI_ATTACH								\
 	_IOW('k', 1, struct vpci_attach)
-
-#define VPCI_VNI								\
-	_IOW('k', 2, struct vpci_vni)
+#define VPCI_ATTACHED_GET			   			\
+	_IOWR('k', 2, struct vpci_attach)
+#define VPCI_DETACH								\
+	_IOW('k', 3, struct vpc_ioctl_header)
+#define VPCI_VNI_SET							\
+	_IOW('k', 4, struct vpci_vni)
+#define VPCI_VNI_GET							\
+	_IOWR('k', 5, struct vpci_vni)
 
 
 struct vpcb_resolver {

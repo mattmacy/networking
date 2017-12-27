@@ -69,7 +69,7 @@ uint16_t node_sizes[] = {
 	 sizeof(art_node16),
 	 sizeof(art_node48),
 	 sizeof(art_node256)
-	};
+};
 
 static art_node*
 alloc_node(uint8_t type)
