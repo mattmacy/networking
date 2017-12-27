@@ -19,9 +19,16 @@ struct vpci_attach {
 	struct vpc_ioctl_header vl_vih;
 	char va_ifname[IFNAMSIZ];
 };
+struct vpci_vni {
+	struct vpc_ioctl_header vv_vih;
+	uint32_t vv_vni;
+};
 
 #define VPCI_ATTACH									\
 	_IOW('k', 1, struct vpci_attach)
+
+#define VPCI_VNI								\
+	_IOW('k', 2, struct vpci_vni)
 
 
 struct vpcb_resolver {
