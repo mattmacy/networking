@@ -106,6 +106,7 @@ struct vpc_ftable {
 struct egress_cache {
 	uint32_t ec_hdr[3];
 	int ec_ticks;
+	struct rtentry *ec_rt;
 	struct vxlan_header ec_vh;
 };
 
@@ -132,6 +133,7 @@ static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 struct vpc_softc {
 	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
+	uint16_t vs_fibnum;
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	art_tree *vs_vxftable; /* vxlanid -> ftable */
@@ -239,6 +241,49 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	vhdr->v_vxlanid = htonl(vf->vf_vni) >> 8;
 }
 
+static int
+vpc_cache_lookup(struct mbuf *m, struct ether_vlan_header *evh)
+{
+	struct egress_cache *ecp;
+	struct rtentry *rt;
+
+	rt = NULL;
+	critical_enter();
+	ecp = DPCPU_PTR(hdr_cache);
+	if (__predict_false(ecp->ec_ticks == 0))
+		goto skip;
+	if (__predict_false(ticks - ecp->ec_ticks < hz/5)) {
+		rt = ecp->ec_rt;
+		ecp->ec_ticks = 0;
+		goto skip;
+	}
+	if (__predict_false(!(ecp->ec_rt->rt_flags & RTF_UP) ||
+						(ecp->ec_rt->rt_ifp == NULL) ||
+						!RT_LINK_IS_UP(ecp->ec_rt->rt_ifp))) {
+		rt = ecp->ec_rt;
+		ecp->ec_ticks = 0;
+		goto skip;
+	}
+	/*
+	 * if ether header matches last ether header
+	 * and less than 200ms have elapsed since it
+	 * was calculated: 
+	 *    re-use last vxlan header and return
+	 */
+	if (hdrcmp(ecp->ec_hdr, (uint32_t *)evh) == 0) {
+		/* re-use last header */
+		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
+		critical_exit();
+		m->m_pkthdr.rcvif = rt->rt_ifp;
+		return (1);
+	}
+	skip:
+	critical_exit();
+	if (__predict_false(rt != NULL))
+		RTFREE(rt);
+	return (0);
+}
+
 static struct mbuf *
 vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 {
@@ -267,25 +312,14 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	mh->m_pkthdr.len += sizeof(struct vxlan_header);
 	mh->m_len = sizeof(struct vxlan_header);
 	mh->m_next = m;
+	m->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
+	m->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
 	m->m_nextpkt = NULL;
 	m->m_flags &= ~(M_PKTHDR|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
-	
-	critical_enter();
-	ecp = DPCPU_PTR(hdr_cache);
-	/*
-	 * if ether header matches last ether header
-	 * and less than 250ms have elapsed since it
-	 * was calculated: 
-	 *    re-use last vxlan header and return
-	 */
-	if ((hdrcmp(ecp->ec_hdr, (uint32_t *)evhvx) == 0) &&
-		ticks - ecp->ec_ticks < (hz >> 2)) {
-		/* re-use last header */
-		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
-		critical_exit();
+
+	if (__predict_true(vpc_cache_lookup(mh, evhvx)))
 		return (mh);
-	}
-	critical_exit();
+
 	/* lookup MAC->IP forwarding table */
 	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL))
@@ -297,7 +331,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	if (__predict_false(rc))
 		goto fail;
 	/* lookup route to find interface */
-	in_rtalloc_ign(&ro, 0, M_GETFIB(m));
+	in_rtalloc_ign(&ro, 0, vs->vs_fibnum);
 	rt = ro.ro_rt;
 	if (__predict_false(rt == NULL))
 		goto fail;
@@ -319,9 +353,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 		default:
 			goto rtfail;
 	}
-	m->m_pkthdr.rcvif = rt->rt_ifp;
-	m->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
-	m->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+	mh->m_pkthdr.rcvif = rt->rt_ifp;
 	vpc_vxlanhdr_init(vf, vh, dst, rt->rt_ifp, m);
 	src = (uint32_t *)evhvx;
 	critical_enter();
@@ -442,15 +474,38 @@ vpc_stop(if_ctx_t ctx)
 static int
 vpc_set_listen(struct vpc_softc *vs, struct vpc_listen *vl)
 {
-	/*
-	 * Resolve IP -> interface
-	 * - check for IFCAP_VXLANDECAP on interface
-	 * - check that interface doesn't already have DECAP enabled
-	 * - set port & ip on interface
-	 * - set interface as parent
-	 */
+	struct route ro;
+	struct ifnet *ifp;
+	struct ifreq ifr;
+	struct rtentry *rt;
+	int rc;
 
-	return (ENOTSUP);
+	rc = 0;
+
+	vs->vs_vxlan_port = vl->vl_port;
+	bzero(&ro, sizeof(ro));
+	bcopy(&vl->vl_addr, &ro.ro_dst, sizeof(struct sockaddr));
+	/* lookup route to find interface */
+	in_rtalloc_ign(&ro, 0, vs->vs_fibnum);
+	rt = ro.ro_rt;
+	if (__predict_false(rt == NULL))
+		return (ENETUNREACH);
+	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
+						(rt->rt_ifp == NULL))) {
+		rc = ENETUNREACH;
+		goto fail;
+	}
+	ifp = rt->rt_ifp;
+	if (!(ifp->if_capabilities & IFCAP_VXLANDECAP)) {
+		rc = EOPNOTSUPP;
+		goto fail;
+	}
+	ifr.ifr_index = vs->vs_vxlan_port;
+	rc = ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
+
+ fail:
+	RTFREE(rt);
+	return (rc);
 }
 
 static int
