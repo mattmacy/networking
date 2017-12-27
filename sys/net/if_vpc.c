@@ -42,10 +42,12 @@ __FBSDID("$FreeBSD$");
 #include <sys/priv.h>
 #include <sys/mutex.h>
 #include <sys/module.h>
+#include <sys/proc.h>
+#include <sys/sched.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
-#include <sys/taskqueue.h>
+#include <sys/gtaskqueue.h>
 #include <sys/limits.h>
 #include <sys/queue.h>
 
@@ -71,7 +73,11 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if_vpc.h>
 
+#include <ck_epoch.h>
+
 #include "ifdi_if.h"
+
+static ck_epoch_t vpc_epoch;
 
 struct vxlanhdr {
     uint32_t reserved0:4;
@@ -115,6 +121,7 @@ struct vf_entry {
 };
 
 DPCPU_DEFINE(struct egress_cache, hdr_cache);
+DPCPU_DEFINE(ck_epoch_record_t, vpc_epoch_record);
 
 /*
  * ifconfig ixl0 alias 10.1.3.4
@@ -130,17 +137,22 @@ DPCPU_DEFINE(struct egress_cache, hdr_cache);
 
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 
+struct ifp_cache {
+	uint32_t ic_ifindex_max;
+	struct ifnet **ic_ifps;
+};
+
 struct vpc_softc {
 	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
 	uint16_t vs_fibnum;
-	uint16_t vs_ifindex_max;
+	uint16_t vs_ifindex_target;
+	struct ifp_cache *vs_ic;
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	art_tree *vs_vxftable; /* vxlanid -> ftable */
-	struct ifnet **vs_ifps;
-	struct ifnet *vs_ifparent;
-	if_transmit_fn_t vs_parent_transmit;   /* initiate output routine */
+	struct grouptask vs_ifp_task;
+	ck_epoch_record_t vs_record;
 };
 
 static int clone_count;
@@ -167,10 +179,30 @@ hdrcmp(uint16_t *lhs, uint16_t *rhs)
 }
 
 static void
-vpc_ifp_free(struct vpc_softc *vs, struct ifnet *ifp)
+_task_fn_ifp_update(void *context)
 {
-	vs->vs_ifps[ifp->if_index] = NULL;
-	if_free(ifp);
+	struct vpc_softc *vs = context;
+	struct ifnet **ifps, **ifps_orig;
+	int i, max;
+
+	if (vs->vs_ifindex_target > vs->vs_ic->ic_ifindex_max) {
+		/* grow and replace after wait */
+	}
+	max = vs->vs_ic->ic_ifindex_max;
+	ifps = malloc(sizeof(ifps)*max, M_VPC, M_WAITOK|M_ZERO);
+	ifps_orig = vs->vs_ic->ic_ifps;
+	for (i = 0; i < max; i++) {
+		if (ifps_orig[i] == NULL)
+			continue;
+		if (!(ifps_orig[i]->if_flags & IFF_DYING))
+			continue;
+		ifps[i] = ifps_orig[i];
+		ifps_orig[i] = NULL;
+	}
+	ck_epoch_synchronize(&vs->vs_record);
+	for (i = 0; i < max; i++)
+		if_free(ifps[i]);
+	free(ifps, M_VPC);
 }
 
 static struct vpc_ftable *
@@ -269,7 +301,7 @@ vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header 
 		ecp->ec_ticks = 0;
 		goto skip;
 	}
-	ifp = vs->vs_ifps[ecp->ec_ifindex];
+	ifp = vs->vs_ic->ic_ifps[ecp->ec_ifindex];
 	if (ifp->if_flags & IFF_DYING) {
 		ecp->ec_ticks = 0;
 		needsfree = true;
@@ -282,13 +314,13 @@ vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header 
 		/* re-use last header */
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
 		critical_exit();
-		//m->m_pkthdr.rcvif = rt->rt_ifp;
+		m->m_pkthdr.rcvif = ifp;
 		return (1);
 	}
 	skip:
 	critical_exit();
 	if (__predict_false(needsfree))
-		vpc_ifp_free(vs, ifp);
+		GROUPTASK_ENQUEUE(&vs->vs_ifp_task);
 
 	return (0);
 }
@@ -317,9 +349,14 @@ vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
 {
 	struct ifnet **ifps;
 
-	ifps = vs->vs_ifps;
-	if (__predict_false(vs->vs_ifindex_max < ifp->if_index))
+	ifps = vs->vs_ic->ic_ifps;
+	if (__predict_false(vs->vs_ic->ic_ifindex_max < ifp->if_index)) {
 		ifps = realloc(ifps, sizeof(ifp)*ifp->if_index, M_VPC, M_NOWAIT);
+		if (ifps != NULL)
+			vs->vs_ic->ic_ifindex_max = ifp->if_index;
+	}
+	/*
+	  XXX -- not generically safe
 	if (__predict_false(ifps == NULL)) {
 		ifps = malloc(sizeof(ifp)*ifp->if_index, M_VPC, M_NOWAIT);
 		if (__predict_false(ifps == NULL))
@@ -328,6 +365,12 @@ vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
 		free(vs->vs_ifps, M_VPC);
 		vs->vs_ifps = ifps;
 		vs->vs_ifindex_max = ifp->if_index;
+	}
+	*/
+	if (__predict_false(ifps == NULL)) {
+		vs->vs_ifindex_target = roundup(ifp->if_index, 512);
+		GROUPTASK_ENQUEUE(&vs->vs_ifp_task);
+		return (1);
 	}
 	if (ifps[ifp->if_index] == ifp)
 		return (0);
@@ -454,23 +497,28 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 {
 	if_ctx_t ctx = ifp->if_softc;
 	struct vpc_softc *vs = iflib_get_softc(ctx);
-	struct ifnet *parent = vs->vs_ifparent;
 	struct mbuf *mp, *mnext;
 	bool can_batch;
 	int lasterr, rc;
 
-	if (__predict_false(parent == NULL)) {
-		m_freechain(m);
-		return (ENXIO);
-	}
 	can_batch = true;
 	if ((m->m_flags & M_VXLANTAG) == 0)
 		m_freechain(m);
+	critical_enter();
+	sched_pin();
+	ck_epoch_begin(DPCPU_PTR(vpc_epoch_record), NULL);
+	critical_exit();
+
 	m = vpc_vxlan_encap_chain(vs, m, &can_batch);
-	if (__predict_false(m == NULL))
-		return (ENXIO);
-	if (__predict_true((parent->if_capabilities & IFCAP_TXBATCH) && can_batch))
-		return (vs->vs_parent_transmit(vs->vs_ifparent, m));
+	if (__predict_false(m == NULL)) {
+		lasterr = ENXIO;
+		goto done;
+	}
+	ifp = m->m_pkthdr.rcvif;
+	if (__predict_true((ifp->if_capabilities & IFCAP_TXBATCH) && can_batch)) {
+		lasterr = ifp->if_transmit(ifp, m);
+		goto done;
+	}
 
 	mp = m;
 	lasterr = 0;
@@ -483,7 +531,11 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 			lasterr = rc;
 		mp = mnext;
 	} while (mp != NULL);
-
+ done:
+	critical_enter();
+	ck_epoch_end(DPCPU_PTR(vpc_epoch_record), NULL);
+	sched_unpin();
+	critical_exit();
 	return (lasterr);
 }
 
@@ -494,7 +546,9 @@ vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 	if_softc_ctx_t scctx;
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
+	ck_epoch_register(&vpc_epoch, &vs->vs_record, NULL);
 	vs->vs_ctx = ctx;
+	iflib_config_gtask_init(ctx, &vs->vs_ifp_task, _task_fn_ifp_update, "ifp update");
 	atomic_add_int(&clone_count, 1);
 	return (0);
 }
