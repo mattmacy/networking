@@ -7,12 +7,21 @@ struct vpc_ioctl_header {
 	uint64_t vih_type;
 };
 struct vpc_listen {
+	struct vpc_ioctl_header vl_vih;
 	struct sockaddr vl_addr;
 	uint16_t vl_port;
 };
 
 #define VPC_LISTEN									\
 	_IOW('k', 1, struct vpc_listen)
+
+struct vpci_attach {
+	struct vpc_ioctl_header vl_vih;
+	char va_ifname[IFNAMSIZ];
+};
+
+#define VPCI_ATTACH									\
+	_IOW('k', 1, struct vpci_attach)
 
 
 struct vpcb_resolver {
