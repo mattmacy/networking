@@ -82,21 +82,6 @@ struct vpci_softc {
 	uint8_t vs_mac[ETHER_ADDR_LEN];
 };
 
-#ifdef notyet
-static void
-m_freechain(struct mbuf *m)
-{
-	struct mbuf *mp, *mnext;
-
-	mp = m;
-	do {
-		mnext = mp->m_nextpkt;
-		m_freem(mp);
-		mp = mnext;
-	} while (mp != NULL);
-}
-#endif
-
 static int
 vpci_transmit(if_t ifp, struct mbuf *m)
 {
@@ -205,6 +190,12 @@ vpci_set_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
 	return (0);
 }
 
+static void
+vpci_set_vni(struct vpci_softc *vs, struct vpci_vni *vv)
+{
+	vs->vs_vni = vv->vv_vni;
+}
+
 static int
 vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 {
@@ -213,7 +204,7 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
 	struct vpc_ioctl_header *ioh =
 	    (struct vpc_ioctl_header *)(ifbuf->buffer);
-	int rc = ENOTSUP;
+	int rc = 0;
 	struct vpci_ioctl_data *iod = NULL;
 
 	if (command != SIOCGPRIVATE_0)
@@ -231,6 +222,9 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	switch (ioh->vih_type) {
 		case VPCI_ATTACH:
 			rc = vpci_set_ifparent(vs, (struct vpci_attach *)iod);
+			break;
+		case VPCI_VNI:
+			vpci_set_vni(vs, (struct vpci_vni *)iod);
 			break;
 		default:
 			rc = ENOIOCTL;
