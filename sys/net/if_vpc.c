@@ -284,10 +284,28 @@ vpc_cache_lookup(struct mbuf *m, struct ether_vlan_header *evh)
 	return (0);
 }
 
+static int
+vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, struct rtentry *rt)
+{
+	struct egress_cache *ecp;
+	uint32_t *src;
+
+	src = (uint32_t *)evh;
+	critical_enter();
+	/* update pcpu cache */
+	ecp = DPCPU_PTR(hdr_cache);
+	ecp->ec_hdr[0] = src[0];
+	ecp->ec_hdr[1] = src[1];
+	ecp->ec_hdr[2] = src[2];
+	bcopy(m->m_data, &ecp->ec_vh, sizeof(struct vxlan_header));
+	ecp->ec_ticks = ticks;
+	ecp->ec_rt = rt;
+	critical_exit();
+}
+
 static struct mbuf *
 vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 {
-	struct egress_cache *ecp;
 	struct ether_vlan_header *evh, *evhvx;
 	struct vxlan_header *vh;
 	struct mbuf *mh;
@@ -355,16 +373,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	}
 	mh->m_pkthdr.rcvif = rt->rt_ifp;
 	vpc_vxlanhdr_init(vf, vh, dst, rt->rt_ifp, m);
-	src = (uint32_t *)evhvx;
-	critical_enter();
-	/* update pcpu cache */
-	ecp = DPCPU_PTR(hdr_cache);
-	ecp->ec_hdr[0] = src[0];
-	ecp->ec_hdr[1] = src[1];
-	ecp->ec_hdr[2] = src[2];
-	bcopy(mh->m_data, &ecp->ec_vh, sizeof(*vh));
-	ecp->ec_ticks = ticks;
-	critical_exit();
+	vpc_cache_update(mh, evhvx, rt);
 	return (mh);
 
  rtfail:
