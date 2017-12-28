@@ -4691,6 +4691,16 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 		device_printf(dev, "IFDI_CLONEATTACH failed %d\n", err);
 		return (err);
 	}
+
+#ifdef INVARIANTS
+	MPASS(scctx->isc_capenable);
+	if (scctx->isc_capenable & IFCAP_TXCSUM)
+		MPASS(scctx->isc_tx_csum_flags);
+#endif
+
+	if_setcapabilities(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH);
+	if_setcapenable(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH);
+
 	if (sctx->isc_flags & IFLIB_PSEUDO) {
 		ether_ifattach(ctx->ifc_ifp, ctx->ifc_mac);
 
@@ -4707,15 +4717,6 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 	}
 	_iflib_pre_assert(scctx);
 	ctx->ifc_txrx = *scctx->isc_txrx;
-
-#ifdef INVARIANTS
-	MPASS(scctx->isc_capenable);
-	if (scctx->isc_capenable & IFCAP_TXCSUM)
-		MPASS(scctx->isc_tx_csum_flags);
-#endif
-
-	if_setcapabilities(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH);
-	if_setcapenable(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH);
 
 	if (scctx->isc_ntxqsets == 0 || (scctx->isc_ntxqsets_max && scctx->isc_ntxqsets_max < scctx->isc_ntxqsets))
 		scctx->isc_ntxqsets = scctx->isc_ntxqsets_max;
