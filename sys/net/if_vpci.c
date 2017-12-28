@@ -61,6 +61,7 @@ __FBSDID("$FreeBSD$");
 #include <net/iflib.h>
 #include <net/if.h>
 #include <net/if_clone.h>
+#include <net/if_media.h>
 
 #include <net/if_vpc.h>
 
@@ -78,6 +79,7 @@ struct vpci_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	struct ifnet *vs_ifparent;
+	struct ifmedia	*vs_media;
 	uint32_t vs_vni;
 	uint8_t vs_mac[ETHER_ADDR_LEN];
 };
@@ -159,6 +161,10 @@ vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	vpci_gen_mac(vs);
 	iflib_set_mac(ctx, vs->vs_mac);
+	vs->vs_media = iflib_get_media(ctx);
+	ifmedia_add(vs->vs_media, IFM_ETHER | IFM_1000_T | IFM_FDX, 0, NULL);
+	ifmedia_add(vs->vs_media, IFM_ETHER | IFM_AUTO, 0, NULL);
+	ifmedia_set(vs->vs_media, IFM_ETHER | IFM_AUTO);
 	return (0);
 }
 
@@ -190,6 +196,27 @@ vpci_init(if_ctx_t ctx)
 static void
 vpci_stop(if_ctx_t ctx)
 {
+}
+
+static void
+vpci_media_status(if_ctx_t ctx, struct ifmediareq *ifmr)
+{
+	/* XXX should really query this from the parent interface */
+	ifmr->ifm_status = IFM_AVALID;
+	ifmr->ifm_active = IFM_ETHER;
+	ifmr->ifm_status |= IFM_ACTIVE;
+	ifmr->ifm_active |= IFM_1000_T;
+	ifmr->ifm_active |= IFM_FDX;
+}
+
+static int
+vpci_media_change(if_ctx_t ctx)
+{
+	struct ifmedia *ifm = iflib_get_media(ctx);
+
+	if (IFM_TYPE(ifm->ifm_media) != IFM_ETHER)
+		return (EINVAL);
+	return (0);
 }
 
 static int
@@ -303,6 +330,8 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 }
 
 static device_method_t vpci_if_methods[] = {
+	DEVMETHOD(ifdi_media_status, vpci_media_status),
+	DEVMETHOD(ifdi_media_change, vpci_media_change),
 	DEVMETHOD(ifdi_cloneattach, vpci_cloneattach),
 	DEVMETHOD(ifdi_attach_post, vpci_attach_post),
 	DEVMETHOD(ifdi_detach, vpci_detach),
