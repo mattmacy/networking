@@ -389,6 +389,7 @@ vpci_module_event_handler(module_t mod, int what, void *arg)
 			vpci_module_deinit();
 		else
 			return (EBUSY);
+		break;
 	default:
 		return (EOPNOTSUPP);
 	}
