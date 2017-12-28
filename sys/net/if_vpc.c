@@ -107,7 +107,7 @@ struct vxlan_header {
 struct vpc_ftable {
 	uint32_t vf_vni;
 	struct vpc_softc *vf_vs;
-	art_tree *vf_ftable;
+	art_tree vf_ftable;
 };
 
 struct egress_cache {
@@ -247,7 +247,7 @@ vpc_ftable_lookup(struct vpc_ftable *vf, struct ether_vlan_header *evh,
 {
 	struct vf_entry *vfe;
 
-	vfe = art_search(vf->vf_ftable, evh->evl_dhost);
+	vfe = art_search(&vf->vf_ftable, evh->evl_dhost);
 	if (__predict_false(vfe == NULL))
 		return (ENOENT);
 	bcopy(&vfe->ve_addr, dst, sizeof(struct sockaddr *));
@@ -641,6 +641,65 @@ vpc_set_listen(struct vpc_softc *vs, struct vpc_listen *vl)
 }
 
 static int
+vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
+{
+	struct vpc_ftable *ftable;
+	struct vpc_fte *vfte;
+	uint8_t *mac;
+	uint32_t addr;
+
+	vfte = &vfu->vfu_vfte;
+	if (vfte->vf_protoaddr.sa_family != AF_INET)
+		return (EAFNOSUPPORT);
+	addr = ((struct sockaddr_in *)(&vfte->vf_protoaddr))->sin_addr.s_addr; /* XXX v4 */
+	ftable = vpc_vxlanid_lookup(vs, vfte->vf_vni);
+	if (ftable == NULL) {
+		if (add == false)
+			return (0);
+		ftable = malloc(sizeof(*ftable), M_VPC, M_WAITOK|M_ZERO);
+		art_tree_init(&ftable->vf_ftable, 4 /* XXX --- IPv4 only */);
+		ftable->vf_vni = vfte->vf_vni;
+		ftable->vf_vs = vs;
+		art_insert(&vs->vs_vxftable, (caddr_t)&vfte->vf_vni, ftable);
+	}
+	if (add == false) {
+		art_delete(&ftable->vf_ftable, (caddr_t)&addr);
+		if (art_size(&ftable->vf_ftable) == 0) {
+			art_delete(&vs->vs_vxftable, (caddr_t)&vfte->vf_vni);
+			free(ftable, M_VPC);
+		}
+	} else {
+		mac = malloc(ETHER_ADDR_LEN, M_VPC, M_WAITOK);
+		bcopy(vfte->vf_hwaddr, mac, ETHER_ADDR_LEN); 
+		art_insert(&ftable->vf_ftable,(caddr_t)&addr, mac);
+	}
+	return (0);
+}
+
+static int
+vpc_fte_count(struct vpc_softc *vs)
+{
+	return (0);
+}
+
+static int
+vpc_fte_list(struct vpc_softc *vs, struct vpc_fte_list *vfl, int length)
+{
+	if (length == sizeof(struct vpc_fte_list) &&
+		vfl->vfl_count == 0) {
+		vfl->vfl_count = vpc_fte_count(vs);
+		return (0);
+	}
+	if (length != (sizeof(struct vpc_fte_list) +
+				   vfl->vfl_count*sizeof(struct vpc_fte)))
+		return (EINVAL);
+
+
+	/* XXX implement me */
+	return (EOPNOTSUPP);
+}
+
+static int
 vpc_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 {
 	struct vpc_softc *vs = iflib_get_softc(ctx);
@@ -656,26 +715,41 @@ vpc_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 
 	if ((rc = priv_check(curthread, PRIV_DRIVER)) != 0)
 		return (rc);
+	if (ioh->vih_type != VPC_FTE_ALL &&
+		IOCPARM_LEN(ioh->vih_type) != ifbuf->length) {
+		printf("IOCPARM_LEN: %d ifbuf->length: %d\n",
+			   (int)IOCPARM_LEN(ioh->vih_type), (int)ifbuf->length);
+			   return (EINVAL);
+	}
 #ifdef notyet
 	/* need sx lock for iflib context */
 	iod = malloc(ifbuf->length, M_VPC, M_WAITOK | M_ZERO);
 #endif
 	iod = malloc(ifbuf->length, M_VPC, M_NOWAIT | M_ZERO);
-	copyin(ioh, iod, ifbuf->length);
-
+	if (iod == NULL)
+		return (ENOMEM);
+	rc = copyin(ioh, iod, ifbuf->length);
+	if (rc) {
+		free(iod, M_VPC);
+		return (rc);
+	}
 	switch (ioh->vih_type) {
 		case VPC_LISTEN:
 			rc = vpc_set_listen(vs, (struct vpc_listen *)iod);
 			break;
-#ifdef notyet
-		case VPC_VNI_ADD:
-		case VPC_VNI_DEL:
-		case VPC_VNI_ALL:
-		case VPC_FTE_ADD:
-		case VPC_FTE_DEL:
-		case VPC_FTE_ALL:
+		case VPC_FTE_SET:
+			rc = vpc_fte_update(vs, (struct vpc_fte_update *)iod, true);
 			break;
-#endif
+		case VPC_FTE_DEL:
+			rc = vpc_fte_update(vs, (struct vpc_fte_update *)iod, false);
+			break;
+		case VPC_FTE_ALL:
+			if (ifbuf->length < sizeof(struct vpc_fte_list))
+				return (EINVAL);
+			rc = vpc_fte_list(vs, (struct vpc_fte_list *)iod, ifbuf->length);
+			if (!rc)
+				rc = copyout(iod, ioh, ifbuf->length);
+			break;
 		default:
 			rc = ENOIOCTL;
 			break;
