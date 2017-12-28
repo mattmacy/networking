@@ -4429,6 +4429,14 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
 		return (err);
 	}
+	if (sctx->isc_flags & IFLIB_PSEUDO) {
+		*ctxp = ctx;
+
+		if_setgetcounterfn(ctx->ifc_ifp, iflib_if_get_counter);
+		iflib_add_device_sysctl_post(ctx);
+		ctx->ifc_flags |= IFC_INIT_DONE;
+		return (0);
+	}
 	_iflib_pre_assert(scctx);
 	ctx->ifc_txrx = *scctx->isc_txrx;
 
