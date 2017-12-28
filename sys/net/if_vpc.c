@@ -663,7 +663,8 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 		art_insert(&vs->vs_vxftable, (caddr_t)&vfte->vf_vni, ftable);
 	}
 	if (add == false) {
-		art_delete(&ftable->vf_ftable, (caddr_t)&addr);
+		mac = art_delete(&ftable->vf_ftable, (caddr_t)&addr);
+		free(mac, M_VPC);
 		if (art_size(&ftable->vf_ftable) == 0) {
 			art_delete(&vs->vs_vxftable, (caddr_t)&vfte->vf_vni);
 			free(ftable, M_VPC);
