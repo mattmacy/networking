@@ -151,11 +151,12 @@ vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 	if_softc_ctx_t scctx;
 
 	atomic_add_int(&clone_count, 1);
+	vs->vs_ctx = ctx;
+
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	scctx->isc_capenable = VPCI_CAPS;
 	vpci_gen_mac(vs);
 	iflib_set_mac(ctx, vs->vs_mac);
-	vs->vs_ctx = ctx;
 	return (0);
 }
 
