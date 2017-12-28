@@ -122,11 +122,20 @@ struct vf_entry {
 };
 
 extern int mp_ncpus;
+static int vpc_ifindex_target;
+static bool exiting = false;
 static struct ifp_cache *vpc_ic;
 static struct grouptask vpc_ifp_task;
+static struct sx vpc_lock;
+SX_SYSINIT(vpc, &vpc_lock, "VPC global");
+
+#define VPC_LOCK() sx_xlock(&vpc_lock)
+#define VPC_UNLOCK() sx_xunlock(&vpc_lock)
+
 
 DPCPU_DEFINE(struct egress_cache *, hdr_cache);
 DPCPU_DEFINE(ck_epoch_record_t *, vpc_epoch_record);
+ck_epoch_record_t vpc_global_record;
 
 /*
  * ifconfig ixl0 alias 10.1.3.4
@@ -185,30 +194,44 @@ hdrcmp(uint16_t *lhs, uint16_t *rhs)
 }
 
 static void
-_task_fn_ifp_update(void *context)
+_task_fn_ifp_update(void *context __unused)
 {
-	struct vpc_softc *vs = context;
 	struct ifnet **ifps, **ifps_orig;
-	int i, max;
+	int i, max, count;
 
-	if (vs->vs_ifindex_target > vs->vs_ic->ic_ifindex_max) {
+	if (vpc_ifindex_target > vpc_ic->ic_ifindex_max) {
 		/* grow and replace after wait */
 	}
-	max = vs->vs_ic->ic_ifindex_max;
+	max = vpc_ic->ic_ifindex_max;
 	ifps = malloc(sizeof(ifps)*max, M_VPC, M_WAITOK|M_ZERO);
-	ifps_orig = vs->vs_ic->ic_ifps;
-	for (i = 0; i < max; i++) {
+	ifps_orig = vpc_ic->ic_ifps;
+	for (count = i = 0; i < max; i++) {
 		if (ifps_orig[i] == NULL)
 			continue;
 		if (!(ifps_orig[i]->if_flags & IFF_DYING))
 			continue;
 		ifps[i] = ifps_orig[i];
 		ifps_orig[i] = NULL;
+		count++;
 	}
-	ck_epoch_synchronize(&vs->vs_record);
-	for (i = 0; i < max; i++)
-		if_free(ifps[i]);
+	if (count == 0)
+		goto done;
+	ck_epoch_synchronize(&vpc_global_record);
+	for (i = 0; i < max && count; i++){
+		if (ifps[i] == NULL)
+			continue;
+		if_rele(ifps[i]);
+		count--;
+	}
+ done:
 	free(ifps, M_VPC);
+	if (__predict_false(exiting)) {
+		VPC_LOCK();
+		free(vpc_ic, M_VPC);
+		vpc_ic = NULL;
+		wakeup(&exiting);
+		VPC_UNLOCK();
+	}
 }
 
 static struct vpc_ftable *
@@ -690,7 +713,10 @@ vpc_module_init(void)
 	int i, ec_size, er_size;
 
 	vpc_pseudo = iflib_clone_register(vpc_sctx);
-
+	if (vpc_pseudo == NULL)
+		return (ENXIO);
+	ck_epoch_init(&vpc_epoch);
+	ck_epoch_register(&vpc_epoch, &vpc_global_record, NULL);
 	iflib_config_gtask_init(NULL, &vpc_ifp_task, _task_fn_ifp_update, "ifp update");
 
 	/* DPCPU hdr_cache init */
@@ -715,8 +741,26 @@ vpc_module_init(void)
 		erp = (ck_epoch_record_t *)(((caddr_t)erp) + er_size);
 	}
 
-	return (vpc_pseudo != NULL);
+	return (0);
 }
+
+static void
+vpc_module_deinit(void)
+{
+	struct egress_cache *ecp;
+	ck_epoch_record_t *erp;
+
+	exiting = true;
+	VPC_LOCK();
+	GROUPTASK_ENQUEUE(&vpc_ifp_task);
+	sx_sleep(&exiting, &vpc_lock, PDROP, "vpc exiting", 0);
+	ecp = DPCPU_ID_GET(0, hdr_cache);
+	erp = DPCPU_ID_GET(0, vpc_epoch_record);
+	free(ecp, M_VPC);
+	free(erp, M_VPC);
+	iflib_clone_deregister(vpc_pseudo);
+}
+
 
 static int
 vpc_module_event_handler(module_t mod, int what, void *arg)
@@ -730,7 +774,7 @@ vpc_module_event_handler(module_t mod, int what, void *arg)
 			break;
 		case MOD_UNLOAD:
 			if (clone_count == 0)
-				iflib_clone_deregister(vpc_pseudo);
+				vpc_module_deinit();
 			else
 				return (EBUSY);
 			break;
