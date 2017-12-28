@@ -667,6 +667,15 @@ vpc_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 		case VPC_LISTEN:
 			rc = vpc_set_listen(vs, (struct vpc_listen *)iod);
 			break;
+#ifdef notyet
+		case VPC_VNI_ADD:
+		case VPC_VNI_DEL:
+		case VPC_VNI_ALL:
+		case VPC_FTE_ADD:
+		case VPC_FTE_DEL:
+		case VPC_FTE_ALL:
+			break;
+#endif
 		default:
 			rc = ENOIOCTL;
 			break;
