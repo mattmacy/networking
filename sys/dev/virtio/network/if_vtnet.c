@@ -59,6 +59,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_types.h>
 #include <net/if_media.h>
 #include <net/if_vlan_var.h>
+#include <net/iflib.h>
 
 #include <net/bpf.h>
 
@@ -969,6 +970,7 @@ vtnet_setup_interface(struct vtnet_softc *sc)
 	/* Tell the upper layer(s) we support long frames. */
 	ifp->if_hdrlen = sizeof(struct ether_vlan_header);
 	ifp->if_capabilities |= IFCAP_JUMBO_MTU | IFCAP_VLAN_MTU;
+	ifp->if_capabilities |= IFCAP_VXLANDECAP;
 
 	if (virtio_with_feature(dev, VIRTIO_NET_F_CSUM)) {
 		ifp->if_capabilities |= IFCAP_TXCSUM | IFCAP_TXCSUM_IPV6;
@@ -1080,6 +1082,12 @@ vtnet_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	error = 0;
 
 	switch (cmd) {
+	case SIOCSIFVXLANPORT:
+		VTNET_CORE_LOCK(sc);
+		ifp->if_capenable |= IFCAP_VXLANDECAP;
+		sc->vtnet_vxlan_port = ifr->ifr_index;
+		VTNET_CORE_UNLOCK(sc);
+		break;
 	case SIOCSIFMTU:
 		if (ifp->if_mtu != ifr->ifr_mtu) {
 			VTNET_CORE_LOCK(sc);
@@ -1087,7 +1095,6 @@ vtnet_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			VTNET_CORE_UNLOCK(sc);
 		}
 		break;
-
 	case SIOCSIFFLAGS:
 		VTNET_CORE_LOCK(sc);
 		if ((ifp->if_flags & IFF_UP) == 0) {
@@ -1707,9 +1714,12 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 	struct vtnet_softc *sc;
 	struct ifnet *ifp;
 	struct ether_header *eh;
+	int vxlan_enabled, vxlan_port;
 
 	sc = rxq->vtnrx_sc;
 	ifp = sc->vtnet_ifp;
+	vxlan_enabled = !!(ifp->if_capenable & IFCAP_VXLANDECAP);
+	vxlan_port = sc->vtnet_vxlan_port;
 
 	if (ifp->if_capenable & IFCAP_VLAN_HWTAGGING) {
 		eh = mtod(m, struct ether_header *);
@@ -1744,6 +1754,10 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 	rxq->vtnrx_stats.vrxs_ibytes += m->m_pkthdr.len;
 
 	VTNET_RXQ_UNLOCK(rxq);
+	if (vxlan_enabled && iflib_vxlan_decap(m, vxlan_port, false)) {
+		VTNET_RXQ_LOCK(rxq);
+		return;
+	}
 	(*ifp->if_input)(ifp, m);
 	VTNET_RXQ_LOCK(rxq);
 }
