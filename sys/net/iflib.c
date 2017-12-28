@@ -747,7 +747,6 @@ static void iflib_ifmp_purge(iflib_txq_t txq);
 static void _iflib_pre_assert(if_softc_ctx_t scctx);
 static void iflib_stop(if_ctx_t ctx);
 static void iflib_if_init_locked(if_ctx_t ctx);
-static int iflib_vxlan_decap(if_ctx_t ctx, struct mbuf *m);
 #ifndef __NO_STRICT_ALIGNMENT
 static struct mbuf * iflib_fixup_rx(struct mbuf *m);
 #endif
@@ -2727,10 +2726,9 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		rx_bytes += m->m_pkthdr.len;
 		rx_pkts++;
 #if defined(INET6) || defined(INET)
-		if (vxlan_enabled) {
-			if (iflib_vxlan_decap(ctx, m))
+		if (vxlan_enabled && iflib_vxlan_decap(m, ctx->ifc_vxlan_port,
+											   !!(ctx->ifc_if_flags & IFF_PROMISC)))
 				continue; /* not a valid VNI/DMAC */
-		}
 		if (lro_enabled) {
 			if (!lro_possible) {
 				lro_possible = iflib_check_lro_possible(m, v4_forwarding, v6_forwarding);
@@ -6644,69 +6642,9 @@ iflib_clone_deregister(if_pseudo_t ip)
 
 #if defined(INET6) || defined(INET)
 
-#ifdef notyet
-#define VE_COLLISION 0x1 /* check in the overflow table */
-struct vx_ro_entry {
-	uint32_t ve_flags:8;
-	uint32_t ve_id:24;
-	uint8_t ve_mac[ETHER_ADDR_LEN];
-} __packed;
 
-struct vx_config_entry {
-	int vce_ts; /* insertion time in ticks */
-	uint32_t vce_vxlanid;
-	uint64_t vce_mac;
-	TAILQ_ENTRY(vx_config_entry) vce_link;
-}
-
-struct vx_lut {
-	struct vx_ro_entry *vl_ro_table;
-	struct vx_config_entry *vl_config_table;
-}
-
-static __inline void
-u64tomac(uint64_t smac, uint8_t *dmac)
-{
-	uint16_t *src, *dst;
-
-	dst = (uint16_t *)(uintptr_t)dmac;
-	src = (uint16_t *)&smac;
-	dst[0] = src[0];
-	dst[1] = src[1];
-	dst[2] = src[2];
-}
-#endif
-
-typedef struct vxlan_tables {
-	art_tree *vt_ipv4_rt;
-	art_tree *vt_ipv4_rt_ro;
-	art_tree *vt_ipv6_rt;
-	art_tree *vt_ipv6_rt_ro;
-	art_tree *vt_vxl;
-	art_tree *vt_vxl_ro;
-} *vxtbl_t;
 
 #ifdef notyet
-static int
-arp_insert(vxtbl_t t, uint8_t *pa, uint8_t *ha)
-{
-	return (0);
-}
-
-static void
-arp_delete(vxtbl_t t, uint8_t *pa)
-{
-
-}
-
-static uint32_t
-arp_lookup(vxtbl_t t, uint8_t *pa)
-{
-	return (0);
-}
-#endif
-
-
 static __inline uint64_t
 mactou64(uint8_t *mac)
 {
@@ -6732,9 +6670,10 @@ iflib_vxlan_validate(if_ctx_t ctx, int vxlanid, struct ether_vlan_header *eh)
 	/* check that both dest and source ether headers are part of vxlanid */
 	return (0);
 }
+#endif
 
-static int
-iflib_vxlan_decap(if_ctx_t ctx, struct mbuf *m)
+int
+iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool promisc)
 {
 	struct ether_vlan_header *eh;
 	struct udphdr *uh;
@@ -6770,14 +6709,14 @@ iflib_vxlan_decap(if_ctx_t ctx, struct mbuf *m)
 		return (0);
 	}
 	/* XXX - multiple ports? */
-	if (uh->uh_dport != ctx->ifc_vxlan_port)
+	if (uh->uh_dport != vxlan_port)
 		return (0);
 	/*
 	 * we assume that the packet ended up at the right place
 	 * if it passed the MAC filter
 	 */
 #ifdef notyet
-	if (ctx->ifc_if_flags & IFF_PROMISC) {
+	if (promisc) {
 		/* check against our MAC address manually */
 	} else
 #endif
@@ -6789,10 +6728,14 @@ iflib_vxlan_decap(if_ctx_t ctx, struct mbuf *m)
 	vh = (struct vxlan_header *)(uh + 1);
 	vxlanid = vh->vxlh_vni;
 	eh = (struct ether_vlan_header *)(vh + 1);
+#ifdef notyet
 	if (!iflib_vxlan_validate(ctx, vxlanid, eh)) {
 		m_freem(m);
 		return (EINVAL);
 	}
+#endif
+	m->m_flags |= M_VXLANTAG;
+	m->m_pkthdr.vxlanid = vxlanid;
 	m->m_data += len;
 	m->m_len -= len;
 	m->m_pkthdr.len -= len;
