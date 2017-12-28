@@ -155,6 +155,8 @@ vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	scctx->isc_capenable = VPCI_CAPS;
+	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
+		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	vpci_gen_mac(vs);
 	iflib_set_mac(ctx, vs->vs_mac);
 	return (0);
