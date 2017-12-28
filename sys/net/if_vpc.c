@@ -80,6 +80,17 @@ __FBSDID("$FreeBSD$");
 
 static ck_epoch_t vpc_epoch;
 
+#ifdef notyet
+typedef struct vxlan_tables {
+	art_tree *vt_ipv4_rt;
+	art_tree *vt_ipv4_rt_ro;
+	art_tree *vt_ipv6_rt;
+	art_tree *vt_ipv6_rt_ro;
+	art_tree *vt_vxl;
+	art_tree *vt_vxl_ro;
+} *vxtbl_t;
+#endif
+
 struct vxlanhdr {
     uint32_t reserved0:4;
     uint32_t v_i:1;

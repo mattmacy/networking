@@ -318,7 +318,7 @@ vpci_module_init(void)
 {
 	vpci_pseudo = iflib_clone_register(vpci_sctx);
 
-	return (vpci_pseudo != NULL);
+	return vpci_pseudo != NULL ? 0 : ENXIO;
 }
 
 static int
