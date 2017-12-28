@@ -82,6 +82,8 @@ struct vpci_softc {
 	uint8_t vs_mac[ETHER_ADDR_LEN];
 };
 
+static int clone_count;
+
 static int
 vpci_transmit(if_t ifp, struct mbuf *m)
 {
@@ -148,6 +150,7 @@ vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 	struct vpci_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
+	atomic_add_int(&clone_count, 1);
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	scctx->isc_capenable = VPCI_CAPS;
 	vpci_gen_mac(vs);
@@ -172,6 +175,7 @@ vpci_attach_post(if_ctx_t ctx)
 static int
 vpci_detach(if_ctx_t ctx)
 {
+	atomic_add_int(&clone_count, -1);
 	return (0);
 }
 
@@ -332,6 +336,12 @@ vpci_module_init(void)
 	return vpci_pseudo != NULL ? 0 : ENXIO;
 }
 
+static void
+vpci_module_deinit(void)
+{
+	iflib_clone_deregister(vpci_pseudo);
+}
+
 static int
 vpci_module_event_handler(module_t mod, int what, void *arg)
 {
@@ -343,7 +353,10 @@ vpci_module_event_handler(module_t mod, int what, void *arg)
 			return (err);
 		break;
 	case MOD_UNLOAD:
-		return (EBUSY);
+		if (clone_count == 0)
+			vpci_module_deinit();
+		else
+			return (EBUSY);
 	default:
 		return (EOPNOTSUPP);
 	}
