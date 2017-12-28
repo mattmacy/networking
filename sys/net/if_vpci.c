@@ -98,18 +98,6 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 	return (parent->if_transmit(parent, m));
 }
 
-static int
-vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
-{
-	struct vpci_softc *vs = iflib_get_softc(ctx);
-	if_softc_ctx_t scctx;
-
-
-	scctx = vs->shared = iflib_get_softc_ctx(ctx);
-	vs->vs_ctx = ctx;
-	return (0);
-}
-
 static void
 vpci_gen_mac(struct vpci_softc *vs)
 {
@@ -143,6 +131,31 @@ vpci_gen_mac(struct vpci_softc *vs)
 	vs->vs_mac[5] = digest[2];
 }
 
+#ifdef notyet
+#define VPCI_CAPS														\
+	IFCAP_TSO4 | IFCAP_TSO6 | IFCAP_TXCSUM | IFCAP_RXCSUM | IFCAP_VLAN_HWFILTER | IFCAP_WOL_MAGIC | \
+	IFCAP_WOL_MCAST | IFCAP_WOL | IFCAP_VLAN_HWTSO | IFCAP_HWCSUM | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM | \
+	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU
+#endif
+
+#define VPCI_CAPS														\
+	IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
+	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU
+
+static int
+vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
+{
+	struct vpci_softc *vs = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx;
+
+	scctx = vs->shared = iflib_get_softc_ctx(ctx);
+	scctx->isc_capenable = VPCI_CAPS;
+	vpci_gen_mac(vs);
+	iflib_set_mac(ctx, vs->vs_mac);
+	vs->vs_ctx = ctx;
+	return (0);
+}
+
 static int
 vpci_attach_post(if_ctx_t ctx)
 {
@@ -153,8 +166,6 @@ vpci_attach_post(if_ctx_t ctx)
 	vs = iflib_get_softc(ctx);
 	
 	ifp->if_transmit = vpci_transmit;
-	vpci_gen_mac(vs);
-	iflib_set_mac(ctx, vs->vs_mac);
 	return (0);
 }
 
