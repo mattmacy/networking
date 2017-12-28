@@ -351,6 +351,15 @@ typedef enum {
  * Don't reset on hang
  */
 #define IFLIB_NO_HANG_RESET	0x0800
+/*
+ * Don't need/want most of the niceties of
+ * queue management
+ */
+#define IFLIB_PSEUDO	0x1000
+/*
+ * No DMA support needed / wanted
+ */
+#define IFLIB_VIRTUAL	0x2000
 
 /*
  * field accessors

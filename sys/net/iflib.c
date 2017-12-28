@@ -4616,7 +4616,9 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 
 	ctx = malloc(sizeof(*ctx), M_IFLIB, M_WAITOK|M_ZERO);
 	sc = malloc(sctx->isc_driver->size, M_IFLIB, M_WAITOK|M_ZERO);
-	ctx->ifc_flags |= IFC_SC_ALLOCATED|IFC_PSEUDO;
+	ctx->ifc_flags |= IFC_SC_ALLOCATED;
+	if (sctx->isc_flags & (IFLIB_PSEUDO|IFLIB_VIRTUAL))
+		ctx->ifc_flags |= IFC_PSEUDO;
 
 	ctx->ifc_sctx = sctx;
 	ctx->ifc_softc = sc;
@@ -5115,7 +5117,8 @@ iflib_register(if_ctx_t ctx)
 	device_t dev = ctx->ifc_dev;
 	if_t ifp;
 
-	_iflib_assert(sctx);
+	if (!(sctx->isc_flags & IFLIB_PSEUDO))
+		_iflib_assert(sctx);
 
 	CTX_LOCK_INIT(ctx, device_get_nameunit(ctx->ifc_dev));
 
