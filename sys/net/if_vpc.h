@@ -12,8 +12,33 @@ struct vpc_listen {
 	uint16_t vl_port;
 };
 
-#define VPC_LISTEN									\
+
+struct vpc_fte {
+	uint32_t vf_vni;
+	uint8_t vf_hwaddr[ETHER_ADDR_LEN];
+	struct sockaddr vf_protoaddr;
+};
+
+struct vpc_fte_update {
+	struct vpc_ioctl_header vfu_vih;
+	struct vpc_fte vfu_vfte;
+};
+
+struct vpc_fte_list {
+	struct vpc_ioctl_header vfl_vih;
+	uint32_t vfl_count;
+	struct vpc_fte vfl_vftes[0];
+};
+
+#define VPC_LISTEN								\
 	_IOW('k', 1, struct vpc_listen)
+#define VPC_FTE_SET								\
+	_IOW('k', 2, struct vpc_fte_update)
+#define VPC_FTE_DEL								\
+	_IOW('k', 3, struct vpc_fte_update)
+#define VPC_FTE_ALL								\
+	_IOWR('k', 4, struct vpc_fte_list)
+
 
 struct vpci_attach {
 	struct vpc_ioctl_header vl_vih;
