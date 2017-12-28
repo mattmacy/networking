@@ -4692,6 +4692,12 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 		return (err);
 	}
 	if (sctx->isc_flags & IFLIB_PSEUDO) {
+		ether_ifattach(ctx->ifc_ifp, ctx->ifc_mac);
+
+		if ((err = IFDI_ATTACH_POST(ctx)) != 0) {
+			device_printf(dev, "IFDI_ATTACH_POST failed %d\n", err);
+			goto fail_detach;
+		}
 		*ctxp = ctx;
 
 		if_setgetcounterfn(ctx->ifc_ifp, iflib_if_get_counter);
