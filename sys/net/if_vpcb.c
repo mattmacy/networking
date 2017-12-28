@@ -176,12 +176,17 @@ vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	/* need sx lock for iflib context */
 	iod = malloc(ifbuf->length, M_VPCB, M_WAITOK | M_ZERO);
 #endif
+	if (IOCPARM_LEN(ioh->vih_type) != ifbuf->length) {
+		printf("IOCPARM_LEN: %d ifbuf->length: %d\n",
+			   (int)IOCPARM_LEN(ioh->vih_type), (int)ifbuf->length);
+		return (EINVAL);
+	}
 	iod = malloc(ifbuf->length, M_VPCB, M_NOWAIT | M_ZERO);
 	if (iod == NULL)
 		return (ENOMEM);
 	rc = copyin(ioh, iod, ifbuf->length);
 	if (rc) {
-		free(iod, M_VPC);
+		free(iod, M_VPCB);
 		return (rc);
 	}
 	switch (ioh->vih_type) {
