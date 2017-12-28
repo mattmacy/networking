@@ -304,7 +304,7 @@ static struct if_shared_ctx vpci_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
 	.isc_driver_version = vpci_driver_version,
 	.isc_driver = &vpci_iflib_driver,
-	.isc_flags = 0,
+	.isc_flags = IFLIB_PSEUDO,
 	.isc_name = "vpci",
 };
 

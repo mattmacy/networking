@@ -221,7 +221,7 @@ static struct if_shared_ctx vpcb_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
 	.isc_driver_version = vpcb_driver_version,
 	.isc_driver = &vpcb_iflib_driver,
-	.isc_flags = 0,
+	.isc_flags = IFLIB_PSEUDO,
 	.isc_name = "vpcb",
 };
 
