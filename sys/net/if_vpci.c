@@ -245,8 +245,13 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	iod = malloc(ifbuf->length, M_VPCI, M_WAITOK | M_ZERO);
 #endif
 	iod = malloc(ifbuf->length, M_VPCI, M_NOWAIT | M_ZERO);
-	copyin(ioh, iod, ifbuf->length);
-
+	if (iod == NULL)
+		return (ENOMEM);
+	rc = copyin(ioh, iod, ifbuf->length);
+	if (rc) {
+		free(iod, M_VPC);
+		return (rc);
+	}
 	switch (ioh->vih_type) {
 		case VPCI_ATTACH:
 			rc = vpci_set_ifparent(vs, (struct vpci_attach *)iod);
