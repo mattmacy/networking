@@ -313,6 +313,7 @@ vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header 
 	if (ifp->if_flags & IFF_DYING) {
 		ecp->ec_ticks = 0;
 		GROUPTASK_ENQUEUE(&vpc_ifp_task);
+		goto skip;
 	}
 	/*
 	 * dmac & vxlanid match
