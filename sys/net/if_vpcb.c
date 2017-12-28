@@ -177,8 +177,13 @@ vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	iod = malloc(ifbuf->length, M_VPCB, M_WAITOK | M_ZERO);
 #endif
 	iod = malloc(ifbuf->length, M_VPCB, M_NOWAIT | M_ZERO);
-	copyin(ioh, iod, ifbuf->length);
-
+	if (iod == NULL)
+		return (ENOMEM);
+	rc = copyin(ioh, iod, ifbuf->length);
+	if (rc) {
+		free(iod, M_VPC);
+		return (rc);
+	}
 	switch (ioh->vih_type) {
 		case VPCB_RESOLVER:
 			rc = vpcb_set_resolver(vs, (struct vpcb_resolver *)iod);
