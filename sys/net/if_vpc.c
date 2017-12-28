@@ -790,7 +790,7 @@ static struct if_shared_ctx vpc_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
 	.isc_driver_version = vpc_driver_version,
 	.isc_driver = &vpc_iflib_driver,
-	.isc_flags = 0,
+	.isc_flags = IFLIB_PSEUDO,
 	.isc_name = "vpc",
 };
 
