@@ -405,12 +405,12 @@ vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
 	return (0);
 }
 
-static struct mbuf *
-vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
+static int
+vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 {
 	struct ether_vlan_header *evh, *evhvx;
 	struct vxlan_header *vh;
-	struct mbuf *mh;
+	struct mbuf *mh, *m;
 	struct vpc_ftable *vf;
 	struct sockaddr *dst;
 	struct route ro;
@@ -418,10 +418,11 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	struct ifnet *ifp;
 	int rc;
 
+	m = *mp;
 	mh = m_gethdr(M_NOWAIT, MT_NOINIT);
 	if (__predict_false(mh == NULL)) {
 		m_freem(m);
-		return (NULL);
+		return (ENOMEM);
 	}
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
@@ -437,36 +438,48 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 	m->m_nextpkt = NULL;
 	m->m_flags &= ~(M_PKTHDR|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
 
-	if (__predict_true(vpc_cache_lookup(vs, mh, evhvx)))
-		return (mh);
-
+	if (__predict_true(vpc_cache_lookup(vs, mh, evhvx))) {
+		*mp = mh;
+		return (0);
+	}
 	/* lookup MAC->IP forwarding table */
 	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
-	if (__predict_false(vf == NULL))
-		return (NULL);
-
+	if (__predict_false(vf == NULL)) {
+		printf("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
+		m_freem(m);
+		return (ENOENT);
+	}
 	dst = &ro.ro_dst;
 	/*   lookup IP using encapsulated dmac */
 	rc = vpc_ftable_lookup(vf, evhvx, dst);
-	if (__predict_false(rc))
-		return (NULL);
+	if (__predict_false(rc)) {
+		printf("no forwarding entry for dmac\n");
+		m_freem(m);
+		return (rc);
+	}
 	/* lookup route to find interface */
 	rt = rtalloc1_fib(dst, 0, 0, vs->vs_fibnum);
-	if (__predict_false(rt == NULL))
-		return (NULL);
+	if (__predict_false(rt == NULL)) {
+		printf("no routing entry\n");
+		m_freem(m);
+		return (ENETUNREACH);
+	}
 	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
 						(rt->rt_ifp == NULL) ||
 						!RT_LINK_IS_UP(rt->rt_ifp))) {
 		RTFREE_LOCKED(rt);
-		return (NULL);
+		printf("route is invalid\n");
+		m_freem(m);
+		return (ENETUNREACH);
 	}
 	ifp = rt->rt_ifp;
 	rc = vpc_ifp_cache(vs, ifp);
 	RTFREE_LOCKED(rt);
 
-	if (__predict_false(rc))
-		return (NULL);
-
+	if (__predict_false(rc)) {
+		printf("failed to cache interface reference\n");
+		return (EDOOFUS);
+	}
 	/* get dmac */
 	switch(dst->sa_family) {
 		case AF_INET:
@@ -480,27 +493,32 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf *m)
 		default:
 			rc = EOPNOTSUPP;
 	}
-	if (__predict_false(rc))
-		return (NULL);
+	if (__predict_false(rc)) {
+		printf("L2 resolution failed\n");
+		return (rc);
+	}
 	mh->m_pkthdr.rcvif = ifp;
 	vpc_vxlanhdr_init(vf, vh, dst, ifp, m);
 	vpc_cache_update(mh, evhvx, ifp->if_index);
-	return (mh);
+	*mp = mh;
+	return (0);
 }
 
-static struct mbuf *
-vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m, bool *can_batch)
+static int
+vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf **mp, bool *can_batch)
 {
-	struct mbuf *mh, *mt, *mnext;
+	struct mbuf *mh, *mt, *mnext, *m;
 	struct ifnet *ifp;
+	int rc;
 
 	mh = mt = NULL;
 	*can_batch = true;
+	m = *mp;
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		m = vpc_vxlan_encap(vs, m);
-		if (m == NULL)
+		rc = vpc_vxlan_encap(vs, &m);
+		if (rc)
 			break;
 		if (mh != NULL) {
 			if (ifp != m->m_pkthdr.rcvif)
@@ -515,7 +533,8 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf *m, bool *can_batch)
 	} while (m != NULL);
 	if (__predict_false(mnext != NULL))
 		m_freechain(mnext);
-	return (mh);
+	*mp = mh;
+	return (rc);
 }
 
 static int
@@ -535,11 +554,9 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	ck_epoch_begin(DPCPU_GET(vpc_epoch_record), NULL);
 	_critical_exit();
 
-	m = vpc_vxlan_encap_chain(vs, m, &can_batch);
-	if (__predict_false(m == NULL)) {
-		lasterr = ENXIO;
+	lasterr = vpc_vxlan_encap_chain(vs, &m, &can_batch);
+	if (__predict_false(lasterr))
 		goto done;
-	}
 	ifp = m->m_pkthdr.rcvif;
 	if (__predict_true((ifp->if_capabilities & IFCAP_TXBATCH) && can_batch)) {
 		lasterr = ifp->if_transmit(ifp, m);
