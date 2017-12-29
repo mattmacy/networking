@@ -175,8 +175,6 @@ struct vpc_softc {
 	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
 	uint16_t vs_fibnum;
-	uint16_t vs_ifindex_target;
-	struct ifp_cache *vs_ic;
 	art_tree vs_vxftable; /* vxlanid -> ftable */
 	ck_epoch_record_t vs_record;
 };
@@ -339,7 +337,7 @@ vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header 
 		ecp->ec_ticks = 0;
 		goto skip;
 	}
-	ifp = vs->vs_ic->ic_ifps[ecp->ec_ifindex];
+	ifp = vpc_ic->ic_ifps[ecp->ec_ifindex];
 	if (ifp == NULL) {
 		ecp->ec_ticks = 0;
 		goto skip;
@@ -387,24 +385,23 @@ vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex
 static int
 vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
 {
-	struct ifnet **ifps;
+	struct ifp_cache *newcache;
 
-	ifps = vs->vs_ic->ic_ifps;
-	if (__predict_false(vs->vs_ic->ic_ifindex_max < ifp->if_index)) {
-		ifps = realloc(ifps, sizeof(ifp)*ifp->if_index, M_VPC, M_NOWAIT);
-		if (ifps != NULL)
-			vs->vs_ic->ic_ifindex_max = ifp->if_index;
+	if (__predict_false(vpc_ic->ic_ifindex_max < ifp->if_index)) {
+		newcache = realloc(vpc_ic, sizeof(ifp)*ifp->if_index+1, M_VPC, M_NOWAIT);
+		if (newcache == NULL) {
+			GROUPTASK_ENQUEUE(&vpc_ifp_task);
+			return (1);
+		}
+		vpc_ic->ic_ifindex_max = ifp->if_index+1;
 	}
-
-	if (__predict_false(ifps == NULL)) {
-		vs->vs_ifindex_target = roundup(ifp->if_index, 512);
-		GROUPTASK_ENQUEUE(&vpc_ifp_task);
-		return (1);
-	}
-	if (ifps[ifp->if_index] == ifp)
+	if (vpc_ic->ic_ifps[ifp->if_index] == ifp)
 		return (0);
+
+	/* XXX -- race if reference twice  -- need to actually serialize with VPC_LOCK */
+	MPASS(vpc_ic->ic_ifps[ifp->if_index] == NULL);
 	if_ref(ifp);
-	ifps[ifp->if_index] = ifp;
+	vpc_ic->ic_ifps[ifp->if_index] = ifp;
 	return (0);
 }
 
@@ -597,9 +594,33 @@ vpc_attach_post(if_ctx_t ctx)
 	return (0);
 }
 
+
+static int
+vpc_ftable_free_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	free(value, M_VPC);
+	return (0);
+}
+
+static int
+vpc_vxftable_free_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct vpc_ftable *ftable = value;
+
+	art_iter(&ftable->vf_ftable, vpc_ftable_free_callback, NULL);
+	free(value, M_VPC);
+	return (0);
+}
+
+
 static int
 vpc_detach(if_ctx_t ctx)
 {
+	struct vpc_softc *vs = iflib_get_softc(ctx);
+
+	ck_epoch_unregister(&vs->vs_record);
+	art_iter(&vs->vs_vxftable, vpc_vxftable_free_callback, NULL);
+
 	atomic_add_int(&clone_count, -1);
 	return (0);
 }
