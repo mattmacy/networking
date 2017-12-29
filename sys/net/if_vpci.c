@@ -41,9 +41,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/priv.h>
 #include <sys/mutex.h>
 #include <sys/module.h>
-#include <sys/jail.h>
-#include <sys/md5.h>
-#include <sys/proc.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
@@ -79,9 +76,7 @@ struct vpci_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	struct ifnet *vs_ifparent;
-	struct ifmedia	*vs_media;
 	uint32_t vs_vni;
-	uint8_t vs_mac[ETHER_ADDR_LEN];
 };
 
 static int clone_count;
@@ -100,39 +95,6 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 	m->m_flags |= M_VXLANTAG;
 	m->m_pkthdr.vxlanid = vs->vs_vni;
 	return (parent->if_transmit(parent, m));
-}
-
-static void
-vpci_gen_mac(struct vpci_softc *vs)
-{
-	struct thread *td;
-	struct ifnet *ifp;
-	MD5_CTX mdctx;
-	char uuid[HOSTUUIDLEN+1];
-	char buf[HOSTUUIDLEN+16];
-	unsigned char digest[16];
-
-	td = curthread;
-	ifp = iflib_get_ifp(vs->vs_ctx);
-	uuid[HOSTUUIDLEN] = 0;
-	bcopy(td->td_ucred->cr_prison->pr_hostuuid, uuid, HOSTUUIDLEN);
-	snprintf(buf, HOSTUUIDLEN+16, "%s-%d", uuid, ifp->if_index);
-		
-	/*
-	 * Generate a pseudo-random, deterministic MAC
-	 * address based on the UUID and unit number.
-	 * The FreeBSD Foundation OUI of 58-9C-FC is used.
-	 */
-	MD5Init(&mdctx);
-	MD5Update(&mdctx, buf, strlen(buf));
-	MD5Final(digest, &mdctx);
-
-	vs->vs_mac[0] = 0x58;
-	vs->vs_mac[1] = 0x9C;
-	vs->vs_mac[2] = 0xFC;
-	vs->vs_mac[3] = digest[0];
-	vs->vs_mac[4] = digest[1];
-	vs->vs_mac[5] = digest[2];
 }
 
 #ifdef notyet
@@ -159,12 +121,6 @@ vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 	scctx->isc_capenable = VPCI_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
 		| CSUM_IP6_UDP | CSUM_IP6_TCP;
-	vpci_gen_mac(vs);
-	iflib_set_mac(ctx, vs->vs_mac);
-	vs->vs_media = iflib_get_media(ctx);
-	ifmedia_add(vs->vs_media, IFM_ETHER | IFM_1000_T | IFM_FDX, 0, NULL);
-	ifmedia_add(vs->vs_media, IFM_ETHER | IFM_AUTO, 0, NULL);
-	ifmedia_set(vs->vs_media, IFM_ETHER | IFM_AUTO);
 	return (0);
 }
 
@@ -193,24 +149,6 @@ vpci_init(if_ctx_t ctx)
 static void
 vpci_stop(if_ctx_t ctx)
 {
-}
-
-static void
-vpci_media_status(if_ctx_t ctx, struct ifmediareq *ifmr)
-{
-	/* XXX should really query this from the parent interface */
-	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-	ifmr->ifm_active = IFM_ETHER | IFM_1000_T | IFM_FDX;
-}
-
-static int
-vpci_media_change(if_ctx_t ctx)
-{
-	struct ifmedia *ifm = iflib_get_media(ctx);
-
-	if (IFM_TYPE(ifm->ifm_media) != IFM_ETHER)
-		return (EINVAL);
-	return (0);
 }
 
 static int
@@ -326,8 +264,6 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 }
 
 static device_method_t vpci_if_methods[] = {
-	DEVMETHOD(ifdi_media_status, vpci_media_status),
-	DEVMETHOD(ifdi_media_change, vpci_media_change),
 	DEVMETHOD(ifdi_cloneattach, vpci_cloneattach),
 	DEVMETHOD(ifdi_attach_post, vpci_attach_post),
 	DEVMETHOD(ifdi_detach, vpci_detach),
