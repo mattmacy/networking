@@ -565,6 +565,10 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	return (lasterr);
 }
 
+#define VPC_CAPS														\
+	IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
+	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
+
 static int
 vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
@@ -573,7 +577,9 @@ vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 
 	atomic_add_int(&clone_count, 1);
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
-
+	scctx->isc_capenable = VPC_CAPS;
+	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
+		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	/* register vs_record */
 	ck_epoch_register(&vpc_epoch, &vs->vs_record, NULL);
 	vs->vs_ctx = ctx;
