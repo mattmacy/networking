@@ -77,6 +77,8 @@ main(int argc, char **argv)
 				usage(argv[0]);
 		}
 	}
+	if (!listen_ip || !forward_mac || !forward_ip)
+		usage(argv[0]);
 	
 	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP)) < 0) {
 		exit(EX_SOFTWARE);
