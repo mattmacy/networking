@@ -591,6 +591,7 @@ vpc_attach_post(if_ctx_t ctx)
 	ifp = iflib_get_ifp(ctx);
 
 	ifp->if_transmit = vpc_transmit;
+	ifp->if_mtu = ETHERMTU - 50;
 	return (0);
 }
 
@@ -708,11 +709,29 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 	}
 	return (0);
 }
+static int
+vpc_ftable_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	uint32_t *count = data;
+	(*count)++;
+	return (0);
+}
 
+static int
+vpc_vxftable_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct vpc_ftable *ftable = value;
+
+	art_iter(&ftable->vf_ftable, vpc_ftable_count_callback, data);
+	return (0);
+}
 static int
 vpc_fte_count(struct vpc_softc *vs)
 {
-	return (0);
+	uint32_t count = 0;
+
+	art_iter(&vs->vs_vxftable, vpc_vxftable_count_callback, &count);
+	return (count);
 }
 
 static int
