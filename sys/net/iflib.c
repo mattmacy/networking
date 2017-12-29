@@ -53,6 +53,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/taskqueue.h>
 #include <sys/limits.h>
 #include <sys/queue.h>
+#include <sys/jail.h>
+#include <sys/md5.h>
+#include <sys/proc.h>
 
 
 #include <net/if.h>
@@ -1252,6 +1255,40 @@ prefetch2cachelines(void *x)
 #define prefetch(x)
 #define prefetch2cachelines(x)
 #endif
+
+static void
+iflib_gen_mac(if_ctx_t ctx)
+{
+	struct thread *td;
+	struct ifnet *ifp;
+	MD5_CTX mdctx;
+	char uuid[HOSTUUIDLEN+1];
+	char buf[HOSTUUIDLEN+16];
+	uint8_t *mac;
+	unsigned char digest[16];
+
+	td = curthread;
+	ifp = ctx->ifc_ifp;
+	mac = ctx->ifc_mac;
+	uuid[HOSTUUIDLEN] = 0;
+	bcopy(td->td_ucred->cr_prison->pr_hostuuid, uuid, HOSTUUIDLEN);
+	snprintf(buf, HOSTUUIDLEN+16, "%s-%d", uuid, device_get_unit(ctx->ifc_dev));
+	/*
+	 * Generate a pseudo-random, deterministic MAC
+	 * address based on the UUID and unit number.
+	 * The FreeBSD Foundation OUI of 58-9C-FC is used.
+	 */
+	MD5Init(&mdctx);
+	MD5Update(&mdctx, buf, strlen(buf));
+	MD5Final(digest, &mdctx);
+
+	mac[0] = 0x58;
+	mac[1] = 0x9C;
+	mac[2] = 0xFC;
+	mac[3] = digest[0];
+	mac[4] = digest[1];
+	mac[5] = digest[2];
+}
 
 static void
 iru_init(if_rxd_update_t iru, iflib_rxq_t rxq, uint8_t flid)
@@ -4686,11 +4723,15 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
 		return (err);
 	}
+	iflib_gen_mac(ctx);
 	if ((err = IFDI_CLONEATTACH(ctx, clctx->cc_ifc, clctx->cc_name,
 								clctx->cc_params)) != 0) {
 		device_printf(dev, "IFDI_CLONEATTACH failed %d\n", err);
 		return (err);
 	}
+	ifmedia_add(&ctx->ifc_media, IFM_ETHER | IFM_1000_T | IFM_FDX, 0, NULL);
+	ifmedia_add(&ctx->ifc_media, IFM_ETHER | IFM_AUTO, 0, NULL);
+	ifmedia_set(&ctx->ifc_media, IFM_ETHER | IFM_AUTO);
 
 #ifdef INVARIANTS
 	MPASS(scctx->isc_capenable);
