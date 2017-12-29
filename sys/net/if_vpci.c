@@ -164,7 +164,7 @@ vpci_set_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
 		if_rele(vs->vs_ifparent);
 		vs->vs_ifparent = ifp;
 	}
-	iflib_get_ifp(vs->vs_ctx)->if_ifp = ifp->if_mtu;
+	iflib_get_ifp(vs->vs_ctx)->if_mtu = ifp->if_mtu;
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(50));
 	return (0);
 }
