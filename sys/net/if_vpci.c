@@ -137,7 +137,12 @@ vpci_attach_post(if_ctx_t ctx)
 static int
 vpci_detach(if_ctx_t ctx)
 {
+	struct vpci_softc *vs = iflib_get_softc(ctx);
+
+	if (vs->vs_ifparent != NULL)
+		if_rele(vs->vs_ifparent);
 	atomic_add_int(&clone_count, -1);
+
 	return (0);
 }
 
