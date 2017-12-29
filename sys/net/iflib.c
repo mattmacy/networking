@@ -1272,7 +1272,7 @@ iflib_gen_mac(if_ctx_t ctx)
 	mac = ctx->ifc_mac;
 	uuid[HOSTUUIDLEN] = 0;
 	bcopy(td->td_ucred->cr_prison->pr_hostuuid, uuid, HOSTUUIDLEN);
-	snprintf(buf, HOSTUUIDLEN+16, "%s-%d", uuid, device_get_unit(ctx->ifc_dev));
+	snprintf(buf, HOSTUUIDLEN+16, "%s-%s", uuid, device_get_nameunit(ctx->ifc_dev));
 	/*
 	 * Generate a pseudo-random, deterministic MAC
 	 * address based on the UUID and unit number.
