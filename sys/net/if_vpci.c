@@ -144,7 +144,7 @@ vpci_gen_mac(struct vpci_softc *vs)
 
 #define VPCI_CAPS														\
 	IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
-	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU
+	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
 
 static int
 vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
@@ -172,11 +172,8 @@ static int
 vpci_attach_post(if_ctx_t ctx)
 {
 	struct ifnet *ifp;
-	struct vpci_softc *vs;
 
 	ifp = iflib_get_ifp(ctx);
-	vs = iflib_get_softc(ctx);
-	
 	ifp->if_transmit = vpci_transmit;
 	return (0);
 }
@@ -202,11 +199,8 @@ static void
 vpci_media_status(if_ctx_t ctx, struct ifmediareq *ifmr)
 {
 	/* XXX should really query this from the parent interface */
-	ifmr->ifm_status = IFM_AVALID;
-	ifmr->ifm_active = IFM_ETHER;
-	ifmr->ifm_status |= IFM_ACTIVE;
-	ifmr->ifm_active |= IFM_1000_T;
-	ifmr->ifm_active |= IFM_FDX;
+	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
+	ifmr->ifm_active = IFM_ETHER | IFM_1000_T | IFM_FDX;
 }
 
 static int
@@ -232,6 +226,7 @@ vpci_set_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
 		if_rele(vs->vs_ifparent);
 		vs->vs_ifparent = ifp;
 	}
+	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(50));
 	return (0);
 }
 
@@ -251,6 +246,7 @@ vpci_clear_ifparent(struct vpci_softc *vs)
 		return;
 	if_rele(vs->vs_ifparent);
 	vs->vs_ifparent = NULL;
+	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, 0);
 }
 
 
