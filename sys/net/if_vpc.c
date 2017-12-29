@@ -649,13 +649,15 @@ vpc_set_listen(struct vpc_softc *vs, struct vpc_listen *vl)
 	struct ifnet *ifp;
 	struct ifreq ifr;
 	struct rtentry *rt;
+	struct sockaddr_in *sin;
 	int rc;
 
 	rc = 0;
-
-	vs->vs_vxlan_port = vl->vl_port;
+	/* v4 only XXX */
+	sin = (struct sockaddr_in *)&vl->vl_addr;
+	vs->vs_vxlan_port = sin->sin_port;
 	bzero(&ro, sizeof(ro));
-	bcopy(&vl->vl_addr, &ro.ro_dst, sizeof(struct sockaddr));
+	bcopy(sin, &ro.ro_dst, sizeof(struct sockaddr));
 	/* lookup route to find interface */
 	in_rtalloc_ign(&ro, 0, vs->vs_fibnum);
 	rt = ro.ro_rt;
