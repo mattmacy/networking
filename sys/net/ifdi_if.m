@@ -120,8 +120,10 @@ CODE {
 	}
 
 	static void
-	null_media_status(if_ctx_t ctx __unused, struct ifmediareq *_ifm __unused)
+	null_media_status(if_ctx_t ctx __unused, struct ifmediareq *ifmr)
 	{
+	    ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
+	    ifmr->ifm_active = IFM_ETHER | IFM_1000_T | IFM_FDX;
 	}
 
 	static int
