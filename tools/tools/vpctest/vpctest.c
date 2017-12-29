@@ -32,9 +32,11 @@
  *  doas ./tools/tools/vpctest/vpctest -l 10.247.1.1 -f 58:9c:fc:e9:b3:8e -i 10.247.1.2 -o 192.168.0.2
  *
  * host1:
- * doas ifconfig vtnet0 alias 10.247.1.2 netmask 0xfffffe00
- * doas ifconfig vpci0 192.168.0.2
- * doas ./tools/tools/vpctest/vpctest -l 10.247.1.2 -f 58:9c:fc:36:59:93 -i 10.247.1.1 -o 192.168.0.1
+ *  doas ifconfig vpci create
+ *  doas ifconfig vpc create
+ *  doas ifconfig vtnet0 alias 10.247.1.2 netmask 0xfffffe00
+ *  doas ifconfig vpci0 192.168.0.2
+ *  doas ./tools/tools/vpctest/vpctest -l 10.247.1.2 -f 58:9c:fc:36:59:93 -i 10.247.1.1 -o 192.168.0.1
  *
  */
 
@@ -252,7 +254,7 @@ main(int argc, char **argv)
 	listen_ip = forward_ip = 0;
 	forward_mac = overlay_ip = NULL;
 	ifbuf = &ifr.ifr_ifru.ifru_buffer;
-	while ((ch = getopt(argc, argv, "l:f:i:")) != -1) {
+	while ((ch = getopt(argc, argv, "l:f:i:o:")) != -1) {
 		switch (ch) {
 			case 'l':
 				listen_ip = inet_addr(optarg);
