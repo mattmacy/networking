@@ -158,12 +158,12 @@ vpci_set_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
 
 	if ((ifp = ifunit_ref(va->va_ifname)) == NULL)
 		return (ENXIO);
-	if (ifp == vs->vs_ifparent) {
+	if (ifp == vs->vs_ifparent)
 		if_rele(ifp);
-	} else {
+	else if (vs->vs_ifparent)
 		if_rele(vs->vs_ifparent);
-		vs->vs_ifparent = ifp;
-	}
+	vs->vs_ifparent = ifp;
+
 	iflib_get_ifp(vs->vs_ctx)->if_mtu = ifp->if_mtu;
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(50));
 	return (0);
