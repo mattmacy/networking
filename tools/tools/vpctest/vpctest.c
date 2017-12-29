@@ -16,6 +16,22 @@
 #include <string.h>
 #include <unistd.h>
 
+/*
+ * host1:
+ *  doas ifconfig vpci create
+ *  doas ifconfig vpc create
+ *  doas ifconfig vtnet0 alias 10.247.1.1 netmask 0xfffffe00
+ *  doas ifconfig vpci0 192.168.0.1
+ *  doas ./tools/tools/vpctest/vpctest -l 10.247.1.1 -f 58:9c:fc:04:57:c0 -i 10.247.1.2
+ *
+ * host2:
+ * doas ifconfig vtnet0 alias 10.247.1.2 netmask 0xfffffe00
+ * doas ifconfig vpci0 192.168.0.2
+ * doas ./tools/tools/vpctest/vpctest -l 10.247.1.2 -f 58:9c:fc:04:57:c1 -i 10.247.1.1
+ *	not done:
+ *	 - setting MAC for vpci0 on peer (peer overlay address)
+ */
+
 static void
 usage(char *name)
 {
@@ -55,10 +71,7 @@ main(int argc, char **argv)
 	struct vpc_fte *vfte;
 	int s, ch;
 
-	/* not done:
-	 *  - setting IP on vpci0
-	 *  - setting MAC for vpci0 on peer (peer overlay address)
-	 */
+
 	listen_ip = forward_mac = forward_ip = 0;
 	ifbuf = &ifr.ifr_ifru.ifru_buffer;
 	while ((ch = getopt(argc, argv, "l:f:i:")) != -1) {
@@ -121,6 +134,7 @@ main(int argc, char **argv)
 	}
 	printf("vni set to %d\n", vv.vv_vni);
 	/* set VPC listen */
+	strcpy(ifr.ifr_name, "vpc0");
 	ifbuf->buffer = &vl;
 	ifbuf->length = sizeof(vl);
 	vl.vl_vih.vih_magic = VPC_VERS;
@@ -131,7 +145,7 @@ main(int argc, char **argv)
 	sin->sin_port = htons(4789);
 	sin->sin_addr.s_addr = listen_ip;
 	if (ioctl(s, SIOCGPRIVATE_0, &ifr)) {
-		perror("failed to set listen ip:port\n");
+		perror("failed to set listen ip:port ");
 		exit(EX_IOERR);
 	}
 	/* add FTE for peer */
