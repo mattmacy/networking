@@ -4698,8 +4698,8 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 		MPASS(scctx->isc_tx_csum_flags);
 #endif
 
-	if_setcapabilities(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH);
-	if_setcapenable(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH);
+	if_setcapabilities(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH | IFCAP_LINKSTATE);
+	if_setcapenable(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH | IFCAP_LINKSTATE);
 
 	if (sctx->isc_flags & IFLIB_PSEUDO) {
 		ether_ifattach(ctx->ifc_ifp, ctx->ifc_mac);
