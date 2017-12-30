@@ -573,8 +573,11 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	int lasterr, rc;
 
 	can_batch = true;
-	if ((m->m_flags & M_VXLANTAG) == 0)
+	if ((m->m_flags & M_VXLANTAG) == 0) {
+		printf("got untagged packet\n");
 		m_freechain(m);
+		return (EINVAL);
+	}
 	_critical_enter();
 	sched_pin();
 	ck_epoch_begin(DPCPU_GET(vpc_epoch_record), NULL);
