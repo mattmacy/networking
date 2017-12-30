@@ -476,7 +476,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	/*   lookup IP using encapsulated dmac */
 	rc = vpc_ftable_lookup(vf, evhvx, dst);
 	if (__predict_false(rc)) {
-		printf("no forwarding entry for dmac\n");
+		printf("no forwarding entry for dmac: %*D\n",
+			   ETHER_ADDR_LEN, (caddr_t)evhvx, ":");
 		vpc_fte_print(vs);
 		m_freem(mh);
 		return (rc);
@@ -797,7 +798,7 @@ vpc_ftable_print_callback(void *data, const unsigned char *key, uint32_t key_len
 	char buf[5];
 
 	buf[4] = 0;
-	inet_ntoa_r(*(struct in_addr *)value, buf);
+	inet_ntoa_r(((struct sockaddr_in *)value)->sin_addr, buf);
 	printf("vni: 0x%x dmac: %*D ip: %s\n",
 		   *(uint32_t *)data, ETHER_ADDR_LEN, key, ":", buf);
 	return (0);
