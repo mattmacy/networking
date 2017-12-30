@@ -323,7 +323,7 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	/* check that CSUM_IP works for all hardware */
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
-	uh->uh_sport = vpc_sport_hash(m->m_next->m_data);
+	uh->uh_sport = vpc_sport_hash(m->m_data);
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
 	uh->uh_ulen = ip->ip_len - sizeof(*ip);
 	uh->uh_sum = 0; /* offload */
