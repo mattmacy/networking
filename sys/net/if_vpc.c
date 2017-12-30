@@ -175,6 +175,8 @@ struct vpc_softc {
 	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
 	uint16_t vs_fibnum;
+	uint16_t vs_min_port;
+	uint16_t vs_max_port;
 	art_tree vs_vxftable; /* vxlanid -> ftable */
 	ck_epoch_record_t vs_record;
 };
@@ -277,15 +279,17 @@ vpc_ftable_insert(struct vpc_ftable *vf, caddr_t evh,
 }
 
 static uint16_t
-vpc_sport_hash(caddr_t data)
+vpc_sport_hash(struct vpc_softc *vs, caddr_t data)
 {
 	uint16_t *hdr;
-	uint16_t src, dst;
+	uint16_t src, dst, hash, range;
 
+	range = vs->vs_max_port - vs->vs_min_port;
 	hdr = (uint16_t*)data;
 	src = hdr[0] ^ hdr[1] ^ hdr[2];
 	dst = hdr[3] ^ hdr[4] ^ hdr[5];
-	return (src ^ dst);
+	hash = (src ^ dst) % range;
+	return (vs->vs_min_port + hash);
 }
 
 static void
@@ -310,7 +314,7 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	ip->ip_v = 4; /* v4 only now */
 	ip->ip_tos = 0;
 	/* XXX validate that we won't overrun IP_MAXPACKET first */
-	ip->ip_len = m->m_pkthdr.len + sizeof(*vh) - sizeof(struct ether_header);
+	ip->ip_len = htons(m->m_pkthdr.len + sizeof(*vh) - sizeof(struct ether_header));
 	ip->ip_id = 0;
 	ip->ip_off = 0;
 	ip->ip_ttl = 255;
@@ -323,7 +327,7 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	/* check that CSUM_IP works for all hardware */
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
-	uh->uh_sport = vpc_sport_hash(m->m_data);
+	uh->uh_sport = vpc_sport_hash(vf->vf_vs, m->m_data);
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
 	uh->uh_ulen = ip->ip_len - sizeof(*ip);
 	uh->uh_sum = 0; /* offload */
@@ -637,6 +641,8 @@ vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 	/* register vs_record */
 	ck_epoch_register(&vpc_epoch, &vs->vs_record, NULL);
 	vs->vs_ctx = ctx;
+	vs->vs_min_port = IPPORT_HIFIRSTAUTO;	/* 49152 */
+	vs->vs_max_port = IPPORT_HILASTAUTO;	/* 65535 */
 
 	/* init vs_vxftable */
 	art_tree_init(&vs->vs_vxftable, 3 /* VXLANID is 3 bytes */);
