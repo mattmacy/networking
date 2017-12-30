@@ -448,7 +448,6 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
 		printf("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
-		vpc_fte_print(vs);
 		m_freem(m);
 		return (ENOENT);
 	}
@@ -457,6 +456,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	rc = vpc_ftable_lookup(vf, evhvx, dst);
 	if (__predict_false(rc)) {
 		printf("no forwarding entry for dmac\n");
+		vpc_fte_print(vs);
 		m_freem(m);
 		return (rc);
 	}
@@ -706,8 +706,7 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 {
 	struct vpc_ftable *ftable;
 	struct vpc_fte *vfte;
-	uint8_t *mac;
-	uint32_t addr;
+	uint32_t addr, *addrp;
 
 	vfte = &vfu->vfu_vfte;
 	if (vfte->vf_protoaddr.sa_family != AF_INET)
@@ -724,16 +723,16 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 		art_insert(&vs->vs_vxftable, (caddr_t)&vfte->vf_vni, ftable);
 	}
 	if (add == false) {
-		mac = art_delete(&ftable->vf_ftable, (caddr_t)&addr);
-		free(mac, M_VPC);
+		addrp = art_delete(&ftable->vf_ftable, (caddr_t)&addr);
+		free(addrp, M_VPC);
 		if (art_size(&ftable->vf_ftable) == 0) {
 			art_delete(&vs->vs_vxftable, (caddr_t)&vfte->vf_vni);
 			free(ftable, M_VPC);
 		}
 	} else {
-		mac = malloc(ETHER_ADDR_LEN, M_VPC, M_WAITOK);
-		bcopy(vfte->vf_hwaddr, mac, ETHER_ADDR_LEN); 
-		art_insert(&ftable->vf_ftable,(caddr_t)&addr, mac);
+		addrp = malloc(sizeof(uint32_t), M_VPC, M_WAITOK);
+		*addrp = addr;
+		art_insert(&ftable->vf_ftable,(caddr_t)vfte->vf_hwaddr, addrp);
 	}
 	return (0);
 }
