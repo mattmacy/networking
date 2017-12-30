@@ -126,7 +126,8 @@ int art_tree_destroy(art_tree *t);
 /**
  * Returns the size of the ART tree.
  */
-inline uint64_t art_size(art_tree *t) {
+static inline uint64_t
+art_size(art_tree *t) {
     return t->size;
 }
 
