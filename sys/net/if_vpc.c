@@ -179,6 +179,8 @@ struct vpc_softc {
 	ck_epoch_record_t vs_record;
 };
 
+static void vpc_fte_print(struct vpc_softc *vs);
+
 static int clone_count;
 
 static void
@@ -446,6 +448,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
 		printf("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
+		vpc_fte_print(vs);
 		m_freem(m);
 		return (ENOENT);
 	}
@@ -757,6 +760,30 @@ vpc_fte_count(struct vpc_softc *vs)
 
 	art_iter(&vs->vs_vxftable, vpc_vxftable_count_callback, &count);
 	return (count);
+}
+
+static int
+vpc_ftable_print_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	printf("vni: %x dmac: %*D ip: %x\n",
+		   *(uint32_t *)data, ETHER_ADDR_LEN, key, ":", *(uint32_t *)value);
+	return (0);
+}
+
+static int
+vpc_vxftable_print_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct vpc_ftable *ftable = value;
+
+	art_iter(&ftable->vf_ftable, vpc_ftable_print_callback, (void*)(uintptr_t)key);
+	return (0);
+}
+
+static void
+vpc_fte_print(struct vpc_softc *vs)
+{
+
+	art_iter(&vs->vs_vxftable, vpc_vxftable_print_callback, NULL);
 }
 
 static int
