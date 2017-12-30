@@ -591,8 +591,9 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
-		ifp = m->m_pkthdr.rcvif;
-		rc = ifp->if_transmit(ifp, m);
+		ifp = mp->m_pkthdr.rcvif;
+		mp->m_pkthdr.rcvif = NULL;
+		rc = ifp->if_transmit(ifp, mp);
 		if (rc)
 			lasterr = rc;
 		mp = mnext;
