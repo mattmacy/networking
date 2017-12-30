@@ -448,6 +448,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
 	mh->m_data = mh->m_pktdat;
+	mh->m_nextpkt = NULL;
 	vh = (struct vxlan_header *)mh->m_data;
 	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
 	mh->m_flags = M_PKTHDR;
@@ -601,6 +602,7 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	lasterr = 0;
 	do {
 		mnext = mp->m_nextpkt;
+		MPASS(mnext != (void *)0xdeadc0dedeadc0de);
 		mp->m_nextpkt = NULL;
 		ifp = mp->m_pkthdr.rcvif;
 		mp->m_pkthdr.rcvif = NULL;
@@ -762,6 +764,7 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 			free(ftable, M_VPC);
 		}
 	} else {
+		/* do an arp resolve on proto addr so that it's in cache */
 		vpc_ftable_insert(ftable,(caddr_t)vfte->vf_hwaddr,
 						  &vfte->vf_protoaddr);
 	}
