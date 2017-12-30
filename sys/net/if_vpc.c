@@ -518,7 +518,11 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 			rc = EOPNOTSUPP;
 	}
 	if (__predict_false(rc)) {
-		printf("L2 resolution failed %d\n", rc);
+		char buf[16];
+		struct sockaddr_in *sin = (struct sockaddr_in *)dst;
+
+		inet_ntoa_r(sin->sin_addr, buf);
+		printf("L2 resolution on %s failed %d\n", buf, rc);
 		m_freem(mh);
 		return (rc);
 	}
