@@ -446,17 +446,19 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	}
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
-	mh->m_data = m->m_pktdat;
+	mh->m_data = mh->m_pktdat;
 	vh = (struct vxlan_header *)mh->m_data;
 	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
-	mh->m_flags &= ~(M_EXT|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
+	mh->m_flags = M_PKTHDR;
+	mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
+	mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+	/* XXX v4 only */
 	mh->m_pkthdr.len += sizeof(struct vxlan_header);
 	mh->m_len = sizeof(struct vxlan_header);
 	mh->m_next = m;
-	m->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
-	m->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+
 	m->m_nextpkt = NULL;
-	m->m_flags &= ~(M_PKTHDR|M_NOFREE|M_VLANTAG|M_BCAST|M_MCAST|M_TSTMP);
+	m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
 
 	if (__predict_true(vpc_cache_lookup(vs, mh, evhvx))) {
 		*mp = mh;
