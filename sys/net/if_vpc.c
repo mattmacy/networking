@@ -439,6 +439,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	int rc;
 
 	m = *mp;
+	*mp = NULL;
 	mh = m_gethdr(M_NOWAIT, MT_NOINIT);
 	if (__predict_false(mh == NULL)) {
 		m_freem(m);
@@ -468,7 +469,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
 		printf("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
-		m_freem(m);
+		m_freem(mh);
 		return (ENOENT);
 	}
 	dst = &ro.ro_dst;
@@ -477,14 +478,14 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	if (__predict_false(rc)) {
 		printf("no forwarding entry for dmac\n");
 		vpc_fte_print(vs);
-		m_freem(m);
+		m_freem(mh);
 		return (rc);
 	}
 	/* lookup route to find interface */
 	rt = rtalloc1_fib(dst, 0, 0, vs->vs_fibnum);
 	if (__predict_false(rt == NULL)) {
 		printf("no routing entry\n");
-		m_freem(m);
+		m_freem(mh);
 		return (ENETUNREACH);
 	}
 	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
@@ -492,7 +493,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 						!RT_LINK_IS_UP(rt->rt_ifp))) {
 		RTFREE_LOCKED(rt);
 		printf("route is invalid\n");
-		m_freem(m);
+		m_freem(mh);
 		return (ENETUNREACH);
 	}
 	ifp = rt->rt_ifp;
@@ -517,7 +518,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 			rc = EOPNOTSUPP;
 	}
 	if (__predict_false(rc)) {
-		printf("L2 resolution failed\n");
+		printf("L2 resolution failed %d\n", rc);
+		m_freem(mh);
 		return (rc);
 	}
 	mh->m_pkthdr.rcvif = ifp;
@@ -537,6 +539,7 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf **mp, bool *can_batch)
 	mh = mt = NULL;
 	*can_batch = true;
 	m = *mp;
+	*mp = NULL;
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
