@@ -261,8 +261,19 @@ vpc_ftable_lookup(struct vpc_ftable *vf, struct ether_vlan_header *evh,
 	vfe = art_search(&vf->vf_ftable, evh->evl_dhost);
 	if (__predict_false(vfe == NULL))
 		return (ENOENT);
-	bcopy(&vfe->ve_addr, dst, sizeof(struct sockaddr *));
+	bcopy(&vfe->ve_addr, dst, sizeof(struct sockaddr));
 	return (0);
+}
+
+static void
+vpc_ftable_insert(struct vpc_ftable *vf, caddr_t evh,
+				  struct sockaddr *dst)
+{
+	struct vf_entry *vfe;
+
+	vfe = malloc(sizeof(*vfe), M_VPC, M_WAITOK);
+	bcopy(dst, &vfe->ve_addr, sizeof(struct sockaddr));
+	art_insert(&vf->vf_ftable, (const unsigned char *)evh, vfe);
 }
 
 static uint16_t
@@ -730,9 +741,8 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 			free(ftable, M_VPC);
 		}
 	} else {
-		addrp = malloc(sizeof(uint32_t), M_VPC, M_WAITOK);
-		*addrp = addr;
-		art_insert(&ftable->vf_ftable,(caddr_t)vfte->vf_hwaddr, addrp);
+		vpc_ftable_insert(ftable,(caddr_t)vfte->vf_hwaddr,
+						  &vfte->vf_protoaddr);
 	}
 	return (0);
 }
