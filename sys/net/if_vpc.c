@@ -605,7 +605,7 @@ vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 	vs->vs_ctx = ctx;
 
 	/* init vs_vxftable */
-	art_tree_init(&vs->vs_vxftable, 4);
+	art_tree_init(&vs->vs_vxftable, 3 /* VXLANID is 3 bytes */);
 	return (0);
 }
 
@@ -718,7 +718,7 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 		if (add == false)
 			return (0);
 		ftable = malloc(sizeof(*ftable), M_VPC, M_WAITOK|M_ZERO);
-		art_tree_init(&ftable->vf_ftable, 4 /* XXX --- IPv4 only */);
+		art_tree_init(&ftable->vf_ftable, ETHER_ADDR_LEN);
 		ftable->vf_vni = vfte->vf_vni;
 		ftable->vf_vs = vs;
 		art_insert(&vs->vs_vxftable, (caddr_t)&vfte->vf_vni, ftable);
@@ -765,8 +765,12 @@ vpc_fte_count(struct vpc_softc *vs)
 static int
 vpc_ftable_print_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
-	printf("vni: %x dmac: %*D ip: %x\n",
-		   *(uint32_t *)data, ETHER_ADDR_LEN, key, ":", *(uint32_t *)value);
+	char buf[5];
+
+	buf[4] = 0;
+	inet_ntoa_r(*(struct in_addr *)value, buf);
+	printf("vni: 0x%x dmac: %*D ip: %s\n",
+		   *(uint32_t *)data, ETHER_ADDR_LEN, key, ":", buf);
 	return (0);
 }
 
