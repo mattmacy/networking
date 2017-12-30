@@ -398,10 +398,10 @@ vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex
 static int
 vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
 {
-	struct ifp_cache *newcache;
-
 	if (__predict_false(vpc_ic->ic_size -1 < ifp->if_index)) {
 #ifndef INVARIANTS
+		struct ifp_cache *newcache;
+
 		newcache = realloc(vpc_ic, sizeof(ifp)*ifp->if_index+1, M_VPC, M_NOWAIT);
 		if (newcache == NULL) {
 			GROUPTASK_ENQUEUE(&vpc_ifp_task);
