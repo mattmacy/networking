@@ -2763,9 +2763,8 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		rx_bytes += m->m_pkthdr.len;
 		rx_pkts++;
 #if defined(INET6) || defined(INET)
-		if (vxlan_enabled && iflib_vxlan_decap(m, ctx->ifc_vxlan_port,
-											   !!(ctx->ifc_if_flags & IFF_PROMISC)))
-				continue; /* not a valid VNI/DMAC */
+		if (vxlan_enabled)
+			iflib_vxlan_decap(m, ctx->ifc_vxlan_port);
 		if (lro_enabled) {
 			if (!lro_possible) {
 				lro_possible = iflib_check_lro_possible(m, v4_forwarding, v6_forwarding);
@@ -6731,8 +6730,8 @@ iflib_vxlan_validate(if_ctx_t ctx, int vxlanid, struct ether_vlan_header *eh)
 }
 #endif
 
-int
-iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool promisc)
+void
+iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port)
 {
 	struct ether_vlan_header *eh;
 	struct udphdr *uh;
@@ -6751,7 +6750,7 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool promisc)
 #if defined(INET)
 		struct ip *ip = (struct ip *)(((caddr_t)eh) + len);
 		if (ip->ip_p != IPPROTO_UDP)
-			return (0);
+			return;
 		uh = (struct udphdr *)((caddr_t)ip + (ip->ip_hl << 2));
 		len += ip->ip_hl << 2;
 #endif
@@ -6760,44 +6759,22 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool promisc)
 		struct ip6_hdr *ip6 = (struct ip6_hdr *)(((caddr_t)eh) + len);
 		/* XXX we don't support fragments for now */
 		if (ip6->ip6_nxt != IPPROTO_UDP)
-			return (0);
+			return;
 		uh = (struct udphdr *)(ip6 + 1);
 		len += sizeof(*ip6);
 #endif
-	} else {
-		return (0);
-	}
+	} else
+		return;
 	/* XXX - multiple ports? */
 	if (uh->uh_dport != vxlan_port)
-		return (0);
-	/*
-	 * we assume that the packet ended up at the right place
-	 * if it passed the MAC filter
-	 */
-#ifdef notyet
-	if (promisc) {
-		/* check against our MAC address manually */
-	} else
-#endif
-		if ((m->m_pkthdr.csum_flags & CSUM_DATA_VALID) == 0) {
-			m_freem(m);
-			return (EINVAL);
-		}
-
+		return;
 	vh = (struct vxlan_header *)(uh + 1);
 	vxlanid = vh->vxlh_vni;
 	eh = (struct ether_vlan_header *)(vh + 1);
-#ifdef notyet
-	if (!iflib_vxlan_validate(ctx, vxlanid, eh)) {
-		m_freem(m);
-		return (EINVAL);
-	}
-#endif
 	m->m_flags |= M_VXLANTAG;
 	m->m_pkthdr.vxlanid = vxlanid;
 	m->m_data += len;
 	m->m_len -= len;
 	m->m_pkthdr.len -= len;
-	return (0);
 }
 #endif
