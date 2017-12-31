@@ -1436,7 +1436,8 @@ cxgbe_probe(device_t dev)
 
 #define T4_CAP (IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_MTU | IFCAP_HWCSUM | \
     IFCAP_VLAN_HWCSUM | IFCAP_TSO | IFCAP_JUMBO_MTU | IFCAP_LRO | \
-    IFCAP_VLAN_HWTSO | IFCAP_LINKSTATE | IFCAP_HWCSUM_IPV6 | IFCAP_HWSTATS)
+    IFCAP_VLAN_HWTSO | IFCAP_LINKSTATE | IFCAP_HWCSUM_IPV6 | IFCAP_HWSTATS | \
+	IFCAP_VXLANDECAP)
 #define T4_CAP_ENABLE (T4_CAP)
 
 static int
@@ -1821,7 +1822,12 @@ fail:
 			rc = copyout(&i2c, ifr->ifr_data, sizeof(i2c));
 		break;
 	}
-
+	case SIOCSIFVXLANPORT:
+		rc = begin_synchronized_op(sc, vi, SLEEP_OK | INTR_OK, "t4cap");
+		ifp->if_capenable |= IFCAP_VXLANDECAP;
+		sc->vxlan_port = ifr->ifr_index;
+		end_synchronized_op(sc, 0);
+		break;
 	default:
 		rc = ether_ioctl(ifp, cmd, data);
 	}

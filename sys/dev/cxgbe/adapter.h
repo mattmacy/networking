@@ -845,6 +845,8 @@ struct adapter {
 	uint16_t iscsicaps;
 	uint16_t fcoecaps;
 
+	uint16_t vxlan_port;
+
 	struct sysctl_ctx_list ctx; /* from adapter_full_init to full_uninit */
 
 	struct mtx sc_lock;

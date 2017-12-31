@@ -50,6 +50,8 @@ __FBSDID("$FreeBSD$");
 #include <net/bpf.h>
 #include <net/ethernet.h>
 #include <net/if.h>
+#include <net/if_var.h>
+#include <net/iflib.h>
 #include <net/if_vlan_var.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -1740,6 +1742,7 @@ t4_eth_rx(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m0)
 	const struct cpl_rx_pkt *cpl = (const void *)(rss + 1);
 #if defined(INET) || defined(INET6)
 	struct lro_ctrl *lro = &rxq->lro;
+	int vxlan_decap = ifp->if_capenable & IFCAP_VXLANDECAP;
 #endif
 	static const int sw_hashtype[4][2] = {
 		{M_HASHTYPE_NONE, M_HASHTYPE_NONE},
@@ -1785,6 +1788,8 @@ t4_eth_rx(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m0)
 	}
 
 #if defined(INET) || defined(INET6)
+	if (vxlan_decap)
+		iflib_vxlan_decap(m0, sc->vxlan_port);
 	if (iq->flags & IQ_LRO_ENABLED) {
 		if (sort_before_lro(lro)) {
 			tcp_lro_queue_mbuf(lro, m0);
