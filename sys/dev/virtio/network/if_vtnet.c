@@ -1754,10 +1754,8 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 	rxq->vtnrx_stats.vrxs_ibytes += m->m_pkthdr.len;
 
 	VTNET_RXQ_UNLOCK(rxq);
-	if (vxlan_enabled && iflib_vxlan_decap(m, vxlan_port, false)) {
-		VTNET_RXQ_LOCK(rxq);
-		return;
-	}
+	if (vxlan_enabled)
+		iflib_vxlan_decap(m, vxlan_port);
 	(*ifp->if_input)(ifp, m);
 	VTNET_RXQ_LOCK(rxq);
 }
