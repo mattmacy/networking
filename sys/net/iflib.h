@@ -442,7 +442,7 @@ void iflib_led_create(if_ctx_t ctx);
 void iflib_add_int_delay_sysctl(if_ctx_t, const char *, const char *,
 								if_int_delay_info_t, int, int);
 
-int iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool promisc);
+void iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port);
 
 /*
  * Pseudo device support
