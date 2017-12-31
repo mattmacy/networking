@@ -289,57 +289,94 @@ struct mbuf {
 #define	MVEC_MANAGED	0x0		/* cluster should be freed when refcnt goes to 0 */
 #define	MVEC_UNMANAGED	0x1		/* memory managed elsewhere */
 #define	MVEC_MBUF	0x2		/* free to mbuf zone */
-#define	MVEC_MALLOC	0x3		/* free temporary w/ type M_DEVBUF */
+
 
 // if we want > 16k for larger segments we could use the
 // bottom 3 bits of cl
+ 
+
+/*
+ * | mbuf { }| pkthdr { } | m_ext { }| mvec_header { } | mvec_ent[] | refcnt[] (optional) | 
+ */
+struct mvec_header {
+	uint64_t mh_count:8; /* number of segments */
+	uint64_t mh_start:8; /* starting segment */
+	uint64_t mh_multiref:1; /* the clusters have independent ref counts so
+							 * an array of refcounts sits before the mvec_ents
+							 */
+	uint64_t mh_flags:47;
+};
+
 struct mvec_ent {
 	caddr_t		me_cl;
+	uint16_t	me_off;
+	uint16_t	me_len;
 	uint16_t	me_eop:1;
-	uint16_t	me_off:15;
 	uint16_t	me_type:2;
-	uint16_t	me_len:14;
+	uint16_t	me_spare:13;
+	uint8_t		me_ext_flags;
+	uint8_t		me_ext_type;
 };
 
-/*
-struct mvec {
-	uint64_t m_count:8;
-	uint64_t m_flags:56;
-	struct mvec_ent m_ents[0];
+#define MBUF2MH(m) ((struct mvec_header *)((m)->m_pktdat + sizeof(struct m_ext)));
+#define MHME(mh) ((struct mvec_ent *)((mh)+1))
+#define MHMEI(mh, idx) (&(MHME(mh)[(mh)->mh_start+(idx)]))
+#define ME_SEG(mh, idx) (MHMEI(mh,idx)->me_cl + MHMEI(mh, idx)->me_off)
+#define ME_LEN(mh, idx) (MHMEI(mh,idx)->me_len)
+
+struct mvec_cursor {
+	uint16_t mc_idx;
+	uint16_t mc_off;
 };
-*/
+
+typedef union {
+		/*
+		 * If EXT_FLAG_EMBREF is set, then we use refcount in the
+		 * mbuf, the 'ext_count' member.  Otherwise, we have a
+		 * shadow copy and we use pointer 'ext_cnt'.  The original
+		 * mbuf is responsible to carry the pointer to free routine
+		 * and its arguments.  They aren't copied into shadows in
+		 * mb_dupcl() to avoid dereferencing next cachelines.
+		 */
+		volatile u_int	 ext_count;
+		volatile u_int	*ext_cnt;
+} m_refcnt_t;
 
 /*
- * (LP64) 120 bytes
+ * Get index and relative offset of `off` in to mvec `m`
  */
-struct mvec9 {
-	caddr_t	m_tmp;
-	uint32_t m_count:8;
-	uint32_t m_flags:24;
-	struct mvec_ent m_ents[9];
-};
+void mvec_offset(struct mbuf *m, struct mvec_cursor *mc, int off);
 
 /*
- * (LP64) 384 bytes
+ * Trim (destructively) the first `count` bytes of `m`
  */
-struct mvec31 {
-	caddr_t	m_tmp;
-	uint32_t m_count:8;
-	uint32_t m_flags:24;
-	struct mvec_ent m_ents[31];
-};
+void mvec_trim(struct mbuf *m, int count);
 
 /*
- * (LP64) 768 bytes
+ * Make the first `count` bytes of `m` contiguous
  */
-struct mvec64 {
-	caddr_t	m_tmp;
-	uint32_t m_count:8;
-	uint32_t m_flags:24;
-	struct mvec_ent m_ents[63];
-};
+struct mbuf * mvec_pullup(struct mbuf *m, int count);
 
+/*
+ * Perform accounting neccesary to free all references contained
+ * and `m` itself
+ */
+void mvec_free(struct mbuf *m);
 
+/*
+ * Convert mbuf chain `m` to mvec (destructively) will return
+ * NULL without modifying or freeing `m` if not successful.
+ * Hence can be tried optimistically.
+ */
+struct mbuf *mchain_to_mvec(struct mbuf *m);
+
+/*
+ * Given an mvec `m` returns a new mvec of segmented packets.
+ * If prehdrlen is non-zero the first prehdrlen bytes are
+ * treated as encapsulation and copied to the front of every
+ * packet.
+ */
+struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen);
 
 /*
  * mbuf flags of global significance and layer crossing.
@@ -494,6 +531,7 @@ struct mvec64 {
 #define	EXT_JUMBO16	5	/* jumbo cluster 16184 bytes */
 #define	EXT_PACKET	6	/* mbuf+cluster from packet zone */
 #define	EXT_MBUF	7	/* external mbuf reference */
+#define	EXT_MVEC	8	/* pointer to mbuf vector */
 
 #define	EXT_VENDOR1	224	/* for vendor-internal use */
 #define	EXT_VENDOR2	225	/* for vendor-internal use */
@@ -896,13 +934,6 @@ m_cljset(struct mbuf *m, void *cl, int type)
 }
 
 static __inline void
-m_chtype(struct mbuf *m, short new_type)
-{
-
-	m->m_type = new_type;
-}
-
-static __inline void
 m_clrprotoflags(struct mbuf *m)
 {
 
@@ -1063,12 +1094,6 @@ m_align(struct mbuf *m, int len)
 		_mm->m_pkthdr.len += _mplen;				\
 	*_mmp = _mm;							\
 } while (0)
-
-/*
- * Change mbuf to new type.  This is a relatively expensive operation and
- * should be avoided.
- */
-#define	MCHTYPE(m, t)	m_chtype((m), (t))
 
 /* Length to m_copy to copy all. */
 #define	M_COPYALL	1000000000
