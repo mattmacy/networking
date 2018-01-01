@@ -304,7 +304,8 @@ struct mvec_header {
 	uint64_t mh_multiref:1; /* the clusters have independent ref counts so
 							 * an array of refcounts sits before the mvec_ents
 							 */
-	uint64_t mh_flags:47;
+	uint64_t mh_multipkt:1; /* contains multiple packets */
+	uint64_t mh_flags:46;
 };
 
 struct mvec_ent {
@@ -318,9 +319,13 @@ struct mvec_ent {
 	uint8_t		me_ext_type;
 };
 
-#define MBUF2MH(m) ((struct mvec_header *)((m)->m_pktdat + sizeof(struct m_ext)));
+#define MBUF2MH(m) ((struct mvec_header *)((m)->m_pktdat + sizeof(struct m_ext)))
 #define MHME(mh) ((struct mvec_ent *)((mh)+1))
-#define MHMEI(mh, idx) (&(MHME(mh)[(mh)->mh_start+(idx)]))
+#define MHREF(mh) ((m_refcnt_t *)(MHME(mh) + mh->mh_count))
+
+#define MHMEI(mh, idx) (MHME(mh) + (mh)->mh_start + (idx))
+#define MHREFI(mh, idx) (MHREF(mh) + (mh)->mh_start + (idx))
+
 #define ME_SEG(mh, idx) (MHMEI(mh,idx)->me_cl + MHMEI(mh, idx)->me_off)
 #define ME_LEN(mh, idx) (MHMEI(mh,idx)->me_len)
 
@@ -368,8 +373,14 @@ void mvec_free(struct mbuf *m);
  * NULL without modifying or freeing `m` if not successful.
  * Hence can be tried optimistically.
  */
-struct mbuf *mchain_to_mvec(struct mbuf *m);
+struct mbuf *mchain_to_mvec(struct mbuf *m, int how);
 
+/*
+ * Convert mvec `m` to mbuf chain (destructively) will return
+ * NULL if not successful. Will free input on failure.
+ * Cannot be tried optimistically.
+ */
+struct mbuf *mvec_to_mchain(struct mbuf *m, int how);
 /*
  * Given an mvec `m` returns a new mvec of segmented packets.
  * If prehdrlen is non-zero the first prehdrlen bytes are
@@ -554,6 +565,8 @@ struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen);
  */
 #define	EXT_FLAG_EMBREF		0x000001	/* embedded ext_count */
 #define	EXT_FLAG_EXTREF		0x000002	/* external ext_cnt, notyet */
+#define	EXT_FLAG_MVECREF	0x000004	/* reference is an mvec */
+#define	EXT_FLAG_MVEC_EMBREF    0x000008	/* reference is an mvec internal refcnt */
 
 #define	EXT_FLAG_NOFREE		0x000010	/* don't free mbuf to pool, notyet */
 
