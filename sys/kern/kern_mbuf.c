@@ -655,20 +655,13 @@ mb_free_ext(struct mbuf *m)
 	/* Free attached storage if this mbuf is the only reference to it. */
 	if (*refcnt == 1 || atomic_fetchadd_int(refcnt, -1) == 1) {
 		/*
-		 * An mvec has been converted to an mbuf chain and we need to
-		 * cope.
+		 * An mvec has been converted to an mbuf chain, but is still
+		 * owned by the mvec.
 		 */
-		if (__predict_false(m->m_ext.ext_flags &
-							(EXT_FLAG_MVECREF|EXT_FLAG_MVEC_EMBREF))) {
+		if (__predict_false(m->m_ext.ext_flags & EXT_FLAG_MVECREF)) {
 			MPASS(!(m->m_ext.ext_flags & EXT_FLAG_EMBREF));
 			MPASS(mref != m);
-			MPASS((m->m_ext.ext_flags & (EXT_FLAG_MVECREF|EXT_FLAG_MVEC_EMBREF)) !=
-				  (EXT_FLAG_MVECREF|EXT_FLAG_MVEC_EMBREF));
-			if (m->m_ext.ext_flags & EXT_FLAG_MVECREF) {
-				mvec_free(mref);
-			} else {
-				mvec_free((struct mbuf *)m->m_ext.ext_arg1);
-			}
+			mvec_free(mref);
 			goto skip;
 		}
 		switch (m->m_ext.ext_type) {

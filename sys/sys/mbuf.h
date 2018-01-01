@@ -369,23 +369,24 @@ struct mbuf * mvec_pullup(struct mbuf *m, int count);
 void mvec_free(struct mbuf *m);
 
 /*
- * Convert mbuf chain `m` to mvec (destructively) will return
- * NULL without modifying or freeing `m` if not successful.
- * Hence can be tried optimistically.
+ * Convert mbuf chain `m` to mvec non-destructively. Returns
+ * NULL on failure. It is the caller's responsibility to free
+ * the source on success.
  */
 struct mbuf *mchain_to_mvec(struct mbuf *m, int how);
 
 /*
- * Convert mvec `m` to mbuf chain (destructively) will return
- * NULL if not successful. Will free input on failure.
- * Cannot be tried optimistically.
+ * Convert mvec `m` to mbuf chain non-destructively.
+ * Returns NULL if not successful. It is the caller's
+ * responsibility to free the source on success.
  */
 struct mbuf *mvec_to_mchain(struct mbuf *m, int how);
 /*
  * Given an mvec `m` returns a new mvec of segmented packets.
  * If prehdrlen is non-zero the first prehdrlen bytes are
  * treated as encapsulation and copied to the front of every
- * packet.
+ * packet. Non-destructive. It is the caller's responsibility
+ * to free the source.
  */
 struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen);
 
@@ -566,7 +567,6 @@ struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen);
 #define	EXT_FLAG_EMBREF		0x000001	/* embedded ext_count */
 #define	EXT_FLAG_EXTREF		0x000002	/* external ext_cnt, notyet */
 #define	EXT_FLAG_MVECREF	0x000004	/* reference is an mvec */
-#define	EXT_FLAG_MVEC_EMBREF    0x000008	/* reference is an mvec internal refcnt */
 
 #define	EXT_FLAG_NOFREE		0x000010	/* don't free mbuf to pool, notyet */
 
