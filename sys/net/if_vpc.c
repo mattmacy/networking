@@ -597,8 +597,8 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 	if (__predict_false(lasterr))
 		goto done;
 	ifp = m->m_pkthdr.rcvif;
-	if (__predict_true((ifp->if_capabilities & IFCAP_TXBATCH) && can_batch)) {
-		lasterr = ifp->if_transmit(ifp, m);
+	if (can_batch) {
+		lasterr = ifp->if_transmit_txq(ifp, m);
 		goto done;
 	}
 
