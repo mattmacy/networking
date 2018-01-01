@@ -150,13 +150,20 @@ mvec_trim(struct mbuf *m, int offset)
 	struct mvec_header *mh = MBUF2MH(m);
 	struct mvec_ent *me = MHME(mh);
 	int rem;
+	bool owned;
 
 	MPASS(offset <= m->m_pkthdr.len);
 	rem = offset;
+	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+		owned = (m->m_ext.ext_count == 1);
+	} else {
+		owned = (*(m->m_ext.ext_cnt) == 1);
+	}
 	do {
 		if (rem > me->me_len) {
 			rem -= me->me_len;
-			mvec_ent_free(mh, mh->mh_start);
+			if (owned)
+				mvec_ent_free(mh, mh->mh_start);
 			mh->mh_start++;
 			me++;
 		} else if (rem < me->me_len) {
@@ -199,6 +206,10 @@ mvec_pullup(struct mbuf *m, int count)
 	MPASS(headroom >= 0);
 	copylen = count - mecur->me_len;
 
+	/*
+	 * XXX - If we're not the exclusive owner we need to allocate a new
+	 * buffer regardless.
+	 */
 	if (copylen > size) {
 		/* allocate new buffer */
 		panic("allocate new buffer copylen=%d size=%d", copylen, size);
@@ -320,10 +331,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	me_count = (m_refcnt_t *)(me + count);
 	do {
 		mnext = mp->m_next;
-		countp.ext_cnt = NULL;
 		if (mp->m_flags & M_EXT) {
-			bool canfree = true;
-
 			me->me_cl = mp->m_ext.ext_buf;
 			me->me_off = ((uintptr_t)mp->m_data - (uintptr_t)mp->m_ext.ext_buf);
 			me->me_len = mp->m_len;
@@ -331,23 +339,6 @@ mchain_to_mvec(struct mbuf *m, int how)
 			me->me_type = MVEC_MANAGED;
 			me->me_ext_flags = mp->m_ext.ext_flags;
 			me->me_ext_type = mp->m_ext.ext_type;
-			if (!(mp->m_ext.ext_flags & EXT_FLAG_EMBREF)) {
-				countp.ext_cnt = mp->m_ext.ext_cnt;	
-			} else if (mp->m_ext.ext_flags & EXT_FLAG_EMBREF) {
-				if (mp->m_ext.ext_count > 1) {
-					countp.ext_cnt = &mp->m_ext.ext_count;
-					canfree = false;
-					me->me_ext_flags &= ~EXT_FLAG_EMBREF;
-				} else
-					countp.ext_count = 0x1;
-			}
-			if (mp->m_flags & M_NOFREE) {
-				canfree = false;
-				me->me_ext_flags |= EXT_FLAG_NOFREE;
-			}
-			if (canfree)
-				m_free(mp);
-			mp = NULL;
 		} else {
 			me->me_cl = (caddr_t)mp;
 			me->me_off = ((uintptr_t)(mp->m_data) - (uintptr_t)mp);
@@ -356,9 +347,18 @@ mchain_to_mvec(struct mbuf *m, int how)
 			me->me_type = MVEC_MBUF;
 			me->me_ext_flags = 0;
 			me->me_ext_type = EXT_MBUF;
-			countp.ext_cnt = 0;
 		}
 		if (dupref) {
+			countp.ext_cnt = NULL;
+			if (mp->m_flags & M_EXT) {
+				if (mp->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+					countp.ext_cnt = &mp->m_ext.ext_count;
+					me->me_ext_flags &= ~EXT_FLAG_EMBREF;
+				} else
+					countp.ext_cnt = mp->m_ext.ext_cnt;
+			}
+			if (mp->m_flags & M_NOFREE)
+				me->me_ext_flags |= EXT_FLAG_NOFREE;
 			*me_count = countp;
 			me_count++;
 		}
@@ -373,17 +373,8 @@ static void
 m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 {
 	struct mvec_ent *me;
-	m_refcnt_t *ref;
-	bool clone;
 
 	me = MHMEI(mh, 0);
-	ref = MHREFI(mh, 0);
-	if (head->m_ext.ext_flags & EXT_FLAG_EMBREF) {
-		clone = (head->m_ext.ext_count > 1);
-	} else {
-		clone = (*(head->m_ext.ext_cnt) > 1);
-	}
-
 	m->m_ext.ext_buf = me->me_cl;
 	m->m_ext.ext_arg1 = head->m_ext.ext_arg1;
 	m->m_ext.ext_arg2 = head->m_ext.ext_arg2;
@@ -394,155 +385,56 @@ m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 	/*
 	 * There are 3 cases for refcount transfer:
 	 *  1) all clusters are owned by the mvec [default]
-	 *     a) we can create an embedded refcnt if the mvec
-	 *        refcnt is 1
-	 *     b) we need to clone all of the mbufs, preserve
-	 *        the mvec and increment the mvec's refcnt for
-	 *        cluster
-	 *  2) cluster has an embedded refcount:
-	 *     a) can be transferred if the refcnt is 1
-	 *     b) it needs to be preserved in the mvec - meaning
-	 *        we need to refcount the reference by adding
-	 *        a reference to the mvec and then releasing
-	 *        it when the clusters refcount goes to zero
-	 *  3) cluster has a normal external refcount
+	 *     - point at mvec refcnt and increment
+	 *  2) cluster has a normal external refcount
 	 */
-	if (!MBUF2MH(head)->mh_multiref && !clone) {
-		/* 1a */
-		m->m_ext.ext_flags = EXT_FLAG_EMBREF;
-		m->m_ext.ext_count = 1;
-	} else if (!MBUF2MH(head)->mh_multiref && clone) {
-		/* 1b */
+	if (__predict_true(!MBUF2MH(head)->mh_multiref)) {
 		m->m_ext.ext_flags = EXT_FLAG_MVECREF;
 		if (head->m_ext.ext_flags & EXT_FLAG_EMBREF)
 			m->m_ext.ext_cnt = &head->m_ext.ext_count;
 		else
 			m->m_ext.ext_cnt = head->m_ext.ext_cnt;
-		atomic_add_int(m->m_ext.ext_cnt, 1);
-	} else if (MBUF2MH(head)->mh_multiref &
-			   !!(me->me_ext_flags & EXT_FLAG_EMBREF) &
-			   (ref->ext_count == 1)) {
-		/* 2a */
-		m->m_ext.ext_flags = EXT_FLAG_EMBREF;
-		m->m_ext.ext_count = 1;
-	} else if (MBUF2MH(head)->mh_multiref &
-			   !!(me->me_ext_flags & EXT_FLAG_EMBREF)) {
-		/* 2b */
-		MPASS(ref->ext_count > 1);
-		m->m_ext.ext_flags = EXT_FLAG_MVEC_EMBREF;
-		/* point at embedded ref */
-		m->m_ext.ext_cnt = &ref->ext_count;
-		/* add implicit reference to ref */
-		if (head->m_ext.ext_flags & EXT_FLAG_EMBREF)
-			atomic_add_int(&head->m_ext.ext_count, 1);
-		else
-			atomic_add_int(head->m_ext.ext_cnt, 1);
-		/* keep track of the mvec since we can't get it from the offset */
-		m->m_ext.ext_arg1 = head;
 	} else {
-		/* 3 */
+		m_refcnt_t *ref = MHREFI(mh, 0);
+
 		m->m_ext.ext_cnt = ref->ext_cnt;
 	}
+	atomic_add_int(m->m_ext.ext_cnt, 1);
 }
 
 static struct mbuf *
-mvec_to_mchain_pkt_mut(struct mbuf *mp, struct mvec_header *mhdr, int how)
+mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
 {
 	struct mvec_ent *me;
 	struct mbuf *m, *mh, *mt;
 	int count;
 
-	me = MHMEI(mhdr, 0);
-	if (me->me_type == MVEC_MBUF && me->me_off &&
-		((struct mbuf *)me->me_cl)->m_flags & M_PKTHDR) {
-		mh = (struct mbuf *)me->me_cl;
-	} else {
-		if (__predict_false((mh = m_gethdr(how, MT_DATA)) == NULL))
-			goto fail;
-		mh->m_flags |= M_EXT;
-		mh->m_flags |= mp->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
-		/* XXX update csum_data after encap */
-		mh->m_pkthdr.csum_data = mp->m_pkthdr.csum_data;
-		mh->m_pkthdr.csum_flags = mp->m_pkthdr.csum_flags;
-		mh->m_pkthdr.vxlanid = mp->m_pkthdr.vxlanid;
-		m_ext_init(mh, mp, mhdr);
-	}
-	mh->m_data = me->me_cl + me->me_off;
-	mh->m_pkthdr.len = mh->m_len = me->me_len;
-	mhdr->mh_start++;
-	mt = mh;
-	count = mhdr->mh_count - mhdr->mh_start;
-	while (!me->me_eop && count) {
-		me++;
-		count--;
-		mhdr->mh_start++;
-		if (me->me_type == MVEC_MBUF && me->me_off != 0) {
-			mt->m_next = (struct mbuf *)me->me_cl;
-			mt = mt->m_next;
-		} else {
-			if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
-				goto fail;
-			mt->m_next = m;
-			mt = m;
-			mt->m_flags |= M_EXT;
-			m_ext_init(mt, mp, mhdr);
-		}
-		mt->m_len = me->me_len;
-		mh->m_pkthdr.len += mt->m_len;
-		mt->m_data = me->me_cl + me->me_off;
-	}
-	return (mh);
- fail:
-	if (mh)
-		m_freem(mh);
-	return (NULL);
-}
-
-/*
- * XXX -- needs finishing
- */
-static struct mbuf *
-mvec_to_mchain_pkt_clone(struct mbuf *mp, struct mvec_header *mhdr, int how)
-{
-	struct mvec_ent *me;
-	struct mbuf *m, *mh, *mt;
-	int count;
-
-	me = MHMEI(mhdr, 0);
 	if (__predict_false((mh = m_gethdr(how, MT_DATA)) == NULL))
-			goto fail;
+		return (NULL);
 
-	if (me->me_type == MVEC_MBUF) {
-		/* COPY */
-	} else {
-		mh->m_flags |= M_EXT;
-		mh->m_flags |= mp->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
-		/* XXX update csum_data after encap */
-		mh->m_pkthdr.csum_data = mp->m_pkthdr.csum_data;
-		mh->m_pkthdr.csum_flags = mp->m_pkthdr.csum_flags;
-		mh->m_pkthdr.vxlanid = mp->m_pkthdr.vxlanid;
-		m_ext_init(mh, mp, mhdr);
-	}
+	me = MHMEI(mhdr, 0);
+	mh->m_flags |= M_EXT;
+	mh->m_flags |= mp->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
+	/* XXX update csum_data after encap */
+	mh->m_pkthdr.csum_data = mp->m_pkthdr.csum_data;
+	mh->m_pkthdr.csum_flags = mp->m_pkthdr.csum_flags;
+	mh->m_pkthdr.vxlanid = mp->m_pkthdr.vxlanid;
+	m_ext_init(mh, mp, mhdr);
 	mh->m_data = me->me_cl + me->me_off;
 	mh->m_pkthdr.len = mh->m_len = me->me_len;
 	mhdr->mh_start++;
 	mt = mh;
 	count = mhdr->mh_count - mhdr->mh_start;
 	while (!me->me_eop && count) {
+		if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
+			goto fail;
 		me++;
 		count--;
 		mhdr->mh_start++;
-		if (me->me_type == MVEC_MBUF && me->me_off != 0) {
-			mt->m_next = (struct mbuf *)me->me_cl;
-			mt = mt->m_next;
-		} else {
-			if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
-				goto fail;
-			mt->m_next = m;
-			mt = m;
-			mt->m_flags |= M_EXT;
-			m_ext_init(mt, mp, mhdr);
-		}
+		mt->m_next = m;
+		mt = m;
+		mt->m_flags |= M_EXT;
+		m_ext_init(mt, mp, mhdr);
 		mt->m_len = me->me_len;
 		mh->m_pkthdr.len += mt->m_len;
 		mt->m_data = me->me_cl + me->me_off;
@@ -559,22 +451,12 @@ mvec_to_mchain(struct mbuf *mp, int how)
 {
 	struct mvec_header *pmhdr, mhdr;
 	struct mbuf *mh, *mt, *m;
-	bool clone;
-
-	if (mp->m_ext.ext_flags & EXT_FLAG_EMBREF) {
-		clone = (mp->m_ext.ext_count > 1);
-	} else {
-		clone = (*(mp->m_ext.ext_cnt) > 1);
-	}
 
 	pmhdr = MBUF2MH(mp);
 	bcopy(pmhdr, &mhdr, sizeof(mhdr));
 	mh = mt = NULL;
 	while (mhdr.mh_start < mhdr.mh_count) {
-		if (clone) {
-			if (__predict_false((m = mvec_to_mchain_pkt_clone(mp, &mhdr, how)) == NULL))
-				goto fail;
-		} else if (__predict_false((m = mvec_to_mchain_pkt_mut(mp, &mhdr, how)) == NULL))
+		if (__predict_false((m = mvec_to_mchain_pkt(mp, &mhdr, how)) == NULL))
 			goto fail;
 		if (mh != NULL) {
 			mt->m_nextpkt = m;
@@ -582,8 +464,6 @@ mvec_to_mchain(struct mbuf *mp, int how)
 		} else
 			mh = mt = m;
 	}
-	if (!clone)
-		free(mp, M_MVEC);
 	return (mh);
  fail:
 	m_freechain(mh);
@@ -848,8 +728,10 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 		soff = 0;
 		do {
 			if (soff == 0) {
-				if (dupref)
+				if (dupref && (mesrc_count->ext_cnt != NULL)) {
+					atomic_add_int(mesrc_count->ext_cnt, 1);
 					*medst_count = *mesrc_count;
+				}
 				mesrc_count++;
 				medst->me_type = mesrc->me_type;
 				medst->me_ext_flags = mesrc->me_ext_flags;
@@ -919,6 +801,11 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 		medst->me_eop = 0;
 		hdrbuf += hdrsize;		
 	}
-	free(m, M_MVEC);
-	return (0);
+	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+		mnew->m_ext.ext_cnt = &m->m_ext.ext_count;
+	} else {
+		mnew->m_ext.ext_cnt = m->m_ext.ext_cnt;
+	}
+	atomic_add_int(mnew->m_ext.ext_cnt, 1);
+	return (mnew);
 }
