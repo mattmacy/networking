@@ -3956,53 +3956,6 @@ iflib_if_init(void *arg)
 	iflib_if_init_locked(ctx);
 	CTX_UNLOCK(ctx);
 }
-static int
-qsetid(if_ctx_t ctx, struct mbuf *m, int *min_idx, int *max_idx)
-{
-	int idx;
-	if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m)) {
-		idx = QIDX(ctx, m);
-		if (idx > *max_idx)
-			*max_idx = idx;
-		if (idx < *min_idx)
-			*min_idx = idx;
-		return (idx);
-	}
-	return (0);
-}
-static struct mbuf *
-mbuf_batch_sort(if_ctx_t ctx, struct mbuf *m, int *min_qidx, int *max_qidx)
-{
-	struct mbuf **q_batch_sort, *mh, *mtrem, *mhrem;
-	uint8_t *q_batch_count;
-	int pidx, qidx;
-
-	mhrem = mtrem = NULL;
-	q_batch_count = DPCPU_GET(tx_q_batch_count);
-	q_batch_sort = DPCPU_GET(tx_q_batch_sort);
-	bzero(q_batch_count, NTXQSETS(ctx)*sizeof(uint8_t));
-	*max_qidx = 0;
-	do {
-		mh = m->m_nextpkt;
-		m->m_nextpkt = NULL;
-		qidx = qsetid(ctx, m, min_qidx, max_qidx);
-		pidx = q_batch_count[qidx];
-		if (__predict_false(pidx >= IFLIB_MAX_TX_BATCH)) {
-			if (mtrem) {
-				mtrem->m_nextpkt = m;
-				mtrem = m;
-			} else {
-				mhrem = mtrem = m;
-			}
-			continue;
-		}
-		q_batch_count[qidx]++;
-		q_batch_sort[qidx*IFLIB_MAX_TX_BATCH + pidx] = m;
-		m = mh;
-	} while (mh != NULL);
-
-	return (mhrem);
-}
 
 static int
 iflib_transmit_simple(iflib_txq_t txq, struct mbuf **m, int count)
@@ -4024,16 +3977,57 @@ iflib_transmit_simple(iflib_txq_t txq, struct mbuf **m, int count)
 }
 
 static int
+iflib_if_mbuf_to_qid(if_t ifp, struct mbuf *m)
+{
+	if_ctx_t	ctx = if_getsoftc(ifp);
+	int qidx;
+
+	qidx = 0;
+	if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
+		qidx = QIDX(ctx, m);
+	return (qidx);
+}
+
+static int
 iflib_if_transmit(if_t ifp, struct mbuf *m)
 {
 	if_ctx_t	ctx = if_getsoftc(ifp);
 	iflib_txq_t txq;
-	int err, last_err, qidx, min_qidx, max_qidx;
-	struct mbuf **q_batch_sort, *mh, *mhrem;
-	uint8_t *q_batch_count;
+	int err, qidx;
 
-	q_batch_count = DPCPU_GET(tx_q_batch_count);
-	q_batch_sort = DPCPU_GET(tx_q_batch_sort);
+	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx))) {
+		DBG_COUNTER_INC(tx_frees);
+		MPASS(m->m_nextpkt == NULL);
+		m_freem(m);
+
+		return (ENOBUFS);
+	}
+	qidx = 0;
+	if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
+		qidx = QIDX(ctx, m);
+	txq = &ctx->ifc_txqs[qidx];
+	err = iflib_transmit_simple(txq, &m, 1);
+#ifdef DRIVER_BACKPRESSURE
+	if (txq->ift_closed) {
+		while (m != NULL) {
+			next = m->m_nextpkt;
+			m->m_nextpkt = NULL;
+			m_freem(m);
+			m = next;
+		}
+		return (ENOBUFS);
+	}
+#endif
+	return (err);
+}
+
+static int
+iflib_if_transmit_txq(if_t ifp, struct mbuf *m)
+{
+	if_ctx_t	ctx = if_getsoftc(ifp);
+	iflib_txq_t txq;
+	int err, qidx, last_err;
+	struct mbuf *next, *mh;
 
 	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx))) {
 		DBG_COUNTER_INC(tx_frees);
@@ -4045,23 +4039,20 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		return (ENOBUFS);
 	}
 	qidx = 0;
-	if (m->m_nextpkt) {
-		last_err = max_qidx = 0;
-		min_qidx = IFLIB_MAX_TX_QUEUES;
-		/* XXX --- what to do with overflow? */
-		mhrem = mbuf_batch_sort(ctx, m, &min_qidx, &max_qidx);
-		for (int i = min_qidx; i <  max_qidx; i++) {
-			txq = &ctx->ifc_txqs[i];
-			err = iflib_transmit_simple(txq, &q_batch_sort[i*IFLIB_MAX_TX_BATCH],
-										q_batch_count[i]);
-			if (err)
-				last_err = err;
-		}
-	} else {
-		if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
-			qidx = QIDX(ctx, m);
-		txq = &ctx->ifc_txqs[qidx];
-		return (iflib_transmit_simple(txq, &m, 1));
+	if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
+		qidx = QIDX(ctx, m);
+	txq = &ctx->ifc_txqs[qidx];
+
+	/*
+	 * XXX find place to store packets in array to pass to mp_ring
+	 */
+	while (m != NULL) {
+		next = m->m_nextpkt;
+		m->m_nextpkt = NULL;
+		err = iflib_transmit_simple(txq, &m, 1);
+		if (__predict_false(err))
+			last_err = err;
+		m = next;
 	}
 #ifdef DRIVER_BACKPRESSURE
 	if (txq->ift_closed) {
@@ -4075,7 +4066,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	}
 #endif
 
-	return (last_err);
+	return (err);
 }
 
 static void
@@ -4738,8 +4729,8 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 		MPASS(scctx->isc_tx_csum_flags);
 #endif
 
-	if_setcapabilities(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH | IFCAP_LINKSTATE);
-	if_setcapenable(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_TXBATCH | IFCAP_RXBATCH | IFCAP_LINKSTATE);
+	if_setcapabilities(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_LINKSTATE);
+	if_setcapenable(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_LINKSTATE);
 
 	if (sctx->isc_flags & IFLIB_PSEUDO) {
 		ether_ifattach(ctx->ifc_ifp, ctx->ifc_mac);
@@ -5170,7 +5161,7 @@ iflib_register(if_ctx_t ctx)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	driver_t *driver = sctx->isc_driver;
 	device_t dev = ctx->ifc_dev;
-	if_t ifp;
+	struct ifnet *ifp;
 
 	if (!(sctx->isc_flags & IFLIB_PSEUDO))
 		_iflib_assert(sctx);
@@ -5200,6 +5191,8 @@ iflib_register(if_ctx_t ctx)
 	if_setinitfn(ifp, iflib_if_init);
 	if_setioctlfn(ifp, iflib_if_ioctl);
 	if_settransmitfn(ifp, iflib_if_transmit);
+	ifp->if_mbuf_to_qid = iflib_if_mbuf_to_qid;
+	ifp->if_transmit_txq = iflib_if_transmit_txq;
 	if_setqflushfn(ifp, iflib_if_qflush);
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
 

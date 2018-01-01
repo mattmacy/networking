@@ -174,6 +174,8 @@ static int	if_requestencap_default(struct ifnet *, struct if_encap_req *);
 static void	if_route(struct ifnet *, int flag, int fam);
 static int	if_setflag(struct ifnet *, int, int, int *, int);
 static int	if_transmit(struct ifnet *ifp, struct mbuf *m);
+static int	if_mbuf_to_qid(struct ifnet *ifp, struct mbuf *m);
+static int	if_transmit_txq(struct ifnet *ifp, struct mbuf *m);
 static void	if_unroute(struct ifnet *, int flag, int fam);
 static void	link_rtrequest(int, struct rtentry *, struct rt_addrinfo *);
 static int	ifhwioctl(u_long, struct ifnet *, caddr_t, struct thread *);
@@ -699,6 +701,10 @@ if_attach_internal(struct ifnet *ifp, int vmove, struct if_clone *ifc)
 	if (ifp->if_transmit == NULL) {
 		ifp->if_transmit = if_transmit;
 		ifp->if_qflush = if_qflush;
+	}
+	if (ifp->if_mbuf_to_qid == NULL) {
+		ifp->if_transmit_txq = if_transmit_txq;
+		ifp->if_mbuf_to_qid = if_mbuf_to_qid;
 	}
 	if (ifp->if_input == NULL)
 		ifp->if_input = if_input_default;
@@ -3669,6 +3675,35 @@ if_transmit(struct ifnet *ifp, struct mbuf *m)
 
 	IFQ_HANDOFF(ifp, m, error);
 	return (error);
+}
+
+static int
+if_mbuf_to_qid(struct ifnet *ifp, struct mbuf *m)
+{
+	return (0);
+}
+
+static int
+if_transmit_txq(struct ifnet *ifp, struct mbuf *m)
+{
+	struct mbuf *mp, *mnext;
+	int rc, lasterr;
+
+	mp = m;
+	lasterr = 0;
+	do {
+		mnext = mp->m_nextpkt;
+		mp->m_nextpkt = NULL;
+		rc = ifp->if_transmit(ifp, mp);
+		if (__predict_false(rc)) {
+			lasterr = rc;
+			if (rc == ENOBUFS)
+				return (rc);
+		}
+		mp = mnext;
+	} while (mp != NULL);
+
+	return (lasterr);
 }
 
 static void
