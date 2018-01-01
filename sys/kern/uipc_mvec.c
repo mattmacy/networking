@@ -430,29 +430,86 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 	return (0);
 }
 
+struct tso_state {
+	if_pkt_info_t ts_pi;
+	uint16_t ts_idx;
+	uint16_t ts_prehdrlen;
+	tcp_seq ts_seq;
+};
+
+static void
+tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen)
+{
+	struct ip *ip;
+
+	ip = (struct ip *)(hdr + prehdrlen + pi->ipi_ehdrlen);
+	state->ts_pi = pi;
+	state->ts_idx = ntohs(ip->ip_id);
+	state->ts_prehdrlen = prehdrlen;
+	state->ts_seq = pi->ipi_tcp_seq;
+}
+
+static void
+tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
+{
+	if_pkt_info_t pi = state->ts_pi;
+	struct ip *ip;
+	struct tcphdr *th;
+
+	if (pi->ipi_etype == ETHERTYPE_IP) {
+		ip = (struct ip *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen);
+		ip->ip_len = htons(len);
+		ip->ip_id = htons(state->ts_idx);
+		ip->ip_sum = 0;
+		state->ts_idx++;
+	} else if (pi->ipi_etype == ETHERTYPE_IPV6) {
+		/* XXX notyet */
+	} else {
+		panic("bad ethertype %d in tso_fixup", pi->ipi_etype);
+	}
+	if (pi->ipi_ipproto == IPPROTO_TCP) {
+		th = (struct tcphdr *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen + pi->ipi_ip_hlen);
+		th->th_seq = htonl(state->ts_seq);
+		state->ts_seq += len;
+		th->th_sum = 0;
+
+		/* Zero the PSH and FIN TCP flags if this is not the last
+		   segment. */
+		if (!last)
+			th->th_flags &= ~(0x8 | 0x1);
+	} else {
+		panic("non TCP IPPROTO %d in tso_fixup", pi->ipi_ipproto);
+	}
+}
+
 struct mbuf *
 mvec_tso(struct mbuf *m, int prehdrlen)
 {
 	struct mvec_header *mh, *newmh;
-	struct mvec_ent *me, *mesrc, *medst, *newme;
+	struct mvec_ent *me, *mesrc, *medst, *newme, mesrchdr;
 	struct mbuf *mnew;
 	struct if_pkt_info pi;
+	struct tso_state state;
 	m_refcnt_t *newme_count, *medst_count, *mesrc_count;
 	int segcount, soff, segrem, srem;
-	int i, ntsofrags, segsz, cursegrem, nheaders, hdrsize, rem, curseg, count, size;
-	struct tcphdr *th;
+	int i, ntsofrags, segsz, cursegrem, nheaders, hdrsize;
+	int refsize, rem, curseg, count, size, pktrem;
+	bool dupref;
 	caddr_t hdrbuf;
 
 	segsz = m->m_pkthdr.tso_segsz;
+	pktrem = m->m_pkthdr.len;
+	refsize = 0;
 	mh = (struct mvec_header *)(m->m_pktdat + sizeof(struct m_ext));
 	me = (struct mvec_ent *)(mh + 1);
+	dupref = mh->mh_multiref;
 	pi.ipi_tso_segsz = segsz;
 	if (mvec_parse_header(m, prehdrlen, &pi))
 		return (NULL);
 	hdrsize = prehdrlen + pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
-	
-	nheaders = m->m_pkthdr.len / segsz;
-	if (nheaders*segsz != m->m_pkthdr.len)
+	pktrem -= hdrsize;
+	nheaders = pktrem / segsz;
+	if (nheaders*segsz != pktrem)
 		nheaders++;
 	for (segcount = i = 0; i < mh->mh_count; i++, me++) {
 		rem = me->me_len;
@@ -476,24 +533,31 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 	}
 
 	count = segcount + nheaders;
-	size = count*sizeof(struct mvec_ent) + sizeof(*mh) + sizeof(struct mbuf);
 	if (mh->mh_multiref)
-		size += count*sizeof(void*);
+		refsize = count*sizeof(void*);
+	size = count*sizeof(struct mvec_ent) + sizeof(*mh) + sizeof(struct mbuf) + refsize;
 	size += nheaders * hdrsize;
-	mnew = malloc(size, M_MVEC, M_NOWAIT);	
+	/*
+	 * XXX if this fails check mbuf & cluster zones
+	 */
+	if ((mnew = malloc(size, M_MVEC, M_NOWAIT)) == NULL)
+		return (NULL);
+
+	__builtin_prefetch(mnew->m_pktdat);
 	mvec_header_init(mnew);
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
 	mnew->m_len = m->m_len;
 	newmh = (struct mvec_header *)mnew->m_pktdat + sizeof(struct m_ext);
 	newmh->mh_count = count;
 	newmh->mh_multiref = mh->mh_multiref;
+	newmh->mh_start = 0;
 	newme = (struct mvec_ent *)(mh + 1);
 	newme_count = (m_refcnt_t *)(me + count);
-
+	__builtin_prefetch(newme_count);
 	medst_count = newme_count;
 	medst = newme;
-	mesrc_count = (m_refcnt_t *)(me + mh->mh_count);
-	mesrc = me;
+	mesrc_count = ((m_refcnt_t *)(me + mh->mh_count)) + mh->mh_start;
+	mesrc = &me[mh->mh_start];
 	
 	soff = 0;
 	MPASS(mesrc->me_len >= hdrsize);
@@ -501,25 +565,45 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 		mesrc++;
 	else if (mesrc->me_len > hdrsize)
 		soff = hdrsize;
-	hdrbuf = (caddr_t)(newme + count);
-	bzero(medst_count, count*sizeof(void *));
-	for (i = 0; i < nheaders; i++) {
-		bcopy(ME_SEG(mh, 0), hdrbuf, hdrsize);
-		th = (struct tcphdr *)(hdrbuf + (hdrsize - pi.ipi_tcp_hlen));
-		/* fixup tcphdr XXX */
-		medst->me_cl = hdrbuf;
-		medst->me_off = 0;
-		medst->me_len = hdrsize;
-		medst->me_type = MVEC_UNMANAGED;
-		medst->me_ext_flags = 0;
-		medst->me_ext_type = 0;
-		medst->me_eop = 0;
-		segrem = segsz;
-		soff = 0;
+
+	/* make backup of header info */
+	bcopy(mesrc, &mesrchdr, sizeof(mesrchdr));
+	mesrchdr.me_type = MVEC_UNMANAGED;
+	mesrchdr.me_ext_flags = 0;
+	mesrchdr.me_ext_type = 0;
+
+	/*
+	 * Trim off header info
+	 */
+	if (mesrc->me_len == hdrsize) {
+		if (dupref)
+			*medst_count = *mesrc_count;
+		mh->mh_start++;
+		mesrc++;
+	} else {
+		mesrchdr.me_len = hdrsize;
+		if (dupref)
+			medst_count->ext_cnt = NULL;
+		mesrc->me_off += hdrsize;
+		mesrc->me_len -= hdrsize;
+	}
+	if (dupref) {
+		bzero(medst_count, count*sizeof(void *));
 		medst_count++;
+	}
+	/* bump dest past header */
+	medst->me_cl = NULL;
+	medst++;
+	/*
+	 * Packet segmentation loop
+	 */
+	for (i = 1; i < nheaders; i++) {
+		segrem = min(segsz, pktrem);
+		soff = 0;
 		do {
 			if (soff == 0) {
-				*medst_count = *mesrc_count;
+				if (dupref)
+					*medst_count = *mesrc_count;
 				mesrc_count++;
 				medst->me_type = mesrc->me_type;
 				medst->me_ext_flags = mesrc->me_ext_flags;
@@ -551,6 +635,43 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 			medst++;
 			medst_count++;
 		} while (medst->me_eop == 0);
+		pktrem -= segrem;
+		/* skip next header */
+		medst->me_cl = NULL;
+		medst++;
+		medst_count++;
+	}
+
+
+	/*
+	 * Special case first header
+	 */
+	pktrem = m->m_pkthdr.len - hdrsize;
+	MPASS(pktrem > segsz);
+	medst = newme;
+	bcopy(&mesrchdr, medst, sizeof(*medst));
+	tso_init(&state, medst->me_cl + me->me_off, &pi, prehdrlen);
+	tso_fixup(&state, medst->me_cl + medst->me_off, segsz, false);
+
+	/*
+	 * Header initialization loop
+	 */
+	hdrbuf = (caddr_t)(newme + count) + refsize;
+	for (i = 1; i < nheaders; i++) {
+		MPASS(pktrem > 0);
+		/* skip ahead to next header slot */
+		while (medst->me_cl != NULL)
+			medst++;
+		bcopy(mesrchdr.me_cl + mesrchdr.me_off, hdrbuf, hdrsize);
+		tso_fixup(&state, hdrbuf, min(pktrem, segsz), (pktrem <= segsz));
+		pktrem -= segsz;
+		medst->me_cl = hdrbuf;
+		medst->me_off = 0;
+		medst->me_len = hdrsize;
+		medst->me_type = MVEC_UNMANAGED;
+		medst->me_ext_flags = 0;
+		medst->me_ext_type = 0;
+		medst->me_eop = 0;
 		hdrbuf += hdrsize;		
 	}
 	return (0);
