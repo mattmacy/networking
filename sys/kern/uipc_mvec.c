@@ -437,6 +437,8 @@ m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 			atomic_add_int(&head->m_ext.ext_count, 1);
 		else
 			atomic_add_int(head->m_ext.ext_cnt, 1);
+		/* keep track of the mvec since we can't get it from the offset */
+		m->m_ext.ext_arg1 = head;
 	} else {
 		/* 3 */
 		m->m_ext.ext_cnt = ref->ext_cnt;
@@ -444,7 +446,7 @@ m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 }
 
 static struct mbuf *
-mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
+mvec_to_mchain_pkt_mut(struct mbuf *mp, struct mvec_header *mhdr, int how)
 {
 	struct mvec_ent *me;
 	struct mbuf *m, *mh, *mt;
@@ -496,17 +498,83 @@ mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
 	return (NULL);
 }
 
+/*
+ * XXX -- needs finishing
+ */
+static struct mbuf *
+mvec_to_mchain_pkt_clone(struct mbuf *mp, struct mvec_header *mhdr, int how)
+{
+	struct mvec_ent *me;
+	struct mbuf *m, *mh, *mt;
+	int count;
+
+	me = MHMEI(mhdr, 0);
+	if (__predict_false((mh = m_gethdr(how, MT_DATA)) == NULL))
+			goto fail;
+
+	if (me->me_type == MVEC_MBUF) {
+		/* COPY */
+	} else {
+		mh->m_flags |= M_EXT;
+		mh->m_flags |= mp->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
+		/* XXX update csum_data after encap */
+		mh->m_pkthdr.csum_data = mp->m_pkthdr.csum_data;
+		mh->m_pkthdr.csum_flags = mp->m_pkthdr.csum_flags;
+		mh->m_pkthdr.vxlanid = mp->m_pkthdr.vxlanid;
+		m_ext_init(mh, mp, mhdr);
+	}
+	mh->m_data = me->me_cl + me->me_off;
+	mh->m_pkthdr.len = mh->m_len = me->me_len;
+	mhdr->mh_start++;
+	mt = mh;
+	count = mhdr->mh_count - mhdr->mh_start;
+	while (!me->me_eop && count) {
+		me++;
+		count--;
+		mhdr->mh_start++;
+		if (me->me_type == MVEC_MBUF && me->me_off != 0) {
+			mt->m_next = (struct mbuf *)me->me_cl;
+			mt = mt->m_next;
+		} else {
+			if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
+				goto fail;
+			mt->m_next = m;
+			mt = m;
+			mt->m_flags |= M_EXT;
+			m_ext_init(mt, mp, mhdr);
+		}
+		mt->m_len = me->me_len;
+		mh->m_pkthdr.len += mt->m_len;
+		mt->m_data = me->me_cl + me->me_off;
+	}
+	return (mh);
+ fail:
+	if (mh)
+		m_freem(mh);
+	return (NULL);
+}
+
 struct mbuf *
 mvec_to_mchain(struct mbuf *mp, int how)
 {
 	struct mvec_header *pmhdr, mhdr;
 	struct mbuf *mh, *mt, *m;
+	bool clone;
+
+	if (mp->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+		clone = (mp->m_ext.ext_count > 1);
+	} else {
+		clone = (*(mp->m_ext.ext_cnt) > 1);
+	}
 
 	pmhdr = MBUF2MH(mp);
 	bcopy(pmhdr, &mhdr, sizeof(mhdr));
 	mh = mt = NULL;
 	while (mhdr.mh_start < mhdr.mh_count) {
-		if (__predict_false((m = mvec_to_mchain_pkt(mp, &mhdr, how)) == NULL))
+		if (clone) {
+			if (__predict_false((m = mvec_to_mchain_pkt_clone(mp, &mhdr, how)) == NULL))
+				goto fail;
+		} else if (__predict_false((m = mvec_to_mchain_pkt_mut(mp, &mhdr, how)) == NULL))
 			goto fail;
 		if (mh != NULL) {
 			mt->m_nextpkt = m;
@@ -514,6 +582,8 @@ mvec_to_mchain(struct mbuf *mp, int how)
 		} else
 			mh = mt = m;
 	}
+	if (!clone)
+		free(mp, M_MVEC);
 	return (mh);
  fail:
 	m_freechain(mh);
@@ -849,5 +919,6 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 		medst->me_eop = 0;
 		hdrbuf += hdrsize;		
 	}
+	free(m, M_MVEC);
 	return (0);
 }
