@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2017 Matthew Macy <matt.macy@joyent.com>
  * All rights reserved.
@@ -42,6 +41,20 @@ __FBSDID("$FreeBSD$");
 static MALLOC_DEFINE(M_MVEC, "mvec", "mbuf vector");
 
 static int type2len[] = {-1, MCLBYTES, -1, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES, -1, MSIZE};
+#define VALIDTYPES ((1<<EXT_CLUSTER)|(1<<EXT_JUMBOP)|(1<<EXT_JUMBO9)|(1<<EXT_JUMBO16)|(1<<EXT_MVEC))
+
+static void
+m_freechain(struct mbuf *m)
+{
+	struct mbuf *mp, *mnext;
+
+	mp = m;
+	while (mp != NULL) {
+		mnext = mp->m_nextpkt;
+		m_freem(mp);
+		mp = mnext;
+	}
+}
 
 static void
 mvec_clfree(struct mvec_ent *me, m_refcnt_t *refcntp, bool dupref)
@@ -159,31 +172,42 @@ mvec_trim(struct mbuf *m, int offset)
 	m->m_data = ME_SEG(mh, 0);
 }
 
+static int
+mvec_ent_size(struct mvec_ent *me)
+{
+	int type;
+
+	MPASS(me->me_ext_type && (me->me_ext_type < 32));
+
+	type = me->me_ext_type;
+	MPASS((1<<type) & VALIDTYPES);
+	return (type2len[type]);
+}
+
 struct mbuf *
 mvec_pullup(struct mbuf *m, int count)
 {
 	struct mvec_header *mh;
 	struct mvec_ent *mecur, *menxt;
-	int tailroom, type, size, copylen, doff, i, len;
+	int tailroom, size, copylen, doff, i, len;
 	
 	MPASS(size <= m->m_pkthdr.len);
 	mh = MBUF2MH(m);
 	mecur = MHMEI(mh, 0);
-	type = mecur->me_ext_type;
-	MPASS(type <= EXT_MBUF);
-	size = type2len[type];
-	MPASS(size > 0);
+	size = mvec_ent_size(mecur);
 	tailroom = size - mecur->me_off - mecur->me_len;
 	MPASS(headroom >= 0);
 	copylen = count - mecur->me_len;
 
 	if (copylen > size) {
 		/* allocate new buffer */
+		panic("allocate new buffer copylen=%d size=%d", copylen, size);
 	} else if (copylen > tailroom) {
 		/*
 		 * move data up if possible
 		 * else allocate new buffer
 		 */
+		panic("relocate data copylen=%d size=%d tailroom=%d", copylen, size, tailroom);
 	}
 	doff = mecur->me_off + mecur->me_len;
 	i = 1;
@@ -236,7 +260,6 @@ mvec_free(struct mbuf *m)
 	}
 }
 
-
 static void
 mvec_header_init(struct mbuf *mnew)
 {
@@ -250,7 +273,7 @@ mvec_header_init(struct mbuf *mnew)
 }
 
 struct mbuf *
-mchain_to_mvec(struct mbuf *m)
+mchain_to_mvec(struct mbuf *m, int how)
 {
 	struct mbuf *mp, *mnext, *mnew;
 	struct mvec_header *mh;
@@ -281,7 +304,7 @@ mchain_to_mvec(struct mbuf *m)
 	size = count*sizeof(struct mvec_ent) + sizeof(*mh) + sizeof(struct mbuf);
 	if (dupref)
 		size += count*sizeof(void*);
-	mnew = malloc(size, M_MVEC, M_NOWAIT);
+	mnew = malloc(size, M_MVEC, how);
 	if (mnew == NULL)
 		return (NULL);
 	me_count = NULL;
@@ -342,8 +365,160 @@ mchain_to_mvec(struct mbuf *m)
 		mp = mnext;
 		me++;
 	} while (mp);
+
 	return (mnew);
-}	
+}
+
+static void
+m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
+{
+	struct mvec_ent *me;
+	m_refcnt_t *ref;
+	bool clone;
+
+	me = MHMEI(mh, 0);
+	ref = MHREFI(mh, 0);
+	if (head->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+		clone = (head->m_ext.ext_count > 1);
+	} else {
+		clone = (*(head->m_ext.ext_cnt) > 1);
+	}
+
+	m->m_ext.ext_buf = me->me_cl;
+	m->m_ext.ext_arg1 = head->m_ext.ext_arg1;
+	m->m_ext.ext_arg2 = head->m_ext.ext_arg2;
+	m->m_ext.ext_free = head->m_ext.ext_free;
+	m->m_ext.ext_type = me->me_ext_type;
+	m->m_ext.ext_flags = me->me_ext_flags;
+	m->m_ext.ext_size = mvec_ent_size(me);
+	/*
+	 * There are 3 cases for refcount transfer:
+	 *  1) all clusters are owned by the mvec [default]
+	 *     a) we can create an embedded refcnt if the mvec
+	 *        refcnt is 1
+	 *     b) we need to clone all of the mbufs, preserve
+	 *        the mvec and increment the mvec's refcnt for
+	 *        cluster
+	 *  2) cluster has an embedded refcount:
+	 *     a) can be transferred if the refcnt is 1
+	 *     b) it needs to be preserved in the mvec - meaning
+	 *        we need to refcount the reference by adding
+	 *        a reference to the mvec and then releasing
+	 *        it when the clusters refcount goes to zero
+	 *  3) cluster has a normal external refcount
+	 */
+	if (!MBUF2MH(head)->mh_multiref && !clone) {
+		/* 1a */
+		m->m_ext.ext_flags = EXT_FLAG_EMBREF;
+		m->m_ext.ext_count = 1;
+	} else if (!MBUF2MH(head)->mh_multiref && clone) {
+		/* 1b */
+		m->m_ext.ext_flags = EXT_FLAG_MVECREF;
+		if (head->m_ext.ext_flags & EXT_FLAG_EMBREF)
+			m->m_ext.ext_cnt = &head->m_ext.ext_count;
+		else
+			m->m_ext.ext_cnt = head->m_ext.ext_cnt;
+		atomic_add_int(m->m_ext.ext_cnt, 1);
+	} else if (MBUF2MH(head)->mh_multiref &
+			   !!(me->me_ext_flags & EXT_FLAG_EMBREF) &
+			   (ref->ext_count == 1)) {
+		/* 2a */
+		m->m_ext.ext_flags = EXT_FLAG_EMBREF;
+		m->m_ext.ext_count = 1;
+	} else if (MBUF2MH(head)->mh_multiref &
+			   !!(me->me_ext_flags & EXT_FLAG_EMBREF)) {
+		/* 2b */
+		MPASS(ref->ext_count > 1);
+		m->m_ext.ext_flags = EXT_FLAG_MVEC_EMBREF;
+		/* point at embedded ref */
+		m->m_ext.ext_cnt = &ref->ext_count;
+		/* add implicit reference to ref */
+		if (head->m_ext.ext_flags & EXT_FLAG_EMBREF)
+			atomic_add_int(&head->m_ext.ext_count, 1);
+		else
+			atomic_add_int(head->m_ext.ext_cnt, 1);
+	} else {
+		/* 3 */
+		m->m_ext.ext_cnt = ref->ext_cnt;
+	}
+}
+
+static struct mbuf *
+mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
+{
+	struct mvec_ent *me;
+	struct mbuf *m, *mh, *mt;
+	int count;
+
+	me = MHMEI(mhdr, 0);
+	if (me->me_type == MVEC_MBUF && me->me_off &&
+		((struct mbuf *)me->me_cl)->m_flags & M_PKTHDR) {
+		mh = (struct mbuf *)me->me_cl;
+	} else {
+		if (__predict_false((mh = m_gethdr(how, MT_DATA)) == NULL))
+			goto fail;
+		mh->m_flags |= M_EXT;
+		mh->m_flags |= mp->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
+		/* XXX update csum_data after encap */
+		mh->m_pkthdr.csum_data = mp->m_pkthdr.csum_data;
+		mh->m_pkthdr.csum_flags = mp->m_pkthdr.csum_flags;
+		mh->m_pkthdr.vxlanid = mp->m_pkthdr.vxlanid;
+		m_ext_init(mh, mp, mhdr);
+	}
+	mh->m_data = me->me_cl + me->me_off;
+	mh->m_pkthdr.len = mh->m_len = me->me_len;
+	mhdr->mh_start++;
+	mt = mh;
+	count = mhdr->mh_count - mhdr->mh_start;
+	while (!me->me_eop && count) {
+		me++;
+		count--;
+		mhdr->mh_start++;
+		if (me->me_type == MVEC_MBUF && me->me_off != 0) {
+			mt->m_next = (struct mbuf *)me->me_cl;
+			mt = mt->m_next;
+		} else {
+			if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
+				goto fail;
+			mt->m_next = m;
+			mt = m;
+			mt->m_flags |= M_EXT;
+			m_ext_init(mt, mp, mhdr);
+		}
+		mt->m_len = me->me_len;
+		mh->m_pkthdr.len += mt->m_len;
+		mt->m_data = me->me_cl + me->me_off;
+	}
+	return (mh);
+ fail:
+	if (mh)
+		m_freem(mh);
+	return (NULL);
+}
+
+struct mbuf *
+mvec_to_mchain(struct mbuf *mp, int how)
+{
+	struct mvec_header *pmhdr, mhdr;
+	struct mbuf *mh, *mt, *m;
+
+	pmhdr = MBUF2MH(mp);
+	bcopy(pmhdr, &mhdr, sizeof(mhdr));
+	mh = mt = NULL;
+	while (mhdr.mh_start < mhdr.mh_count) {
+		if (__predict_false((m = mvec_to_mchain_pkt(mp, &mhdr, how)) == NULL))
+			goto fail;
+		if (mh != NULL) {
+			mt->m_nextpkt = m;
+			mt = m;
+		} else
+			mh = mt = m;
+	}
+	return (mh);
+ fail:
+	m_freechain(mh);
+	return (NULL);
+}
 
 /*
  * Move the below to net/ once working 
@@ -550,6 +725,7 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 	newmh = (struct mvec_header *)mnew->m_pktdat + sizeof(struct m_ext);
 	newmh->mh_count = count;
 	newmh->mh_multiref = mh->mh_multiref;
+	newmh->mh_multipkt = true;
 	newmh->mh_start = 0;
 	newme = (struct mvec_ent *)(mh + 1);
 	newme_count = (m_refcnt_t *)(me + count);
@@ -641,7 +817,6 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 		medst++;
 		medst_count++;
 	}
-
 
 	/*
 	 * Special case first header
