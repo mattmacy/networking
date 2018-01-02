@@ -166,6 +166,37 @@ mvec_trim(struct mbuf *m, int offset)
 	m->m_data = ME_SEG(mh, 0);
 }
 
+struct mbuf *
+mvec_headroom_prepend(struct mbuf *m, int size)
+{
+	struct mvec_header *mh;
+	struct mvec_ent *me;
+	struct mbuf *data;
+
+	MPASS(size <= MSIZE);
+	if (__predict_false((data = m_get(M_NOWAIT, MT_NOINIT)) == NULL))
+		return (NULL);
+
+	mh = MBUF2MH(m);
+	if (__predict_true(mh->mh_start)) {
+		mh->mh_start--;
+		me = MHMEI(mh, 0);
+		me->me_len = size;
+		me->me_cl = (caddr_t)data;
+		me->me_off = 0;
+		me->me_type = MVEC_MBUF;
+		me->me_eop = 0;
+		me->me_ext_flags = 0;
+		me->me_ext_type = EXT_MBUF;
+		m->m_pkthdr.len += size;
+		m->m_len = size;
+		m->m_data = me->me_cl;
+	} else {
+		panic("implement fallback path for headroom prepend");
+	}
+	return (m);
+}
+
 static int
 mvec_ent_size(struct mvec_ent *me)
 {
@@ -595,7 +626,7 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 }
 
 struct mbuf *
-mvec_tso(struct mbuf *m, int prehdrlen)
+mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 {
 	struct mvec_header *mh, *newmh;
 	struct mvec_ent *me, *mesrc, *medst, *newme, mesrchdr;
@@ -606,6 +637,7 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 	int segcount, soff, segrem, srem;
 	int i, ntsofrags, segsz, cursegrem, nheaders, hdrsize;
 	int refsize, rem, curseg, count, size, pktrem;
+	volatile uint32_t *refcnt;
 	bool dupref;
 	caddr_t hdrbuf;
 
@@ -789,10 +821,16 @@ mvec_tso(struct mbuf *m, int prehdrlen)
 		hdrbuf += hdrsize;		
 	}
 	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
-		mnew->m_ext.ext_cnt = &m->m_ext.ext_count;
+		refcnt = &m->m_ext.ext_count;
 	} else {
-		mnew->m_ext.ext_cnt = m->m_ext.ext_cnt;
+		refcnt = m->m_ext.ext_cnt;
 	}
-	atomic_add_int(mnew->m_ext.ext_cnt, 1);
+	if (freesrc && (*refcnt == 1)) {
+		mnew->m_ext.ext_count = 1;
+		if (!(m->m_ext.ext_flags & EXT_FLAG_EMBREF))
+			free(__containerof(refcnt, struct mbuf, m_ext.ext_count), M_MVEC);
+		free(m, M_MVEC);
+	} else
+		atomic_add_int(mnew->m_ext.ext_cnt, 1);
 	return (mnew);
 }
