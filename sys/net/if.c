@@ -4227,6 +4227,18 @@ if_setstartfn(if_t ifp, void (*start_fn)(if_t))
 }
 
 void
+if_settransmittxqfn(if_t ifp, if_transmit_fn_t fn)
+{
+	((struct ifnet *)ifp)->if_transmit_txq = fn;
+}
+
+void
+if_setmbuftoqidfn(if_t ifp, if_transmit_fn_t fn)
+{
+	((struct ifnet *)ifp)->if_mbuf_to_qid = fn;
+}
+void
+
 if_settransmitfn(if_t ifp, if_transmit_fn_t start_fn)
 {
 	((struct ifnet *)ifp)->if_transmit = start_fn;
