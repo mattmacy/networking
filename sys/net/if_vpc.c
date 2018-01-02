@@ -421,37 +421,42 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 {
 	struct ether_vlan_header *evh, *evhvx;
 	struct vxlan_header *vh;
-	struct mbuf *mh, *m;
+	struct mbuf *mh, *m, *mtmp;
 	struct vpc_ftable *vf;
 	struct sockaddr *dst;
 	struct route ro;
 	struct rtentry *rt;
 	struct ifnet *ifp;
-	int rc;
+	int rc, ismvec, hdrsize;
 
 	m = *mp;
 	*mp = NULL;
-	mh = m_gethdr(M_NOWAIT, MT_NOINIT);
-	if (__predict_false(mh == NULL)) {
-		m_freem(m);
-		return (ENOMEM);
-	}
+	ismvec = ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC));
 	evhvx = (struct ether_vlan_header *)m->m_data;
-	bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
-	mh->m_data = mh->m_pktdat;
-	mh->m_nextpkt = NULL;
-	vh = (struct vxlan_header *)mh->m_data;
-	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
-	mh->m_flags = M_PKTHDR;
-	mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
-	mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
-	/* XXX v4 only */
-	mh->m_pkthdr.len += sizeof(struct vxlan_header);
-	mh->m_len = sizeof(struct vxlan_header);
-	mh->m_next = m;
-
+	hdrsize = sizeof(struct vxlan_header);
+	if (ismvec) {
+		mh = mvec_headroom_prepend(m, hdrsize);
+	} else {
+		mh = m_gethdr(M_NOWAIT, MT_NOINIT);
+		if (__predict_false(mh == NULL)) {
+			m_freem(m);
+			return (ENOMEM);
+		}
+		bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
+		mh->m_data = mh->m_pktdat;
+		mh->m_nextpkt = NULL;
+		vh = (struct vxlan_header *)mh->m_data;
+		evh = (struct ether_vlan_header *)&vh->vh_ehdr;
+		mh->m_flags = M_PKTHDR;
+		mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
+		mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+		/* XXX v4 only */
+		mh->m_pkthdr.len += hdrsize;
+		mh->m_len = hdrsize;
+		mh->m_next = m;
+		m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
+	}
 	m->m_nextpkt = NULL;
-	m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
 
 	if (__predict_true(vpc_cache_lookup(vs, mh, evhvx))) {
 		*mp = mh;
@@ -518,6 +523,25 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		printf("L2 resolution on %s failed %d\n", buf, rc);
 		m_freem(mh);
 		return (rc);
+	}
+	/*
+	 * do soft TSO if hardware doesn't support VXLAN offload
+	 */
+	if (!!(m->m_pkthdr.csum_flags & CSUM_TSO) &
+		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
+		if (__predict_false(!ismvec)) {
+			mtmp = mchain_to_mvec(mh, M_NOWAIT);
+			m_freem(mh);
+			if (__predict_false(mtmp == NULL))
+					return (ENOMEM);
+			mh = mtmp;
+		}
+		mtmp = mvec_tso(mh, hdrsize, true);
+		if (__predict_false(mtmp == NULL)) {
+			m_freem(mh);
+			return (ENOMEM);
+		}
+		mh = mtmp;
 	}
 	mh->m_pkthdr.rcvif = ifp;
 	vpc_vxlanhdr_init(vf, vh, dst, ifp, m);
@@ -603,7 +627,7 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 		mp->m_nextpkt = NULL;
 		ifp = mp->m_pkthdr.rcvif;
 		mp->m_pkthdr.rcvif = NULL;
-		rc = ifp->if_transmit(ifp, mp);
+		rc = ifp->if_transmit_txq(ifp, mp);
 		if (rc)
 			lasterr = rc;
 		mp = mnext;
