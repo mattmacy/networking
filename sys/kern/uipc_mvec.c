@@ -215,7 +215,7 @@ mvec_pullup(struct mbuf *m, int count)
 	struct mvec_header *mh;
 	struct mvec_ent *mecur, *menxt;
 	int tailroom, size, copylen, doff, i, len;
-	
+
 	MPASS(size <= m->m_pkthdr.len);
 	mh = MBUF2MH(m);
 	mecur = MHMEI(mh, 0);
@@ -273,7 +273,7 @@ mvec_free(struct mbuf *m)
 	mh = (struct mvec_header *)m->m_pktdat + sizeof(struct m_ext);
 	me = (struct mvec_ent *)(mh + 1);
 	me_count = (m_refcnt_t *)(me + mh->mh_count);
-		
+
 	for (i = 0; i < mh->mh_count; i++, me_count++, me++) {
 		switch (me->me_type) {
 			case MVEC_MBUF:
@@ -511,7 +511,7 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 	struct ether_vlan_header *evh;
 	struct mvec_header *mh = MBUF2MH(m);
 	struct mvec_ent *me = MHMEI(mh, 0);
-		
+
 	if (__predict_false(me->me_len - prehdrlen < MIN_HDR_LEN) &&
 		__predict_false(mvec_pullup(m, prehdrlen + MIN_HDR_LEN) == NULL))
 			return (ENOMEM);
@@ -560,7 +560,6 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 				ip->ip_len = htons(pi->ipi_ip_hlen + pi->ipi_tcp_hlen + pi->ipi_tso_segsz);
 
 			}
-			
 			break;
 		}
 		case ETHERTYPE_IPV6: {
@@ -703,7 +702,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	medst = newme;
 	mesrc_count = ((m_refcnt_t *)(me + mh->mh_count)) + mh->mh_start;
 	mesrc = &me[mh->mh_start];
-	
+
 	soff = 0;
 	MPASS(mesrc->me_len >= hdrsize);
 	if (mesrc->me_len == hdrsize)
@@ -778,7 +777,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 				medst->me_eop = 1;
 				soff += segrem;
 				medst->me_len = segrem;
-			}				
+			}
 			medst++;
 			medst_count++;
 		} while (medst->me_eop == 0);
@@ -818,7 +817,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		medst->me_ext_flags = 0;
 		medst->me_ext_type = 0;
 		medst->me_eop = 0;
-		hdrbuf += hdrsize;		
+		hdrbuf += hdrsize;
 	}
 	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
 		refcnt = &m->m_ext.ext_count;
