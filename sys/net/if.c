@@ -3686,7 +3686,7 @@ if_mbuf_to_qid(struct ifnet *ifp, struct mbuf *m)
 static int
 if_transmit_txq(struct ifnet *ifp, struct mbuf *m)
 {
-	struct mbuf *mp, *mnext;
+	struct mbuf *mp, *mnext, *mchain;
 	int rc, lasterr;
 
 	mp = m;
@@ -3694,15 +3694,26 @@ if_transmit_txq(struct ifnet *ifp, struct mbuf *m)
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
-		rc = ifp->if_transmit(ifp, mp);
+		if ((mp->m_flags & M_EXT) && (mp->m_ext.ext_type == EXT_MVEC)) {
+			mchain = mvec_to_mchain(mp, M_NOWAIT);
+			if (__predict_false(mchain == NULL)) {
+				m_freem(mp);
+				rc = ENOMEM;
+			} else {
+				rc = if_transmit_txq(ifp, mchain);
+			}
+		} else
+			rc = ifp->if_transmit(ifp, mp);
 		if (__predict_false(rc)) {
 			lasterr = rc;
 			if (rc == ENOBUFS)
-				return (rc);
+				goto fail;
 		}
 		mp = mnext;
 	} while (mp != NULL);
-
+	return (lasterr);
+ fail:
+	m_freechain(mnext);
 	return (lasterr);
 }
 
