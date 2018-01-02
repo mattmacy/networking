@@ -5191,8 +5191,8 @@ iflib_register(if_ctx_t ctx)
 	if_setinitfn(ifp, iflib_if_init);
 	if_setioctlfn(ifp, iflib_if_ioctl);
 	if_settransmitfn(ifp, iflib_if_transmit);
-	ifp->if_mbuf_to_qid = iflib_if_mbuf_to_qid;
-	ifp->if_transmit_txq = iflib_if_transmit_txq;
+	if_settransmittxqfn(ifp, iflib_if_transmit_txq);
+	if_setmbuftoqidfn(ifp, iflib_if_mbuf_to_qid);
 	if_setqflushfn(ifp, iflib_if_qflush);
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
 
