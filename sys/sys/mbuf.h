@@ -350,7 +350,7 @@ typedef union {
 /*
  * Get index and relative offset of `off` in to mvec `m`
  */
-void mvec_offset(struct mbuf *m, struct mvec_cursor *mc, int off);
+void mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int off);
 
 /*
  * Trim (destructively) the first `count` bytes of `m`
