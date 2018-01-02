@@ -275,6 +275,8 @@ mvec_free(struct mbuf *m)
 	me_count = (m_refcnt_t *)(me + mh->mh_count);
 
 	for (i = 0; i < mh->mh_count; i++, me_count++, me++) {
+		if (__predict_false(me->me_cl == NULL))
+			continue;
 		switch (me->me_type) {
 			case MVEC_MBUF:
 				uma_zfree_arg(zone_mbuf, me->me_cl, (void *)MB_DTOR_SKIP);
@@ -287,6 +289,7 @@ mvec_free(struct mbuf *m)
 				break;
 		}
 	}
+	free(m, M_MVEC);
 }
 
 static void
