@@ -333,6 +333,8 @@ mchain_to_mvec(struct mbuf *m, int how)
 		mp = mnext;
 	} while (mp);
 
+	/* add spare */
+	count++;
 	size = count*sizeof(struct mvec_ent) + sizeof(*mh) + sizeof(struct mbuf);
 	if (dupref)
 		size += count*sizeof(void*);
@@ -346,10 +348,14 @@ mchain_to_mvec(struct mbuf *m, int how)
 	mh = (struct mvec_header *)mnew->m_pktdat + sizeof(struct m_ext);
 	mh->mh_count = count;
 	mh->mh_multiref = dupref;
+	/* leave first entry open for encap */
+	mh->mh_start = 1;
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
 
 	me = (struct mvec_ent *)(mh + 1);
 	me_count = (m_refcnt_t *)(me + count);
+	me->me_cl = NULL;
+	me++;
 	do {
 		mnext = mp->m_next;
 		if (mp->m_flags & M_EXT) {
