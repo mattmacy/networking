@@ -385,10 +385,15 @@ struct mbuf *mvec_to_mchain(struct mbuf *m, int how);
  * Given an mvec `m` returns a new mvec of segmented packets.
  * If prehdrlen is non-zero the first prehdrlen bytes are
  * treated as encapsulation and copied to the front of every
- * packet. Non-destructive. It is the caller's responsibility
- * to free the source.
+ * packet. Non-destructive.
  */
-struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen);
+struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc);
+
+/*
+ * Create size bytes of room at the front of `m`. Will allocate a
+ * new mvec if there is no room for an addition mvec_ent.
+ */
+struct mbuf *mvec_headroom_prepend(struct mbuf *m, int size);
 
 /*
  * mbuf flags of global significance and layer crossing.
