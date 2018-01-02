@@ -82,6 +82,12 @@ struct vpci_softc {
 static int clone_count;
 
 static int
+vpci_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+{
+	return (0);
+}
+
+static int
 vpci_transmit(if_t ifp, struct mbuf *m)
 {
 	if_ctx_t ctx = ifp->if_softc;
@@ -130,7 +136,9 @@ vpci_attach_post(if_ctx_t ctx)
 	struct ifnet *ifp;
 
 	ifp = iflib_get_ifp(ctx);
-	ifp->if_transmit = vpci_transmit;
+	if_settransmitfn(ifp, vpci_transmit);
+	if_settransmittxqfn(ifp, vpci_transmit);
+	if_setmbuftoqidfn(ifp, vpci_mbuf_to_qid);
 	return (0);
 }
 
