@@ -185,19 +185,6 @@ static void vpc_fte_print(struct vpc_softc *vs);
 
 static int clone_count;
 
-static void
-m_freechain(struct mbuf *m)
-{
-	struct mbuf *mp, *mnext;
-
-	mp = m;
-	do {
-		mnext = mp->m_nextpkt;
-		m_freem(mp);
-		mp = mnext;
-	} while (mp != NULL);
-}
-
 static int
 hdrcmp(uint16_t *lhs, uint16_t *rhs)
 {
