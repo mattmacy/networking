@@ -90,17 +90,23 @@ vpci_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 static int
 vpci_transmit(if_t ifp, struct mbuf *m)
 {
+	struct mbuf *mp;
 	if_ctx_t ctx = ifp->if_softc;
 	struct vpci_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *parent = vs->vs_ifparent;
 
 	if (__predict_false(vs->vs_ifparent == NULL)) {
-		m_freem(m);
+		m_freechain(m);
 		return (ENOBUFS);
 	}
-	m->m_flags |= M_VXLANTAG;
-	m->m_pkthdr.vxlanid = vs->vs_vni;
-	return (parent->if_transmit(parent, m));
+	mp = m;
+	do {
+		mp->m_flags |= M_VXLANTAG;
+		mp->m_pkthdr.vxlanid = vs->vs_vni;
+		mp = mp->m_nextpkt;
+	} while (mp);
+
+	return (parent->if_transmit_txq(parent, m));
 }
 
 #ifdef notyet
