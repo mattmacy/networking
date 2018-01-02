@@ -561,6 +561,12 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf **mp, bool *can_batch)
 }
 
 static int
+vpc_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+{
+	return (0);
+}
+
+static int
 vpc_transmit(if_t ifp, struct mbuf *m)
 {
 	if_ctx_t ctx = ifp->if_softc;
@@ -639,12 +645,17 @@ vpc_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t pa
 static int
 vpc_attach_post(if_ctx_t ctx)
 {
-	struct ifnet *ifp;
+	if_t ifp;
 
 	ifp = iflib_get_ifp(ctx);
-
-	ifp->if_transmit = vpc_transmit;
-	ifp->if_mtu = ETHERMTU - 50;
+	if_settransmitfn(ifp, vpc_transmit);
+	if_settransmittxqfn(ifp, vpc_transmit);
+	if_setmbuftoqidfn(ifp, vpc_mbuf_to_qid);
+	/*
+	 * should really be pulled from the lowest
+	 * interface configured, but hardcode for now
+	 */
+	if_setmtu(ifp, ETHERMTU - 50);
 	return (0);
 }
 
