@@ -44,19 +44,6 @@ static int type2len[] = {-1, MCLBYTES, -1, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES
 #define VALIDTYPES ((1<<EXT_CLUSTER)|(1<<EXT_JUMBOP)|(1<<EXT_JUMBO9)|(1<<EXT_JUMBO16)|(1<<EXT_MVEC))
 
 static void
-m_freechain(struct mbuf *m)
-{
-	struct mbuf *mp, *mnext;
-
-	mp = m;
-	while (mp != NULL) {
-		mnext = mp->m_nextpkt;
-		m_freem(mp);
-		mp = mnext;
-	}
-}
-
-static void
 mvec_clfree(struct mvec_ent *me, m_refcnt_t *refcntp, bool dupref)
 {
 	bool free = true;

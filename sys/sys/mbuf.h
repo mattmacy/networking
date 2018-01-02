@@ -1313,6 +1313,19 @@ m_free(struct mbuf *m)
 	return (n);
 }
 
+static __inline void
+m_freechain(struct mbuf *m)
+{
+	struct mbuf *mp, *mnext;
+
+	mp = m;
+	while (mp != NULL) {
+		mnext = mp->m_nextpkt;
+		m_freem(mp);
+		mp = mnext;
+	}
+}
+
 static __inline int
 rt_m_getfib(struct mbuf *m)
 {
