@@ -243,10 +243,9 @@ struct if_data {
 #define	IFCAP_HWSTATS		0x800000 /* manages counters internally */
 #define	IFCAP_TXRTLMT		0x1000000 /* hardware supports TX rate limiting */
 #define	IFCAP_HWRXTSTMP		0x2000000 /* hardware rx timestamping */
-#define	IFCAP_TXMVEC		0x40000000 /* interface supports mbuf vectors in tx */
-#define	IFCAP_RXMVEC		0x80000000 /* interface can produce mbuf vectors in rx */
-#define	IFCAP_VXLANDECAP	0x10000000 /* interface can do VXLAN decap */
-#define	IFCAP_VXLANOFLD		0x20000000 /* interface can do TSO/cksum w/ VXLAN encap */
+#define	IFCAP_RXMVEC		0x4000000 /* interface can produce mbuf vectors in rx */
+#define	IFCAP_VXLANDECAP	0x8000000 /* interface can do VXLAN decap */
+#define	IFCAP_VXLANOFLD		0x10000000 /* interface can do TSO/cksum w/ VXLAN encap */
 
 #define IFCAP_HWCSUM_IPV6	(IFCAP_RXCSUM_IPV6 | IFCAP_TXCSUM_IPV6)
 

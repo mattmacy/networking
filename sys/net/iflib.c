@@ -4027,15 +4027,11 @@ iflib_if_transmit_txq(if_t ifp, struct mbuf *m)
 	if_ctx_t	ctx = if_getsoftc(ifp);
 	iflib_txq_t txq;
 	int err, qidx, last_err;
-	struct mbuf *next, *mh;
+	struct mbuf *next, *mchain;
 
 	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx))) {
 		DBG_COUNTER_INC(tx_frees);
-		do {
-			mh = m->m_nextpkt;
-			m_freem(m);
-			m = mh;
-		} while (mh != NULL);
+		m_freechain(m);
 		return (ENOBUFS);
 	}
 	qidx = 0;
@@ -4049,23 +4045,26 @@ iflib_if_transmit_txq(if_t ifp, struct mbuf *m)
 	while (m != NULL) {
 		next = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		err = iflib_transmit_simple(txq, &m, 1);
+		if ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC)) {
+			mchain = mvec_to_mchain(m, M_NOWAIT);
+			if (__predict_false(mchain == NULL)) {
+				m_freem(m);
+				err = ENOMEM;
+			} else {
+				err = iflib_if_transmit_txq(ifp, mchain);
+			}
+		} else
+			err = iflib_transmit_simple(txq, &m, 1);
 		if (__predict_false(err))
 			last_err = err;
 		m = next;
 	}
 #ifdef DRIVER_BACKPRESSURE
 	if (txq->ift_closed) {
-		while (m != NULL) {
-			next = m->m_nextpkt;
-			m->m_nextpkt = NULL;
-			m_freem(m);
-			m = next;
-		}
+		m_freechain(m);
 		return (ENOBUFS);
 	}
 #endif
-
 	return (err);
 }
 
@@ -5161,7 +5160,7 @@ iflib_register(if_ctx_t ctx)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	driver_t *driver = sctx->isc_driver;
 	device_t dev = ctx->ifc_dev;
-	struct ifnet *ifp;
+	if_t ifp;
 
 	if (!(sctx->isc_flags & IFLIB_PSEUDO))
 		_iflib_assert(sctx);
