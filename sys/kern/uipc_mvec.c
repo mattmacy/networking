@@ -216,12 +216,12 @@ mvec_pullup(struct mbuf *m, int count)
 	struct mvec_ent *mecur, *menxt;
 	int tailroom, size, copylen, doff, i, len;
 
-	MPASS(size <= m->m_pkthdr.len);
+	MPASS(count <= m->m_pkthdr.len);
 	mh = MBUF2MH(m);
 	mecur = MHMEI(mh, 0);
 	size = mvec_ent_size(mecur);
 	tailroom = size - mecur->me_off - mecur->me_len;
-	MPASS(headroom >= 0);
+	MPASS(tailroom >= 0);
 	copylen = count - mecur->me_len;
 
 	/*
