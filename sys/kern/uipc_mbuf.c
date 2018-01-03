@@ -724,6 +724,11 @@ m_adj(struct mbuf *mp, int req_len)
 
 	if ((m = mp) == NULL)
 		return;
+	if ((mp->m_flags & M_EXT) &&
+		(mp->m_ext.ext_type == EXT_MVEC)) {
+		mvec_adj(mp, req_len);
+		return;
+	}
 	if (len >= 0) {
 		/*
 		 * Trim from head.

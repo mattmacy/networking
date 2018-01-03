@@ -131,8 +131,8 @@ mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
 	} while(rem);
 }
 
-void
-mvec_trim(struct mbuf *m, int offset)
+static void
+mvec_trim_head(struct mbuf *m, int offset)
 {
 	struct mvec_header *mh = MBUF2MH(m);
 	struct mvec_ent *me = MHME(mh);
@@ -163,7 +163,57 @@ mvec_trim(struct mbuf *m, int offset)
 			mh->mh_start++;
 		}
 	} while(rem);
+	m->m_pkthdr.len -= offset;
 	m->m_data = ME_SEG(mh, 0);
+}
+
+static void
+mvec_trim_tail(struct mbuf *m, int offset)
+{
+	struct mvec_header *mh = MBUF2MH(m);
+	struct mvec_ent *me = MHME(mh);
+	int i, rem;
+	bool owned;
+
+	MPASS(offset <= m->m_pkthdr.len);
+	rem = offset;
+	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+		owned = (m->m_ext.ext_count == 1);
+	} else {
+		owned = (*(m->m_ext.ext_cnt) == 1);
+	}
+	i = mh->mh_count-1;
+	me = &me[i];
+	do {
+		if (rem > me->me_len) {
+			rem -= me->me_len;
+			me->me_len = 0;
+			if (owned)
+				mvec_ent_free(mh, i);
+			me--;
+		} else if (rem < me->me_len) {
+			rem = 0;
+			me->me_len -= rem;
+		} else {
+			rem = 0;
+			me->me_len = 0;
+			if (owned)
+				mvec_ent_free(mh, i);
+		}
+		i++;
+	} while(rem);
+	m->m_pkthdr.len -= offset;
+}
+
+void
+mvec_adj(struct mbuf *m, int req_len)
+{
+	if (__predict_false(req_len == 0))
+		return;
+	if (req_len > 0)
+		mvec_trim_head(m, req_len);
+	else
+		mvec_trim_tail(m, req_len);
 }
 
 struct mbuf *
