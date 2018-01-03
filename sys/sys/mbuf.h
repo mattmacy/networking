@@ -395,7 +395,16 @@ struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc);
  * Create size bytes of room at the front of `m`. Will allocate a
  * new mvec if there is no room for an addition mvec_ent.
  */
-struct mbuf *mvec_headroom_prepend(struct mbuf *m, int size);
+struct mbuf *mvec_prepend(struct mbuf *m, int size);
+
+/*
+ * Mvec analogs to mbuf helpers that should be implemented sooner
+ * rather than later.
+ */
+void mvec_copydata(const struct mbuf *m, int off, int len, caddr_t cp);
+struct mbuf *mvec_dup(const struct mbuf *m, int how);
+struct mbuf *mvec_defrag(const struct mbuf *m, int how);
+struct mbuf *mvec_collapse(struct mbuf *m, int how, int maxfrags);
 
 /*
  * mbuf flags of global significance and layer crossing.
