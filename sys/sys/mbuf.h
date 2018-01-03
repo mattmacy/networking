@@ -353,9 +353,11 @@ typedef union {
 void mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int off);
 
 /*
- * Trim (destructively) the first `count` bytes of `m`
+ * Trim (destructively if unshared) `req_len` bytes of `m`.
+ * Will trim the front if req_len is positive and the tail
+ * if req_len is negative.
  */
-void mvec_trim(struct mbuf *m, int count);
+void mvec_adj(struct mbuf *m, int req_len);
 
 /*
  * Make the first `count` bytes of `m` contiguous
