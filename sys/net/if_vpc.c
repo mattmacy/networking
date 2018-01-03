@@ -435,7 +435,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
 	if (ismvec) {
-		mh = mvec_headroom_prepend(m, hdrsize);
+		mh = mvec_prepend(m, hdrsize);
 	} else {
 		mh = m_gethdr(M_NOWAIT, MT_NOINIT);
 		if (__predict_false(mh == NULL)) {
