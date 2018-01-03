@@ -216,8 +216,36 @@ mvec_adj(struct mbuf *m, int req_len)
 		mvec_trim_tail(m, req_len);
 }
 
+void
+mvec_copydata(const struct mbuf *m, int off, int len, caddr_t cp)
+{
+	panic("%s unimplemented", __func__);
+}
+
 struct mbuf *
-mvec_headroom_prepend(struct mbuf *m, int size)
+mvec_dup(const struct mbuf *m, int how)
+{
+	panic("%s unimplemented", __func__);
+	return (NULL);
+}
+
+struct mbuf *
+mvec_defrag(const struct mbuf *m, int how)
+{
+	panic("%s unimplemented", __func__);
+	return (NULL);
+}
+
+struct mbuf *
+mvec_collapse(struct mbuf *m, int how, int maxfrags)
+{
+	panic("%s unimplemented", __func__);
+	return (NULL);
+}
+
+
+struct mbuf *
+mvec_prepend(struct mbuf *m, int size)
 {
 	struct mvec_header *mh;
 	struct mvec_ent *me;
@@ -242,7 +270,7 @@ mvec_headroom_prepend(struct mbuf *m, int size)
 		m->m_len = size;
 		m->m_data = me->me_cl;
 	} else {
-		panic("implement fallback path for headroom prepend");
+		panic("implement fallback path for %s", __func__);
 	}
 	return (m);
 }
