@@ -3117,6 +3117,91 @@ iflib_remove_mbuf(iflib_txq_t txq, int pidx)
 }
 
 static int
+iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
+						  struct mbuf **m0, bus_dma_segment_t *segs, int *nsegs,
+						  int max_segs, int flags)
+{
+	int i, count, rem, pidx, ntxd;
+	if_ctx_t ctx;
+	if_shared_ctx_t		sctx;
+	if_softc_ctx_t		scctx;
+	struct mbuf *m, **ifsd_m;
+	struct mvec_header *mh;
+	struct mvec_ent *me;
+
+	m = *m0;
+	mh = MBUF2MH(m);
+	me = MHMEI(mh, 0);
+	ifsd_m = txq->ift_sds.ifsd_m;
+	ntxd = txq->ift_size;
+	pidx = txq->ift_pidx;
+	count = mh->mh_count - mh->mh_start;
+	count = min(count, max_segs);
+	rem = m->m_pkthdr.len;
+	ctx = txq->ift_ctx;
+	sctx = ctx->ifc_sctx;
+	scctx = &ctx->ifc_softc_ctx;
+	if (sctx->isc_flags & IFLIB_TXD_ENCAP_PIO) {
+		for (i = 0; i < count && me->me_len; i++, me++, segs++) {
+			segs->ds_addr = (bus_addr_t)(me->me_cl + me->me_off);
+			segs->ds_len = me->me_len;
+			rem -= me->me_len;
+		}
+		*nsegs = i;
+		return (rem ? EFBIG : 0);
+	} else if (map != NULL) {
+		/*
+		 * XXX --- fix
+		 */
+		panic("implement iommu support for mvecs");
+	} else {
+		int segi, buflen, sgsize, maxsegsz, max_sgsize, next;
+		vm_offset_t vaddr;
+		vm_paddr_t curaddr;
+
+		ifsd_m[pidx] = m;
+		if (m->m_pkthdr.csum_flags & CSUM_TSO)
+			maxsegsz = scctx->isc_tx_tso_segsize_max;
+		else
+			maxsegsz = sctx->isc_tx_maxsegsize;
+
+		for (segi = i = 0; i < count && me->me_len; i++, me++, segs++) {
+			buflen = me->me_len;
+			vaddr = (vm_offset_t)(me->me_cl + me->me_off);
+			/*
+			 * see if we can't be smarter about physically
+			 * contiguous mappings
+			 */
+#ifdef INVARIANTS
+			if (segi) {
+				next = (pidx + segi) & (ntxd-1);
+				MPASS(ifsd_m[next] == NULL);
+			}
+#endif
+			while (buflen > 0) {
+				if (segi >= max_segs)
+					goto err;
+				max_sgsize = MIN(buflen, maxsegsz);
+				curaddr = pmap_kextract(vaddr);
+				sgsize = PAGE_SIZE - (curaddr & PAGE_MASK);
+				sgsize = MIN(sgsize, max_sgsize);
+				segs[segi].ds_addr = curaddr;
+				segs[segi].ds_len = sgsize;
+				vaddr += sgsize;
+				buflen -= sgsize;
+				rem -= sgsize;
+				segi++;
+			}
+		}
+		*nsegs = segi;
+		return (rem ? EFBIG : 0);
+	}
+ err:
+	ifsd_m[pidx] = NULL;
+	return (EFBIG);
+}
+
+static int
 iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			  struct mbuf **m0, bus_dma_segment_t *segs, int *nsegs,
 			  int max_segs, int flags)
@@ -3129,6 +3214,10 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 
 	m = *m0;
 
+	if ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC)) {
+		return (iflib_busdma_load_mvec_sg(txq, tag, map, m0, segs, nsegs,
+									 max_segs, flags));
+	}
 	/*
 	 * Please don't ever do this
 	 */
@@ -3138,7 +3227,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	ctx = txq->ift_ctx;
 	sctx = ctx->ifc_sctx;
 	if (sctx->isc_flags & IFLIB_TXD_ENCAP_PIO) {
-			tmp = m;
+		tmp = m;
 		/* XXX error out if chain is too long */
 		for (i = 0; i < max_segs && tmp; i++) {
 			segs[i].ds_addr = (bus_addr_t)tmp->m_data;
