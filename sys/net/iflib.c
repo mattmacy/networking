@@ -612,6 +612,10 @@ static int iflib_no_tx_batch = 0;
 SYSCTL_INT(_net_iflib, OID_AUTO, no_tx_batch, CTLFLAG_RW,
 		   &iflib_no_tx_batch, 0, "minimize transmit latency at the possible expense of throughput");
 
+/*
+ * XXX -- notyet
+ */
+static int rxmvec_enable = 0;
 
 #if IFLIB_DEBUG_COUNTERS
 
@@ -2410,7 +2414,8 @@ prefetch_pkts(iflib_fl_t fl, int cidx)
 }
 
 static void
-rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
+rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd,
+			   bool fetchmbuf)
 {
 	int flid, cidx;
 	bus_dmamap_t map;
@@ -2424,14 +2429,16 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 	fl = &rxq->ifr_fl[flid];
 	sd->ifsd_fl = fl;
 	sd->ifsd_cidx = cidx;
-	sd->ifsd_m = &fl->ifl_sds.ifsd_m[cidx];
 	sd->ifsd_cl = &fl->ifl_sds.ifsd_cl[cidx];
 	MPASS(fl->ifl_credits);
-	if (__predict_false(*sd->ifsd_m == NULL)) {
+	if (fetchmbuf &&
+		__predict_false(*sd->ifsd_m == NULL)) {
 		MPASS(rxq->ifr_ctx->ifc_sctx->isc_flags & IFLIB_SKIP_CLREFILL);
-		*sd->ifsd_m = m_gethdr(M_NOWAIT, MT_NOINIT);
-	} else
+		fl->ifl_sds.ifsd_m[cidx] = m_gethdr(M_NOWAIT, MT_NOINIT);
+	} else {
 		fl->ifl_credits--;
+	}
+	sd->ifsd_m = &fl->ifl_sds.ifsd_m[cidx];
 	MPASS(*sd->ifsd_cl != NULL);
 #if MEMORY_LOGGING
 	fl->ifl_m_dequeued++;
@@ -2472,7 +2479,7 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 	i = 0;
 	mh = NULL;
 	do {
-		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd);
+		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd, true);
 
 		MPASS(*sd->ifsd_cl != NULL);
 		MPASS(*sd->ifsd_m != NULL);
@@ -2514,6 +2521,48 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 	} while (++i < ri->iri_nfrags);
 
 	return (mh);
+}
+
+static struct mbuf *
+assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
+{
+	int i, padlen , cidx, flid;
+	struct mbuf *m, *mtmp;
+	iflib_fl_t fl;
+	caddr_t cl;
+
+	i = 0;
+	cidx = ri->iri_frags[0].irf_idx;
+	flid = ri->iri_frags[0].irf_flid;
+	fl = &rxq->ifr_fl[flid];
+	if ((ri->iri_nfrags < MBUF_ME_MAX) &&
+		(fl->ifl_sds.ifsd_m[cidx] != NULL)) {
+		m = fl->ifl_sds.ifsd_m[cidx];
+		fl->ifl_sds.ifsd_m[cidx] = NULL;
+		mvec_init_mbuf(m, ri->iri_nfrags, MVALLOC_MBUF);
+	} else {
+		m = mvec_alloc(ri->iri_nfrags, 0, M_NOWAIT);
+	}
+	if (__predict_false(m == NULL))
+		return (NULL);
+	padlen = ri->iri_pad;
+	do {
+		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd, false);
+
+		MPASS(*sd->ifsd_cl != NULL);
+		/* Don't include zero-length frags */
+		if (ri->iri_frags[i].irf_len == 0)
+			continue;
+		cl = *sd->ifsd_cl;
+		*sd->ifsd_cl = NULL;
+
+		mtmp = mvec_append(m, cl, padlen, ri->iri_frags[i].irf_len - padlen,
+						   sd->ifsd_fl->ifl_cltype);
+		padlen = 0;
+		MPASS(mtmp != NULL);
+	} while (++i < ri->iri_nfrags);
+
+	return (m);
 }
 
 static void
@@ -2575,7 +2624,7 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	if (ri->iri_nfrags == 1 &&
 	    ri->iri_frags[0].irf_len <= IFLIB_RX_COPY_THRESH &&
 		!(ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION)) {
-		rxd_frag_to_sd(rxq, &ri->iri_frags[0], FALSE, &sd);
+		rxd_frag_to_sd(rxq, &ri->iri_frags[0], FALSE, &sd, true);
 
 		m = *sd.ifsd_m;
 		*sd.ifsd_m = NULL;
@@ -2590,7 +2639,11 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 		MPASS(ri->iri_len == ri->iri_frags[0].irf_len);
 		m->m_pkthdr.len = m->m_len = ri->iri_len;
 	} else {
-		m = assemble_segments(rxq, ri, &sd);
+		if (rxmvec_enable && (ri->iri_nfrags > 1)) {
+			m = assemble_segments_mvec(rxq, ri, &sd);
+		} else {
+			m = assemble_segments(rxq, ri, &sd);
+		}
 	}
 	if (ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION) {
 		iflib_check_rx_notify(rxq, ri, m);
@@ -4134,16 +4187,7 @@ iflib_if_transmit_txq(if_t ifp, struct mbuf *m)
 	while (m != NULL) {
 		next = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		if ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC)) {
-			mchain = mvec_to_mchain(m, M_NOWAIT);
-			if (__predict_false(mchain == NULL)) {
-				m_freem(m);
-				err = ENOMEM;
-			} else {
-				err = iflib_if_transmit_txq(ifp, mchain);
-			}
-		} else
-			err = iflib_transmit_simple(txq, &m, 1);
+		err = iflib_transmit_simple(txq, &m, 1);
 		if (__predict_false(err))
 			last_err = err;
 		m = next;
