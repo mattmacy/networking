@@ -275,6 +275,80 @@ mvec_prepend(struct mbuf *m, int size)
 	return (m);
 }
 
+struct mbuf *
+mvec_append(struct mbuf *m, caddr_t cl, uint16_t off,
+						 uint16_t len, uint8_t cltype)
+{
+	struct mvec_header *mh;
+	struct mvec_ent *me;
+
+	mh = MBUF2MH(m);
+	KASSERT(mh->mh_used < mh->mh_count,
+			("need to add support for growing mvec on append"));
+	me = MHMEI(mh, mh->mh_used);
+	me->me_cl = cl;
+	me->me_off = off;
+	me->me_len = len;
+	me->me_ext_type = cltype;
+	me->me_ext_flags = 0;
+	m->m_pkthdr.len += len;
+	if (mh->mh_used == 0) {
+		m->m_len = len;
+		m->m_data = (cl + off);
+	}
+	mh->mh_used++;
+	return (m);
+}
+
+void
+mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
+{
+	struct mvec_header *mh;
+
+	mh = MBUF2MH(m);
+	*((uint64_t *)mh) = 0;
+	if (count > MBUF_ME_MAX)
+		mh->mh_count = count;
+	else
+		mh->mh_count = MBUF_ME_MAX;
+	mh->mh_mvtype = type;
+	/* leave room for prepend */
+	mh->mh_start = 1;
+	m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
+	m->m_next = m->m_nextpkt = NULL;
+	m->m_len = 0;
+	m->m_data = NULL;
+	m->m_flags = M_NOFREE|M_EXT;
+	m->m_ext.ext_flags = EXT_FLAG_EMBREF;
+	m->m_ext.ext_type = EXT_MVEC;
+	m->m_ext.ext_size = MSIZE;
+	m->m_ext.ext_buf = (caddr_t)m;
+	m->m_ext.ext_count = 1;
+}
+
+struct mbuf *
+mvec_alloc(uint8_t count, int len, int how)
+{
+	int size;
+	uint8_t type;
+	struct mbuf *m;
+
+	size = sizeof(*m) + sizeof(struct mvec_header*);
+	size += count*sizeof(struct mvec_ent);
+	size += len;
+	if (size <= MSIZE) {
+		m = m_get(how, MT_NOINIT);
+		type = MVALLOC_MBUF;
+	} else {
+		m = malloc(size, M_MVEC, how);
+		type = MVALLOC_MALLOC;
+	}
+	if (__predict_false(m == NULL))
+		return (NULL);
+	mvec_init_mbuf(m, count, type);
+	return (m);
+}
+
 static int
 mvec_ent_size(struct mvec_ent *me)
 {
