@@ -6892,13 +6892,10 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
 	}
 
 	/* XXX - multiple ports? */
-	if (ntohs(uh->uh_dport) != vxlan_port) {
-#if 0
-		printf("port mismatch dport: %d vxport: %d\n",
-			   ntohs(uh->uh_dport), vxlan_port);
-#endif
+	if (uh->uh_dport != vxlan_port) {
 		return;
 	}
+	len += sizeof(*uh) + sizeof(*vh);
 	vh = (struct vxlan_header *)(uh + 1);
 	vxlanid = vh->vxlh_vni;
 	eh = (struct ether_vlan_header *)(vh + 1);
@@ -6907,8 +6904,12 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
 	/* XXX --- only once validated */
 	m->m_pkthdr.csum_flags |= CSUM_DATA_VALID|CSUM_PSEUDO_HDR;
 	m->m_pkthdr.csum_data = 0xffff;
-	m->m_data += len;
-	m->m_len -= len;
-	m->m_pkthdr.len -= len;
+	if (__predict_true(m->m_len < len)) {
+		m->m_len -= len;
+		m->m_pkthdr.len -= len;
+		m->m_data += len;
+	} else  {
+		m_adj(m, len);
+	}
 }
 #endif
