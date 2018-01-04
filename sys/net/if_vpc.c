@@ -292,8 +292,7 @@ vpc_ip_init(struct vpc_ftable *vf, struct vxlan_header *vh, struct sockaddr *dst
 	ip->ip_hl = sizeof(*ip) >> 2;
 	ip->ip_v = 4; /* v4 only now */
 	ip->ip_tos = 0;
-	/* XXX validate that we won't overrun IP_MAXPACKET first */
-	ip->ip_len = htons(len + sizeof(*vh) - sizeof(struct ether_header));
+	ip->ip_len = htons(len - sizeof(struct ether_header));
 	ip->ip_id = 0;
 	ip->ip_off = 0;
 	ip->ip_ttl = 255;
@@ -323,16 +322,20 @@ vpc_csum_skip(struct mbuf *m, int len, int skip)
 
 static void
 vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh, 
-				  struct sockaddr *dstip, struct ifnet *ifp, struct mbuf *m)
+				  struct sockaddr *dstip, struct ifnet *ifp, struct mbuf *m,
+				  caddr_t hdr)
 {
 	struct ether_header *eh;
 	struct ip *ip;
 	struct udphdr *uh;
 	struct vxlanhdr *vhdr;
 	caddr_t smac;
+	int len;
 
+	len = m->m_pkthdr.len;
 	smac = ifp->if_hw_addr;
 	eh = &vh->vh_ehdr;
+
 	eh->ether_type = htons(ETHERTYPE_IP); /* v4 only to start */
 	/* arp resolve fills in dest */
 	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
@@ -341,17 +344,19 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	vpc_ip_init(vf, vh, dstip, m->m_pkthdr.len);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
-	uh->uh_sport = vpc_sport_hash(vf->vf_vs, m->m_data);
+	uh->uh_sport = vpc_sport_hash(vf->vf_vs, hdr);
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
-	uh->uh_ulen = htons(m->m_pkthdr.len + sizeof(*vh) - sizeof(*ip) - sizeof(*eh));
-	uh->uh_sum = 0; /* offload */
+	uh->uh_ulen = htons(len - sizeof(*ip) - sizeof(*eh));
+	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
+	uh->uh_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr,
+						   htons(ip->ip_p + len - sizeof(*eh) - sizeof(*ip)));
+
 	vhdr = (struct vxlanhdr *)(uintptr_t)&vh->vh_vxlanhdr;
 	vhdr->v_i = 1;
 	vhdr->v_vxlanid = htonl(vf->vf_vni) >> 8;
 	if (!(ifp->if_capenable & IFCAP_TXCSUM)) {
-		ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
 		ip->ip_sum = in_cksum_hdr(ip);
-		uh->uh_sum = vpc_csum_skip(m, ntohs(ip->ip_len), sizeof(*ip) + sizeof(*eh));
+		uh->uh_sum = vpc_csum_skip(m, ntohs(ip->ip_len) + sizeof(*eh), sizeof(*ip) + sizeof(*eh));
 	}
 }
 
@@ -574,7 +579,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		mh = mtmp;
 	}
 	mh->m_pkthdr.rcvif = ifp;
-	vpc_vxlanhdr_init(vf, vh, dst, ifp, m);
+	vpc_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx);
 	vpc_cache_update(mh, evhvx, ifp->if_index);
 	*mp = mh;
 	return (0);
