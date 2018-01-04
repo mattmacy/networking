@@ -44,6 +44,22 @@ static int type2len[] = {-1, MCLBYTES, -1, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES
 #define VALIDTYPES ((1<<EXT_CLUSTER)|(1<<EXT_JUMBOP)|(1<<EXT_JUMBO9)|(1<<EXT_JUMBO16)|(1<<EXT_MVEC))
 
 static void
+mvec_buffer_free(struct mbuf *m)
+{
+	struct mvec_header *mh;
+
+	mh = MBUF2MH(m);
+	switch (mh->mh_mvtype) {
+		case MVALLOC_MALLOC:
+			free(m, M_MVEC);
+			break;
+		case MVALLOC_MBUF:
+			uma_zfree_arg(zone_mbuf, m, (void *)MB_DTOR_SKIP);
+			break;
+	}
+}
+
+static void
 mvec_clfree(struct mvec_ent *me, m_refcnt_t *refcntp, bool dupref)
 {
 	bool free = true;
@@ -108,8 +124,7 @@ mvec_ent_free(struct mvec_header *mh, int idx)
 void
 mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
 {
-	struct mvec_header *mh = MBUF2MH(m);
-	struct mvec_ent *me = MHME(mh);
+	struct mvec_ent *me = MBUF2ME(m);
 	int rem;
 
 	mc->mc_idx = mc->mc_off = 0;
@@ -135,7 +150,7 @@ static void
 mvec_trim_head(struct mbuf *m, int offset)
 {
 	struct mvec_header *mh = MBUF2MH(m);
-	struct mvec_ent *me = MHME(mh);
+	struct mvec_ent *me = MBUF2ME(m);
 	int rem;
 	bool owned;
 
@@ -152,6 +167,7 @@ mvec_trim_head(struct mbuf *m, int offset)
 			if (owned)
 				mvec_ent_free(mh, mh->mh_start);
 			mh->mh_start++;
+			mh->mh_used--;
 			me++;
 		} else if (rem < me->me_len) {
 			rem = 0;
@@ -161,17 +177,18 @@ mvec_trim_head(struct mbuf *m, int offset)
 			rem = 0;
 			mvec_ent_free(mh, mh->mh_start);
 			mh->mh_start++;
+			mh->mh_used--;
 		}
 	} while(rem);
 	m->m_pkthdr.len -= offset;
-	m->m_data = ME_SEG(mh, 0);
+	m->m_data = ME_SEG(m, mh, 0);
 }
 
 static void
 mvec_trim_tail(struct mbuf *m, int offset)
 {
 	struct mvec_header *mh = MBUF2MH(m);
-	struct mvec_ent *me = MHME(mh);
+	struct mvec_ent *me = MBUF2ME(m);
 	int i, rem;
 	bool owned;
 
@@ -191,6 +208,7 @@ mvec_trim_tail(struct mbuf *m, int offset)
 			if (owned)
 				mvec_ent_free(mh, i);
 			me--;
+			mh->mh_used--;
 		} else if (rem < me->me_len) {
 			rem = 0;
 			me->me_len -= rem;
@@ -199,6 +217,7 @@ mvec_trim_tail(struct mbuf *m, int offset)
 			me->me_len = 0;
 			if (owned)
 				mvec_ent_free(mh, i);
+			mh->mh_used--;
 		}
 		i++;
 	} while(rem);
@@ -258,7 +277,8 @@ mvec_prepend(struct mbuf *m, int size)
 	mh = MBUF2MH(m);
 	if (__predict_true(mh->mh_start)) {
 		mh->mh_start--;
-		me = MHMEI(mh, 0);
+		mh->mh_used++;
+		me = MHMEI(m, mh, 0);
 		me->me_len = size;
 		me->me_cl = (caddr_t)data;
 		me->me_off = 0;
@@ -285,7 +305,7 @@ mvec_append(struct mbuf *m, caddr_t cl, uint16_t off,
 	mh = MBUF2MH(m);
 	KASSERT(mh->mh_used < mh->mh_count,
 			("need to add support for growing mvec on append"));
-	me = MHMEI(mh, mh->mh_used);
+	me = MHMEI(m, mh, mh->mh_used);
 	me->me_cl = cl;
 	me->me_off = off;
 	me->me_len = len;
@@ -300,10 +320,11 @@ mvec_append(struct mbuf *m, caddr_t cl, uint16_t off,
 	return (m);
 }
 
-void
+int
 mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 {
 	struct mvec_header *mh;
+	int rc;
 
 	mh = MBUF2MH(m);
 	*((uint64_t *)mh) = 0;
@@ -314,7 +335,10 @@ mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 	mh->mh_mvtype = type;
 	/* leave room for prepend */
 	mh->mh_start = 1;
-	m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
+	rc = m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
+	if (__predict_false(rc))
+		return (rc);
+
 	m->m_next = m->m_nextpkt = NULL;
 	m->m_len = 0;
 	m->m_data = NULL;
@@ -324,6 +348,7 @@ mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 	m->m_ext.ext_size = MSIZE;
 	m->m_ext.ext_buf = (caddr_t)m;
 	m->m_ext.ext_count = 1;
+	return (0);
 }
 
 struct mbuf *
@@ -370,7 +395,7 @@ mvec_pullup(struct mbuf *m, int count)
 
 	MPASS(count <= m->m_pkthdr.len);
 	mh = MBUF2MH(m);
-	mecur = MHMEI(mh, 0);
+	mecur = MHMEI(m, mh, 0);
 	size = mvec_ent_size(mecur);
 	tailroom = size - mecur->me_off - mecur->me_len;
 	MPASS(tailroom >= 0);
@@ -393,9 +418,9 @@ mvec_pullup(struct mbuf *m, int count)
 	doff = mecur->me_off + mecur->me_len;
 	i = 1;
 	do {
-		menxt = MHMEI(mh, i);
+		menxt = MHMEI(m, mh, i);
 		len = min(copylen, menxt->me_len);
-		bcopy(ME_SEG(mh, i), mecur->me_cl + doff, len);
+		bcopy(ME_SEG(m, mh, i), mecur->me_cl + doff, len);
 		doff += len;
 		mecur->me_len += len;
 		menxt->me_off += len;
@@ -404,13 +429,13 @@ mvec_pullup(struct mbuf *m, int count)
 		i++;
 	} while (copylen);
 	i = 1;
-	while (MHMEI(mh, i)->me_len == 0)
+	while (MHMEI(m, mh, i)->me_len == 0)
 		i++;
 	if (__predict_false(i != 1)) {
 		mh->mh_start += (i - 1);
-		bcopy(mecur, MHMEI(mh, 0), sizeof(*mecur));
+		bcopy(mecur, MHMEI(m, mh, 0), sizeof(*mecur));
 	}
-	m->m_data = ME_SEG(mh, 0);
+	m->m_data = ME_SEG(m, mh, 0);
 	return (m);
 }
 
@@ -441,7 +466,7 @@ mvec_free(struct mbuf *m)
 				break;
 		}
 	}
-	free(m, M_MVEC);
+	mvec_buffer_free(m);
 }
 
 static void
@@ -499,6 +524,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	mnew->m_len = m->m_len;
 	mh = (struct mvec_header *)mnew->m_pktdat + sizeof(struct m_ext);
 	mh->mh_count = count;
+	mh->mh_used = count - 1;
 	mh->mh_multiref = dupref;
 	/* leave first entry open for encap */
 	mh->mh_start = 1;
@@ -553,7 +579,7 @@ m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 {
 	struct mvec_ent *me;
 
-	me = MHMEI(mh, 0);
+	me = MHMEI(m, mh, 0);
 	m->m_ext.ext_buf = me->me_cl;
 	m->m_ext.ext_arg1 = head->m_ext.ext_arg1;
 	m->m_ext.ext_arg2 = head->m_ext.ext_arg2;
@@ -574,7 +600,7 @@ m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 		else
 			m->m_ext.ext_cnt = head->m_ext.ext_cnt;
 	} else {
-		m_refcnt_t *ref = MHREFI(mh, 0);
+		m_refcnt_t *ref = MHREFI(m, mh, 0);
 
 		m->m_ext.ext_cnt = ref->ext_cnt;
 	}
@@ -586,12 +612,11 @@ mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
 {
 	struct mvec_ent *me;
 	struct mbuf *m, *mh, *mt;
-	int count;
 
 	if (__predict_false((mh = m_gethdr(how, MT_DATA)) == NULL))
 		return (NULL);
 
-	me = MHMEI(mhdr, 0);
+	me = MHMEI(mp, mhdr, 0);
 	mh->m_flags |= M_EXT;
 	mh->m_flags |= mp->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
 	/* XXX update csum_data after encap */
@@ -602,14 +627,14 @@ mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
 	mh->m_data = me->me_cl + me->me_off;
 	mh->m_pkthdr.len = mh->m_len = me->me_len;
 	mhdr->mh_start++;
+	mhdr->mh_used--;
 	mt = mh;
-	count = mhdr->mh_count - mhdr->mh_start;
-	while (!me->me_eop && count) {
+	while (!me->me_eop && mhdr->mh_used) {
 		if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
 			goto fail;
 		me++;
-		count--;
 		mhdr->mh_start++;
+		mhdr->mh_used--;
 		mt->m_next = m;
 		mt = m;
 		mt->m_flags |= M_EXT;
@@ -634,7 +659,7 @@ mvec_to_mchain(struct mbuf *mp, int how)
 	pmhdr = MBUF2MH(mp);
 	bcopy(pmhdr, &mhdr, sizeof(mhdr));
 	mh = mt = NULL;
-	while (mhdr.mh_start < mhdr.mh_count) {
+	while (mhdr.mh_used) {
 		if (__predict_false((m = mvec_to_mchain_pkt(mp, &mhdr, how)) == NULL))
 			goto fail;
 		if (mh != NULL) {
@@ -671,12 +696,12 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 {
 	struct ether_vlan_header *evh;
 	struct mvec_header *mh = MBUF2MH(m);
-	struct mvec_ent *me = MHMEI(mh, 0);
+	struct mvec_ent *me = MHMEI(m, mh, 0);
 
 	if (__predict_false(me->me_len - prehdrlen < MIN_HDR_LEN) &&
 		__predict_false(mvec_pullup(m, prehdrlen + MIN_HDR_LEN) == NULL))
 			return (ENOMEM);
-	evh = (struct ether_vlan_header *)(ME_SEG(mh, 0) + prehdrlen);
+	evh = (struct ether_vlan_header *)(ME_SEG(m, mh, 0) + prehdrlen);
 	if (evh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
 		pi->ipi_etype = ntohs(evh->evl_proto);
 		pi->ipi_ehdrlen = ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN;
@@ -694,8 +719,8 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 			if (__predict_false(me->me_len - prehdrlen < minthlen) &&
 				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
-			me = MHMEI(mh, 0);
-			ip = (struct ip *)(ME_SEG(mh, 0) + prehdrlen + pi->ipi_ehdrlen);
+			me = MHMEI(m, mh, 0);
+			ip = (struct ip *)(ME_SEG(m, mh, 0) + prehdrlen + pi->ipi_ehdrlen);
 			pi->ipi_ip_hlen = ip->ip_hl << 2;
 			pi->ipi_ipproto = ip->ip_p;
 			if (ip->ip_p != IPPROTO_TCP)
@@ -704,8 +729,8 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 			if (__predict_false(me[0].me_len - prehdrlen < minthlen) &&
 				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
-			me = MHMEI(mh, 0);
-			th = (struct tcphdr *)(ME_SEG(mh, 0) + prehdrlen + pi->ipi_ehdrlen + pi->ipi_ip_hlen);
+			me = MHMEI(m, mh, 0);
+			th = (struct tcphdr *)(ME_SEG(m, mh, 0) + prehdrlen + pi->ipi_ehdrlen + pi->ipi_ip_hlen);
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
 			pi->ipi_tcp_seq = th->th_seq;
@@ -713,7 +738,7 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 			if (__predict_false(me[0].me_len - prehdrlen < minthlen) &&
 				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
-			me = MHMEI(mh, 0);
+			me = MHMEI(m, mh, 0);
 			if (prehdrlen == 0) {
 				th->th_sum = in_pseudo(ip->ip_src.s_addr,
 									   ip->ip_dst.s_addr, htons(IPPROTO_TCP));
@@ -853,6 +878,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	mnew->m_len = m->m_len;
 	newmh = (struct mvec_header *)mnew->m_pktdat + sizeof(struct m_ext);
 	newmh->mh_count = count;
+	newmh->mh_used = count;
 	newmh->mh_multiref = mh->mh_multiref;
 	newmh->mh_multipkt = true;
 	newmh->mh_start = 0;
@@ -988,8 +1014,8 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	if (freesrc && (*refcnt == 1)) {
 		mnew->m_ext.ext_count = 1;
 		if (!(m->m_ext.ext_flags & EXT_FLAG_EMBREF))
-			free(__containerof(refcnt, struct mbuf, m_ext.ext_count), M_MVEC);
-		free(m, M_MVEC);
+			mvec_buffer_free(__containerof(refcnt, struct mbuf, m_ext.ext_count));
+		mvec_buffer_free(m);
 	} else
 		atomic_add_int(mnew->m_ext.ext_cnt, 1);
 	return (mnew);
