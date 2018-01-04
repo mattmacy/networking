@@ -6853,6 +6853,7 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port)
 	struct vxlan_header *vh;
 	int etype, len, vxlanid;
 
+	MPASS(vxlan_port);
 	eh = mtod(m, struct ether_vlan_header *);
 	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
 		etype = ntohs(eh->evl_proto);
@@ -6861,33 +6862,50 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port)
 		etype = ntohs(eh->evl_encap_proto);
 		len = ETHER_HDR_LEN;
 	}
-	if (etype == ETHERTYPE_IP) {
+	switch (etype) {
 #if defined(INET)
-		struct ip *ip = (struct ip *)(((caddr_t)eh) + len);
-		if (ip->ip_p != IPPROTO_UDP)
+		case ETHERTYPE_IP: {
+			struct ip *ip = (struct ip *)(((caddr_t)eh) + len);
+			if (ip->ip_p != IPPROTO_UDP)
+				return;
+			uh = (struct udphdr *)((caddr_t)ip + (ip->ip_hl << 2));
+			len += ip->ip_hl << 2;
+			break;
+		}
+		case ETHERTYPE_ARP:
 			return;
-		uh = (struct udphdr *)((caddr_t)ip + (ip->ip_hl << 2));
-		len += ip->ip_hl << 2;
 #endif
-	} else if (etype == ETHERTYPE_IPV6) {
 #if defined(INET6)
-		struct ip6_hdr *ip6 = (struct ip6_hdr *)(((caddr_t)eh) + len);
-		/* XXX we don't support fragments for now */
-		if (ip6->ip6_nxt != IPPROTO_UDP)
-			return;
-		uh = (struct udphdr *)(ip6 + 1);
-		len += sizeof(*ip6);
+		case ETHERTYPE_IPV6: {
+			struct ip6_hdr *ip6 = (struct ip6_hdr *)(((caddr_t)eh) + len);
+			/* XXX we don't support fragments for now */
+			if (ip6->ip6_nxt != IPPROTO_UDP)
+				return;
+			uh = (struct udphdr *)(ip6 + 1);
+			len += sizeof(*ip6);
+		}
 #endif
-	} else
-		return;
+		default:
+			printf("invalid etype %x len: %d \n", etype, m->m_pkthdr.len);
+			return;
+	}
+
 	/* XXX - multiple ports? */
-	if (uh->uh_dport != vxlan_port)
+	if (ntohs(uh->uh_dport) != vxlan_port) {
+#if 0
+		printf("port mismatch dport: %d vxport: %d\n",
+			   ntohs(uh->uh_dport), vxlan_port);
+#endif
 		return;
+	}
 	vh = (struct vxlan_header *)(uh + 1);
 	vxlanid = vh->vxlh_vni;
 	eh = (struct ether_vlan_header *)(vh + 1);
 	m->m_flags |= M_VXLANTAG;
-	m->m_pkthdr.vxlanid = vxlanid;
+	m->m_pkthdr.vxlanid = ntohl(vxlanid);
+	/* XXX --- only once validated */
+	m->m_pkthdr.csum_flags |= CSUM_DATA_VALID|CSUM_PSEUDO_HDR;
+	m->m_pkthdr.csum_data = 0xffff;
 	m->m_data += len;
 	m->m_len -= len;
 	m->m_pkthdr.len -= len;
