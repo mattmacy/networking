@@ -6839,37 +6839,6 @@ iflib_clone_deregister(if_pseudo_t ip)
 }
 
 #if defined(INET6) || defined(INET)
-
-
-
-#ifdef notyet
-static __inline uint64_t
-mactou64(uint8_t *mac)
-{
-	uint64_t targetha = 0;
-	uint16_t *src, *dst;
-
-	src = (uint16_t *)(uintptr_t)mac;
-	dst = (uint16_t *)&targetha;
-	dst[0] = src[0];
-	dst[1] = src[1];
-	dst[2] = src[2];
-	return (targetha);
-}
-
-static int
-iflib_vxlan_validate(if_ctx_t ctx, int vxlanid, struct ether_vlan_header *eh)
-{
-	uint64_t dmac, smac;
-
-	dmac = mactou64(eh->evl_dhost);
-	smac = mactou64(eh->evl_shost);
-
-	/* check that both dest and source ether headers are part of vxlanid */
-	return (0);
-}
-#endif
-
 void
 iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port)
 {
