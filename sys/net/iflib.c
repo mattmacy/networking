@@ -363,6 +363,7 @@ struct iflib_txq {
 	uint16_t	ift_db_pending;
 	uint16_t	ift_rs_pending;
 	uint16_t	ift_pkt_count;
+	uint16_t	ift_nsegs;
 	int		ift_ticks;
 	/* implicit pad */
 	uint8_t		ift_txd_size[8];
@@ -403,8 +404,11 @@ struct iflib_txq {
 #define MTX_NAME_LEN 16
 	char                    ift_mtx_name[MTX_NAME_LEN];
 	char                    ift_db_mtx_name[MTX_NAME_LEN];
-	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS]  __aligned(CACHE_LINE_SIZE);
-	uint8_t			ift_seg_offsets[IFLIB_MAX_TX_SEGS];
+	uint8_t			ift_seg_offs[IFLIB_MAX_TX_SEGS] __aligned(CACHE_LINE_SIZE);
+	uint16_t		ift_seg_lens[IFLIB_MAX_TX_SEGS];
+	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS];
+
+
 #ifdef IFLIB_DIAGNOSTICS
 	uint64_t ift_cpu_exec_count[256];
 #endif
