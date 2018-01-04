@@ -2041,8 +2041,7 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 					bus_dmamap_destroy(fl->ifl_desc_tag, sd_map);
 			}
 			if (*sd_m != NULL) {
-				m_init(*sd_m, M_NOWAIT, MT_DATA, 0);
-				uma_zfree(zone_mbuf, *sd_m);
+				uma_zfree_arg(zone_mbuf, *sd_m, (void *)MB_DTOR_SKIP);
 			}
 			if (*sd_cl != NULL)
 				uma_zfree(fl->ifl_zone, *sd_cl);
@@ -2619,6 +2618,7 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	if_ctx_t ctx = rxq->ifr_ctx;
 	struct if_rxsd sd;
 	struct mbuf *m;
+	int rc;
 
 	/* should I merge this back in now that the two paths are basically duplicated? */
 	if (ri->iri_nfrags == 1 &&
@@ -2628,7 +2628,12 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 
 		m = *sd.ifsd_m;
 		*sd.ifsd_m = NULL;
-		m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
+		rc = m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
+		if (__predict_false(rc)) {
+			m_free(m);
+			return (NULL);
+		}
+
 #ifndef __NO_STRICT_ALIGNMENT
 		if (!IP_ALIGNED(m))
 			m->m_data += 2;
@@ -3184,7 +3189,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 
 	m = *m0;
 	mh = MBUF2MH(m);
-	me = MHMEI(mh, 0);
+	me = MHMEI(m, mh, 0);
 	ifsd_m = txq->ift_sds.ifsd_m;
 	ntxd = txq->ift_size;
 	pidx = txq->ift_pidx;
@@ -4169,7 +4174,7 @@ iflib_if_transmit_txq(if_t ifp, struct mbuf *m)
 	if_ctx_t	ctx = if_getsoftc(ifp);
 	iflib_txq_t txq;
 	int err, qidx, last_err;
-	struct mbuf *next, *mchain;
+	struct mbuf *next;
 
 	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx))) {
 		DBG_COUNTER_INC(tx_frees);

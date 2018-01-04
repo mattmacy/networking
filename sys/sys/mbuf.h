@@ -320,14 +320,14 @@ struct mvec_ent {
 };
 
 #define MBUF2MH(m) ((struct mvec_header *)((m)->m_pktdat + sizeof(struct m_ext)))
-#define MHME(mh) ((struct mvec_ent *)((mh)+1))
-#define MHREF(mh) ((m_refcnt_t *)(MHME(mh) + mh->mh_count))
+#define MBUF2ME(m) ((struct mvec_ent *)((MBUF2MH((m)))+1))
+#define MBUF2REF(m) ((m_refcnt_t *)(MBUF2MH(m) + mh->mh_count))
 
-#define MHMEI(mh, idx) (MHME(mh) + (mh)->mh_start + (idx))
-#define MHREFI(mh, idx) (MHREF(mh) + (mh)->mh_start + (idx))
+#define MHMEI(m, mh, idx) (MBUF2ME(m) + (mh)->mh_start + (idx))
+#define MHREFI(m, mh, idx) (MBUF2REF(m) + (mh)->mh_start + (idx))
 
-#define ME_SEG(mh, idx) (MHMEI(mh,idx)->me_cl + MHMEI(mh, idx)->me_off)
-#define ME_LEN(mh, idx) (MHMEI(mh,idx)->me_len)
+#define ME_SEG(m, mh, idx) (MHMEI(m, mh,idx)->me_cl + MHMEI(m, mh, idx)->me_off)
+#define ME_LEN(m, mh, idx) (MHMEI(m, mh,idx)->me_len)
 
 #define MBUF_ME_MAX ((MHLEN - sizeof(struct m_ext) - sizeof(struct mvec_header))/sizeof(struct mvec_ent))
 
@@ -415,7 +415,7 @@ struct mbuf *mvec_alloc(uint8_t count, int len, int how);
 /*
  * Initialize an mbuf `m` from zone_mbuf as an mvec.
  */
-void mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type);
+int mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type);
 
 /*
  * Mvec analogs to mbuf helpers that should be implemented sooner
