@@ -3216,7 +3216,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 		 */
 		panic("implement iommu support for mvecs");
 	} else {
-		int segi, buflen, sgsize, maxsegsz, max_sgsize, next;
+		int segi, buflen, sgsize, maxsegsz, max_sgsize;
 		vm_offset_t vaddr;
 		vm_paddr_t curaddr;
 
@@ -3235,7 +3235,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			 */
 #ifdef INVARIANTS
 			if (segi) {
-				next = (pidx + segi) & (ntxd-1);
+				int next = (pidx + segi) & (ntxd-1);
 				MPASS(ifsd_m[next] == NULL);
 			}
 #endif
@@ -3530,9 +3530,9 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	void			*next_txd;
 	bus_dmamap_t		map;
 	struct if_pkt_info	pi;
-	int remap = 0;
 	int err, nsegs, ndesc, max_segs, pidx, cidx, next, ntxd;
 	bus_dma_tag_t desc_tag;
+	bool remapped;
 
 	ctx = txq->ift_ctx;
 	sctx = ctx->ifc_sctx;
@@ -3540,6 +3540,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	ntxd = txq->ift_size;
 	m_head = *m_headp;
 	map = NULL;
+	remapped = false;
 
 	/*
 	 * If we're doing TSO the next descriptor to clean may be quite far ahead
@@ -3645,8 +3646,9 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 		 */
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
-	} else if (__predict_false(err == EFBIG && remap < 2)) {
+	} else if (__predict_false(err == EFBIG && remapped)) {
 		*m_headp = m_head = iflib_remove_mbuf(txq, txq->ift_pidx);
+		remapped = true;
 		txq->ift_txd_encap_efbig++;
 		if ((*m_headp = m_head = m_defrag(*m_headp, M_NOWAIT)) != NULL)
 			goto retry;
