@@ -362,6 +362,7 @@ struct iflib_txq {
 	uint16_t	ift_npending;
 	uint16_t	ift_db_pending;
 	uint16_t	ift_rs_pending;
+	uint16_t	ift_pkt_count;
 	int		ift_ticks;
 	/* implicit pad */
 	uint8_t		ift_txd_size[8];
@@ -403,6 +404,7 @@ struct iflib_txq {
 	char                    ift_mtx_name[MTX_NAME_LEN];
 	char                    ift_db_mtx_name[MTX_NAME_LEN];
 	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS]  __aligned(CACHE_LINE_SIZE);
+	uint8_t			ift_seg_offsets[IFLIB_MAX_TX_SEGS];
 #ifdef IFLIB_DIAGNOSTICS
 	uint64_t ift_cpu_exec_count[256];
 #endif
@@ -3176,8 +3178,7 @@ iflib_remove_mbuf(iflib_txq_t txq, int pidx)
 
 static int
 iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
-						  struct mbuf **m0, bus_dma_segment_t *segs, int *nsegs,
-						  int max_segs, int flags)
+						  struct mbuf **m0, int *nsegs, int max_segs, int flags)
 {
 	int i, count, rem, pidx, ntxd;
 	if_ctx_t ctx;
@@ -3186,6 +3187,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	struct mbuf *m, **ifsd_m;
 	struct mvec_header *mh;
 	struct mvec_ent *me;
+	bus_dma_segment_t *segs;
 
 	m = *m0;
 	mh = MBUF2MH(m);
@@ -3199,6 +3201,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	ctx = txq->ift_ctx;
 	sctx = ctx->ifc_sctx;
 	scctx = &ctx->ifc_softc_ctx;
+	segs = txq->ift_segs;
 	if (sctx->isc_flags & IFLIB_TXD_ENCAP_PIO) {
 		for (i = 0; i < count && me->me_len; i++, me++, segs++) {
 			segs->ds_addr = (bus_addr_t)(me->me_cl + me->me_off);
@@ -3261,21 +3264,17 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 
 static int
 iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
-			  struct mbuf **m0, bus_dma_segment_t *segs, int *nsegs,
-			  int max_segs, int flags)
+			  struct mbuf **m0, int *nsegs, int max_segs, int flags)
 {
 	if_ctx_t ctx;
 	if_shared_ctx_t		sctx;
 	if_softc_ctx_t		scctx;
 	int i, next, pidx, err, ntxd, count;
 	struct mbuf *m, *tmp, **ifsd_m;
+	bus_dma_segment_t *segs;
 
 	m = *m0;
 
-	if ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC)) {
-		return (iflib_busdma_load_mvec_sg(txq, tag, map, m0, segs, nsegs,
-									 max_segs, flags));
-	}
 	/*
 	 * Please don't ever do this
 	 */
@@ -3284,6 +3283,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 
 	ctx = txq->ift_ctx;
 	sctx = ctx->ifc_sctx;
+	segs = txq->ift_segs;
 	if (sctx->isc_flags & IFLIB_TXD_ENCAP_PIO) {
 		tmp = m;
 		/* XXX error out if chain is too long */
@@ -3393,6 +3393,72 @@ err:
 	return (EFBIG);
 }
 
+static int
+iflib_load_mbuf(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
+				struct mbuf **m_headp, int *nsegs, int max_segs)
+{
+	int err;
+	struct mbuf *m_head;
+
+	m_head = *m_headp;
+ retry:
+	if ((m_head->m_flags & M_EXT) && (m_head->m_ext.ext_type == EXT_MVEC)) {
+		err = iflib_busdma_load_mvec_sg(txq, tag, map, m_headp, nsegs,
+										max_segs, BUS_DMA_NOWAIT);
+	} else {
+		err = iflib_busdma_load_mbuf_sg(txq, tag, map, m_headp, nsegs,
+										max_segs, BUS_DMA_NOWAIT);
+	}
+	if (__predict_false(err)) {
+		switch (err) {
+		case EFBIG:
+			m_head = m_collapse(*m_headp, M_NOWAIT, max_segs);
+			if (__predict_false(m_head == NULL))
+				goto defrag_failed;
+			txq->ift_mbuf_defrag++;
+			*m_headp = m_head;
+			goto retry;
+			break;
+		case ENOMEM:
+			txq->ift_no_tx_dma_setup++;
+			break;
+		default:
+			txq->ift_no_tx_dma_setup++;
+			m_freem(*m_headp);
+			DBG_COUNTER_INC(tx_frees);
+			*m_headp = NULL;
+			break;
+		}
+		txq->ift_map_failed++;
+		DBG_COUNTER_INC(encap_load_mbuf_fail);
+		return (err);
+	}
+
+	/*
+	 * XXX assumes a 1 to 1 relationship between segments and
+	 *        descriptors - this does not hold true on all drivers, e.g.
+	 *        cxgb
+	 */
+	if (__predict_false(*nsegs + 2 > TXQ_AVAIL(txq))) {
+		txq->ift_no_desc_avail++;
+		if (map != NULL)
+			bus_dmamap_unload(tag, map);
+		DBG_COUNTER_INC(encap_txq_avail_fail);
+		if ((txq->ift_task.gt_task.ta_flags & TASK_ENQUEUED) == 0)
+			GROUPTASK_ENQUEUE(&txq->ift_task);
+		return (ENOBUFS);
+	}
+	return (0);
+ defrag_failed:
+	txq->ift_mbuf_defrag_failed++;
+	txq->ift_map_failed++;
+	m_freem(*m_headp);
+	DBG_COUNTER_INC(tx_frees);
+	*m_headp = NULL;
+	return (ENOMEM);
+
+}
+
 static inline caddr_t
 calc_next_txd(iflib_txq_t txq, int cidx, uint8_t qid)
 {
@@ -3460,7 +3526,6 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	if_ctx_t		ctx;
 	if_shared_ctx_t		sctx;
 	if_softc_ctx_t		scctx;
-	bus_dma_segment_t	*segs;
 	struct mbuf		*m_head;
 	void			*next_txd;
 	bus_dmamap_t		map;
@@ -3469,11 +3534,9 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	int err, nsegs, ndesc, max_segs, pidx, cidx, next, ntxd;
 	bus_dma_tag_t desc_tag;
 
-	segs = txq->ift_segs;
 	ctx = txq->ift_ctx;
 	sctx = ctx->ifc_sctx;
 	scctx = &ctx->ifc_softc_ctx;
-	segs = txq->ift_segs;
 	ntxd = txq->ift_size;
 	m_head = *m_headp;
 	map = NULL;
@@ -3530,54 +3593,9 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 			return (err);
 		m_head = *m_headp;
 	}
-
-retry:
-	err = iflib_busdma_load_mbuf_sg(txq, desc_tag, map, m_headp, segs, &nsegs, max_segs, BUS_DMA_NOWAIT);
-defrag:
-	if (__predict_false(err)) {
-		switch (err) {
-		case EFBIG:
-			/* try collapse once and defrag once */
-			if (remap == 0)
-				m_head = m_collapse(*m_headp, M_NOWAIT, max_segs);
-			if (remap == 1)
-				m_head = m_defrag(*m_headp, M_NOWAIT);
-			remap++;
-			if (__predict_false(m_head == NULL))
-				goto defrag_failed;
-			txq->ift_mbuf_defrag++;
-			*m_headp = m_head;
-			goto retry;
-			break;
-		case ENOMEM:
-			txq->ift_no_tx_dma_setup++;
-			break;
-		default:
-			txq->ift_no_tx_dma_setup++;
-			m_freem(*m_headp);
-			DBG_COUNTER_INC(tx_frees);
-			*m_headp = NULL;
-			break;
-		}
-		txq->ift_map_failed++;
-		DBG_COUNTER_INC(encap_load_mbuf_fail);
+ retry:
+	if ((err = iflib_load_mbuf(txq, desc_tag, map, m_headp, &nsegs, max_segs)))
 		return (err);
-	}
-
-	/*
-	 * XXX assumes a 1 to 1 relationship between segments and
-	 *        descriptors - this does not hold true on all drivers, e.g.
-	 *        cxgb
-	 */
-	if (__predict_false(nsegs + 2 > TXQ_AVAIL(txq))) {
-		txq->ift_no_desc_avail++;
-		if (map != NULL)
-			bus_dmamap_unload(desc_tag, map);
-		DBG_COUNTER_INC(encap_txq_avail_fail);
-		if ((txq->ift_task.gt_task.ta_flags & TASK_ENQUEUED) == 0)
-			GROUPTASK_ENQUEUE(&txq->ift_task);
-		return (ENOBUFS);
-	}
 	/*
 	 * On Intel cards we can greatly reduce the number of TX interrupts
 	 * we see by only setting report status on every Nth descriptor.
@@ -3591,7 +3609,7 @@ defrag:
 		txq->ift_rs_pending = 0;
 	}
 
-	pi.ipi_segs = segs;
+	pi.ipi_segs = txq->ift_segs;
 	pi.ipi_nsegs = nsegs;
 
 	MPASS(pidx >= 0 && pidx < txq->ift_size);
@@ -3629,20 +3647,12 @@ defrag:
 		txq->ift_npending += pi.ipi_ndescs;
 	} else if (__predict_false(err == EFBIG && remap < 2)) {
 		*m_headp = m_head = iflib_remove_mbuf(txq, txq->ift_pidx);
-		remap = 1;
 		txq->ift_txd_encap_efbig++;
-		goto defrag;
+		if ((*m_headp = m_head = m_defrag(*m_headp, M_NOWAIT)) != NULL)
+			goto retry;
 	} else
 		DBG_COUNTER_INC(encap_txd_encap_fail);
 	return (err);
-
-defrag_failed:
-	txq->ift_mbuf_defrag_failed++;
-	txq->ift_map_failed++;
-	m_freem(*m_headp);
-	DBG_COUNTER_INC(tx_frees);
-	*m_headp = NULL;
-	return (ENOMEM);
 }
 
 static void
