@@ -532,13 +532,10 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	if (!!(m->m_pkthdr.csum_flags & CSUM_TSO) &
 		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
 		if (__predict_false(!ismvec)) {
-			mtmp = mchain_to_mvec(mh, M_NOWAIT);
 			m_freem(mh);
-			if (__predict_false(mtmp == NULL))
-					return (ENOMEM);
-			mh = mtmp;
+			return (EINVAL);
 		}
-		mtmp = mvec_tso(mh, hdrsize, true);
+		mtmp = mvec_tso(m, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
 			m_freem(mh);
 			return (ENOMEM);
@@ -643,7 +640,7 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 }
 
 #define VPC_CAPS														\
-	IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
+	IFCAP_TSO4 |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
 
 static int
