@@ -82,6 +82,14 @@ __FBSDID("$FreeBSD$");
 
 static ck_epoch_t vpc_epoch;
 
+#define VPC_DEBUG
+
+#ifdef VPC_DEBUG
+#define  DPRINTF printf
+#else
+#define DPRINTF(...)
+#endif
+
 #ifdef notyet
 typedef struct vxlan_tables {
 	art_tree *vt_ipv4_rt;
@@ -474,7 +482,7 @@ vpc_nd_lookup(struct vpc_softc *vs, if_t *ifpp, struct sockaddr *dst, uint8_t *e
 		RTFREE_LOCKED(rt);
 
 		if (__predict_false(rc)) {
-			printf("failed to cache interface reference\n");
+			DPRINTF("failed to cache interface reference\n");
 			return (EDOOFUS);
 		}
 	} else
@@ -519,6 +527,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		mh = m_gethdr(M_NOWAIT, MT_NOINIT);
 		if (__predict_false(mh == NULL)) {
 			m_freem(m);
+			DPRINTF("%s failed to gethdr\n", __func__); 
 			return (ENOMEM);
 		}
 		bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
@@ -544,7 +553,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	/* lookup MAC->IP forwarding table */
 	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
-		printf("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
+		DPRINTF("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
 		m_freem(mh);
 		return (ENOENT);
 	}
@@ -552,15 +561,17 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	/*   lookup IP using encapsulated dmac */
 	rc = vpc_ftable_lookup(vf, evhvx, dst);
 	if (__predict_false(rc)) {
-		printf("no forwarding entry for dmac: %*D\n",
+		DPRINTF("no forwarding entry for dmac: %*D\n",
 			   ETHER_ADDR_LEN, (caddr_t)evhvx, ":");
 		vpc_fte_print(vs);
 		m_freem(mh);
 		return (rc);
 	}
 	ifp = NULL;
-	if ((rc = vpc_nd_lookup(vs, &ifp, dst, evh->evl_dhost)))
+	if ((rc = vpc_nd_lookup(vs, &ifp, dst, evh->evl_dhost))) {
+		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
+	}
 
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
@@ -568,11 +579,13 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	if (!!(m->m_pkthdr.csum_flags & CSUM_TSO) &
 		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
 		if (__predict_false(!ismvec)) {
+			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
 			m_freem(mh);
 			return (EINVAL);
 		}
 		mtmp = mvec_tso(m, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
+			DPRINTF("%s mvec_tso failed\n", __func__);
 			m_freem(mh);
 			return (ENOMEM);
 		}
@@ -613,8 +626,10 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf **mp, bool *can_batch)
 		}
 		m = mnext;
 	} while (m != NULL);
-	if (__predict_false(mnext != NULL))
+	if (__predict_false(mnext != NULL)) {
+		DPRINTF("%s freeing after failed encap\n", __func__); 
 		m_freechain(mnext);
+	}
 	*mp = mh;
 	return (rc);
 }
@@ -636,7 +651,7 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 
 	can_batch = true;
 	if ((m->m_flags & M_VXLANTAG) == 0) {
-		printf("got untagged packet\n");
+		DPRINTF("got untagged packet\n");
 		m_freechain(m);
 		return (EINVAL);
 	}
@@ -870,7 +885,7 @@ vpc_ftable_print_callback(void *data, const unsigned char *key, uint32_t key_len
 
 	buf[4] = 0;
 	inet_ntoa_r(((struct sockaddr_in *)value)->sin_addr, buf);
-	printf("vni: 0x%x dmac: %*D ip: %s\n",
+	DPRINTF("vni: 0x%x dmac: %*D ip: %s\n",
 		   *(uint32_t *)data, ETHER_ADDR_LEN, key, ":", buf);
 	return (0);
 }
@@ -926,7 +941,7 @@ vpc_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 		return (rc);
 	if (ioh->vih_type != VPC_FTE_ALL &&
 		IOCPARM_LEN(ioh->vih_type) != ifbuf->length) {
-		printf("IOCPARM_LEN: %d ifbuf->length: %d\n",
+		DPRINTF("IOCPARM_LEN: %d ifbuf->length: %d\n",
 			   (int)IOCPARM_LEN(ioh->vih_type), (int)ifbuf->length);
 			   return (EINVAL);
 	}

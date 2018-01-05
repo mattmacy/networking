@@ -66,6 +66,15 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_VPCI, "vpci", "virtual private cloud interface");
 
+
+#define VPCI_DEBUG
+
+#ifdef VPCI_DEBUG
+#define  DPRINTF printf
+#else
+#define DPRINTF(...)
+#endif
+
 /*
  * ifconfig vpci0 create
  * ifconfig vpci0 192.168.0.100
@@ -97,6 +106,7 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 
 	if (__predict_false(vs->vs_ifparent == NULL)) {
 		m_freechain(m);
+		DPRINTF("freeing without parent\n");
 		return (ENOBUFS);
 	}
 	mp = m;
@@ -257,7 +267,7 @@ vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	iod = malloc(ifbuf->length, M_VPCI, M_WAITOK | M_ZERO);
 #endif
 	if (IOCPARM_LEN(ioh->vih_type) != ifbuf->length) {
-		printf("IOCPARM_LEN: %d ifbuf->length: %d\n",
+		DPRINTF("IOCPARM_LEN: %d ifbuf->length: %d\n",
 			   (int)IOCPARM_LEN(ioh->vih_type), (int)ifbuf->length);
 		return (EINVAL);
 	}
