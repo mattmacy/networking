@@ -38,10 +38,40 @@ __FBSDID("$FreeBSD$");
 #include <sys/smp.h>
 #include <sys/sysctl.h>
 
+#include <machine/in_cksum.h>
+
 static MALLOC_DEFINE(M_MVEC, "mvec", "mbuf vector");
 
 static int type2len[] = {-1, MCLBYTES, -1, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES, -1, MSIZE};
 #define VALIDTYPES ((1<<EXT_CLUSTER)|(1<<EXT_JUMBOP)|(1<<EXT_JUMBO9)|(1<<EXT_JUMBO16)|(1<<EXT_MVEC))
+
+
+#define ADDCARRY(x)  (x > 65535 ? x -= 65535 : x)
+#define REDUCE32							  \
+    {									  \
+	q_util.q = sum;							  \
+	sum = q_util.s[0] + q_util.s[1] + q_util.s[2] + q_util.s[3];	  \
+    }
+#define REDUCE16							  \
+    {									  \
+	q_util.q = sum;							  \
+	l_util.l = q_util.s[0] + q_util.s[1] + q_util.s[2] + q_util.s[3]; \
+	sum = l_util.s[0] + l_util.s[1];				  \
+	ADDCARRY(sum);							  \
+    }
+
+uint64_t in_cksumdata(const void *buf, int len);
+
+union l_util {
+	u_int16_t s[2];
+	u_int32_t l;
+};
+union q_util {
+	u_int16_t s[4];
+	u_int32_t l[2];
+	u_int64_t q;
+};
+
 
 static void
 mvec_buffer_free(struct mbuf *m)
@@ -58,6 +88,7 @@ mvec_buffer_free(struct mbuf *m)
 			break;
 	}
 }
+
 
 static void
 mvec_clfree(struct mvec_ent *me, m_refcnt_t *refcntp, bool dupref)
@@ -125,12 +156,14 @@ void
 mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
 {
 	struct mvec_ent *me = MBUF2ME(m);
+	struct mvec_header *mh = MBUF2MH(m);
 	int rem;
 
 	mc->mc_idx = mc->mc_off = 0;
 	MPASS(offset <= m->m_pkthdr.len);
 	rem = offset;
 
+	me = MHMEI(m, mh, 0);
 	do {
 		if (rem > me->me_len) {
 			rem -= me->me_len;
@@ -260,6 +293,49 @@ mvec_collapse(struct mbuf *m, int how, int maxfrags)
 {
 	panic("%s unimplemented", __func__);
 	return (NULL);
+}
+
+uint16_t
+mvec_cksum_skip(struct mbuf *m, int len, int skip)
+{
+	u_int64_t sum = 0;
+	int mlen = 0;
+	int clen = 0;
+	caddr_t addr;
+	union q_util q_util;
+	union l_util l_util;
+	struct mvec_cursor mc;
+	struct mvec_header mh;
+	struct mvec_ent *me;
+
+	if (!((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC)))
+		return (in_cksum_skip(m, len, skip));
+
+	mvec_seek(m, &mc, skip);
+	mh = *(MBUF2MH(m));
+	me = MHMEI(m, &mh, mc.mc_idx);
+	addr = me->me_cl + me->me_off;
+	goto skip_start;
+
+	for (; mh.mh_used && len; me++) {
+		mh.mh_used--;
+		if (me->me_len == 0)
+			continue;
+		mlen = me->me_len;
+		addr = me->me_cl + me->me_off;
+skip_start:
+		if (len < mlen)
+			mlen = len;
+		if ((clen ^ (long) addr) & 1)
+		    sum += in_cksumdata(addr, mlen) << 8;
+		else
+		    sum += in_cksumdata(addr, mlen);
+
+		clen += mlen;
+		len -= mlen;
+	}
+	REDUCE16;
+	return (~sum & 0xffff);
 }
 
 
