@@ -417,6 +417,9 @@ struct mbuf *mvec_alloc(uint8_t count, int len, int how);
  */
 int mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type);
 
+
+uint16_t mvec_cksum_skip(struct mbuf *m, int len, int skip);
+
 /*
  * Mvec analogs to mbuf helpers that should be implemented sooner
  * rather than later.
