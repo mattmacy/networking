@@ -109,29 +109,33 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 		DPRINTF("freeing without parent\n");
 		return (ENOBUFS);
 	}
-	mp = m;
-	mh = mt = NULL;
+
+	mh = mt = mp = m;
 	while (mp) {
 		mnext = mp->m_nextpkt;
 		mp->m_flags |= M_VXLANTAG;
 		mp->m_pkthdr.vxlanid = vs->vs_vni;
-		if ((mp->m_pkthdr.csum_flags & CSUM_TSO) &&
-			!((mp->m_flags & M_EXT) && (mp->m_ext.ext_type == EXT_MVEC))) {
-			mp->m_nextpkt = NULL;
-			mtmp = mchain_to_mvec(mp, M_NOWAIT);
-			if (__predict_false(mtmp == NULL)) {
-				m_freem(mp);
-				mp = mnext;
-				continue;
+		if (mp->m_pkthdr.csum_flags & CSUM_TSO) {
+			if (mp->m_pkthdr.len < ifp->if_mtu)
+				mp->m_pkthdr.csum_flags &= ~CSUM_TSO;
+			else if ((mp->m_flags & M_EXT) && (mp->m_ext.ext_type == EXT_MVEC)) {
+				mp->m_nextpkt = NULL;
+				mtmp = mchain_to_mvec(mp, M_NOWAIT);
+				if (__predict_false(mtmp == NULL)) {
+					m_freem(mp);
+					mp = mnext;
+					continue;
+				}
+				if (mp == m) {
+					mh = mtmp;
+				} else {
+					mt->m_nextpkt = mtmp;
+					mtmp->m_nextpkt = mnext;
+				}
+				mp = mtmp;
 			}
-			mp = mtmp;
 		}
-		if (mt == NULL) {
-			mh = mt = mp;
-		} else {
-			mt->m_nextpkt = mp;
-			mt = mp;
-		}
+		mt = mp;
 		mp = mnext;
 	}
 
