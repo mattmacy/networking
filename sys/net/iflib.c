@@ -2733,7 +2733,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 	int err, budget_left, rx_bytes, rx_pkts;
 	iflib_fl_t fl;
 	struct ifnet *ifp;
-	int vxlan_enabled, lro_enabled;
+	int vxlan_enabled, lro_enabled, soft_csum;
 	bool lro_possible = false;
 	bool v4_forwarding, v6_forwarding;
 
@@ -2759,6 +2759,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		return (false);
 	}
 	vxlan_enabled = (if_getcapenable(ifp) & IFCAP_VXLANDECAP);
+	soft_csum = (if_getcapenable(ifp) & IFCAP_RXCSUM);
 	for (budget_left = budget; (budget_left > 0) && (avail > 0); budget_left--, avail--) {
 		if (__predict_false(!CTX_ACTIVE(ctx))) {
 			DBG_COUNTER_INC(rx_ctx_inactive);
@@ -2828,7 +2829,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		rx_pkts++;
 #if defined(INET6) || defined(INET)
 		if (vxlan_enabled)
-			iflib_vxlan_decap(m, ctx->ifc_vxlan_port);
+			iflib_vxlan_decap(m, ctx->ifc_vxlan_port, soft_csum);
 		if (lro_enabled) {
 			if (!lro_possible) {
 				lro_possible = iflib_check_lro_possible(m, v4_forwarding, v6_forwarding);
@@ -6846,7 +6847,7 @@ iflib_clone_deregister(if_pseudo_t ip)
 
 #if defined(INET6) || defined(INET)
 void
-iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port)
+iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
 {
 	struct ether_vlan_header *eh;
 	struct udphdr *uh;
