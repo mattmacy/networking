@@ -90,7 +90,7 @@ vpci_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 static int
 vpci_transmit(if_t ifp, struct mbuf *m)
 {
-	struct mbuf *mp;
+	struct mbuf *mp, *mnext, *mh, *mt, *mtmp;
 	if_ctx_t ctx = ifp->if_softc;
 	struct vpci_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *parent = vs->vs_ifparent;
@@ -100,25 +100,38 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 		return (ENOBUFS);
 	}
 	mp = m;
-	do {
+	mh = mt = NULL;
+	while (mp) {
+		mnext = mp->m_nextpkt;
 		mp->m_flags |= M_VXLANTAG;
 		mp->m_pkthdr.vxlanid = vs->vs_vni;
-		mp = mp->m_nextpkt;
-	} while (mp);
+		if ((mp->m_pkthdr.csum_flags & CSUM_TSO) &&
+			!((mp->m_flags & M_EXT) && (mp->m_ext.ext_type == EXT_MVEC))) {
+			mp->m_nextpkt = NULL;
+			mtmp = mchain_to_mvec(mp, M_NOWAIT);
+			if (__predict_false(mtmp == NULL)) {
+				m_freem(mp);
+				mp = mnext;
+				continue;
+			}
+			mp = mtmp;
+		}
+		if (mt == NULL) {
+			mh = mt = mp;
+		} else {
+			mt->m_nextpkt = mp;
+			mt = mp;
+		}
+		mp = mnext;
+	}
 
-	return (parent->if_transmit_txq(parent, m));
+	return (parent->if_transmit_txq(parent, mh));
 }
 
-#ifdef notyet
 #define VPCI_CAPS														\
-	IFCAP_TSO4 | IFCAP_TSO6 | IFCAP_TXCSUM | IFCAP_RXCSUM | IFCAP_VLAN_HWFILTER | IFCAP_WOL_MAGIC | \
-	IFCAP_WOL_MCAST | IFCAP_WOL | IFCAP_VLAN_HWTSO | IFCAP_HWCSUM | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM | \
-	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU
-#endif
-
-#define VPCI_CAPS														\
-	IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
-	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
+	IFCAP_TSO | IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
+	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | \
+	IFCAP_LINKSTATE
 
 static int
 vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
