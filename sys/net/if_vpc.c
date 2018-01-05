@@ -344,8 +344,8 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	vpc_ip_init(vf, vh, dstip, m->m_pkthdr.len);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
-	uh->uh_sport = vpc_sport_hash(vf->vf_vs, hdr);
-	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
+	uh->uh_sport = htons(vpc_sport_hash(vf->vf_vs, hdr));
+	uh->uh_dport = htons(vf->vf_vs->vs_vxlan_port);
 	uh->uh_ulen = htons(len - sizeof(*ip) - sizeof(*eh));
 	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
 	uh->uh_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr,
