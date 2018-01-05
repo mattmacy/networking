@@ -78,6 +78,8 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
+#include <machine/in_cksum.h>
+
 static ck_epoch_t vpc_epoch;
 
 #ifdef notyet
@@ -279,11 +281,50 @@ vpc_sport_hash(struct vpc_softc *vs, caddr_t data)
 	return (vs->vs_min_port + hash);
 }
 
+
+static void
+vpc_ip_init(struct vpc_ftable *vf, struct vxlan_header *vh, struct sockaddr *dstip, int len)
+{
+	struct ip *ip;
+	struct sockaddr_in *sin;
+
+	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
+	ip->ip_hl = sizeof(*ip) >> 2;
+	ip->ip_v = 4; /* v4 only now */
+	ip->ip_tos = 0;
+	/* XXX validate that we won't overrun IP_MAXPACKET first */
+	ip->ip_len = htons(len + sizeof(*vh) - sizeof(struct ether_header));
+	ip->ip_id = 0;
+	ip->ip_off = 0;
+	ip->ip_ttl = 255;
+	ip->ip_p = IPPROTO_UDP;
+	ip->ip_sum = 0;
+	sin = (struct sockaddr_in *)&vf->vf_vs->vs_addr;
+	ip->ip_src.s_addr = sin->sin_addr.s_addr;
+	sin = (struct sockaddr_in *)dstip;
+	ip->ip_dst.s_addr = sin->sin_addr.s_addr;
+}
+
+
+static uint16_t
+vpc_csum_skip(struct mbuf *m, int len, int skip)
+{
+	uint16_t csum;
+
+	if ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC))
+		csum = mvec_cksum_skip(m, len, skip);
+	else
+		csum = in_cksum_skip(m, len, skip);
+
+	if (__predict_false(csum == 0))
+		csum = 0xffff;
+	return (csum);
+}
+
 static void
 vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh, 
 				  struct sockaddr *dstip, struct ifnet *ifp, struct mbuf *m)
 {
-	struct sockaddr_in *sin;
 	struct ether_header *eh;
 	struct ip *ip;
 	struct udphdr *uh;
@@ -296,32 +337,22 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	/* arp resolve fills in dest */
 	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
 
-	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
-	ip->ip_hl = sizeof(*ip) >> 2;
-	ip->ip_v = 4; /* v4 only now */
-	ip->ip_tos = 0;
-	/* XXX validate that we won't overrun IP_MAXPACKET first */
-	ip->ip_len = htons(m->m_pkthdr.len + sizeof(*vh) - sizeof(struct ether_header));
-	ip->ip_id = 0;
-	ip->ip_off = 0;
-	ip->ip_ttl = 255;
-	ip->ip_p = IPPROTO_UDP;
-	ip->ip_sum = 0;
-	sin = (struct sockaddr_in *)&vf->vf_vs->vs_addr;
-	ip->ip_src.s_addr = sin->sin_addr.s_addr;
-	sin = (struct sockaddr_in *)dstip;
-	ip->ip_dst.s_addr = sin->sin_addr.s_addr;
 	/* check that CSUM_IP works for all hardware */
+	vpc_ip_init(vf, vh, dstip, m->m_pkthdr.len);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
 	uh->uh_sport = vpc_sport_hash(vf->vf_vs, m->m_data);
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
-	uh->uh_ulen = ip->ip_len - sizeof(*ip);
+	uh->uh_ulen = htons(m->m_pkthdr.len + sizeof(*vh) - sizeof(*ip) - sizeof(*eh));
 	uh->uh_sum = 0; /* offload */
-
 	vhdr = (struct vxlanhdr *)(uintptr_t)&vh->vh_vxlanhdr;
 	vhdr->v_i = 1;
 	vhdr->v_vxlanid = htonl(vf->vf_vni) >> 8;
+	if (!(ifp->if_capenable & IFCAP_TXCSUM)) {
+		ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
+		ip->ip_sum = in_cksum_hdr(ip);
+		uh->uh_sum = vpc_csum_skip(m, ntohs(ip->ip_len), sizeof(*ip) + sizeof(*eh));
+	}
 }
 
 static int
@@ -640,7 +671,7 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 }
 
 #define VPC_CAPS														\
-	IFCAP_TSO4 |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
+	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
 
 static int
