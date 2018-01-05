@@ -417,6 +417,50 @@ vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
 }
 
 static int
+vpc_nd_lookup(struct vpc_softc *vs, if_t *ifpp, struct sockaddr *dst, uint8_t *ether_addr)
+{
+	struct rtentry *rt;
+	int rc;
+	if_t ifp;
+
+	if (*ifpp == NULL)  {
+		rt = rtalloc1_fib(dst, 0, 0, vs->vs_fibnum);
+		if (__predict_false(rt == NULL))
+			return (ENETUNREACH);
+		if (__predict_false(!(rt->rt_flags & RTF_UP) ||
+							(rt->rt_ifp == NULL) ||
+							!RT_LINK_IS_UP(rt->rt_ifp))) {
+		RTFREE_LOCKED(rt);
+		return (ENETUNREACH);
+		}
+		ifp = rt->rt_ifp;
+		rc = vpc_ifp_cache(vs, ifp);
+		RTFREE_LOCKED(rt);
+
+		if (__predict_false(rc)) {
+			printf("failed to cache interface reference\n");
+			return (EDOOFUS);
+		}
+	} else
+		ifp = *ifpp;
+	/* get dmac */
+	switch(dst->sa_family) {
+		case AF_INET:
+			rc = arpresolve(ifp, 0, NULL, dst,
+							ether_addr, NULL, NULL);
+			break;
+		case AF_INET6:
+			rc = nd6_resolve(ifp, 0, NULL, dst,
+							 ether_addr, NULL, NULL);
+			break;
+		default:
+			rc = EOPNOTSUPP;
+	}
+	*ifpp = ifp;
+	return (rc);
+}
+
+static int
 vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 {
 	struct ether_vlan_header *evh, *evhvx;
@@ -425,7 +469,6 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	struct vpc_ftable *vf;
 	struct sockaddr *dst;
 	struct route ro;
-	struct rtentry *rt;
 	struct ifnet *ifp;
 	int rc, ismvec, hdrsize;
 
@@ -479,51 +522,10 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		m_freem(mh);
 		return (rc);
 	}
-	/* lookup route to find interface */
-	rt = rtalloc1_fib(dst, 0, 0, vs->vs_fibnum);
-	if (__predict_false(rt == NULL)) {
-		printf("no routing entry\n");
-		m_freem(mh);
-		return (ENETUNREACH);
-	}
-	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
-						(rt->rt_ifp == NULL) ||
-						!RT_LINK_IS_UP(rt->rt_ifp))) {
-		RTFREE_LOCKED(rt);
-		printf("route is invalid\n");
-		m_freem(mh);
-		return (ENETUNREACH);
-	}
-	ifp = rt->rt_ifp;
-	rc = vpc_ifp_cache(vs, ifp);
-	RTFREE_LOCKED(rt);
-
-	if (__predict_false(rc)) {
-		printf("failed to cache interface reference\n");
-		return (EDOOFUS);
-	}
-	/* get dmac */
-	switch(dst->sa_family) {
-		case AF_INET:
-			rc = arpresolve(ifp, 0, NULL, dst,
-							evh->evl_dhost, NULL, NULL);
-			break;
-		case AF_INET6:
-			rc = nd6_resolve(ifp, 0, NULL, dst,
-							 evh->evl_dhost, NULL, NULL);
-			break;
-		default:
-			rc = EOPNOTSUPP;
-	}
-	if (__predict_false(rc)) {
-		char buf[16];
-		struct sockaddr_in *sin = (struct sockaddr_in *)dst;
-
-		inet_ntoa_r(sin->sin_addr, buf);
-		printf("L2 resolution on %s failed %d\n", buf, rc);
-		m_freem(mh);
+	ifp = NULL;
+	if ((rc = vpc_nd_lookup(vs, &ifp, dst, evh->evl_dhost)))
 		return (rc);
-	}
+
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
@@ -770,6 +772,8 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 	struct vpc_ftable *ftable;
 	struct vpc_fte *vfte;
 	uint32_t addr, *addrp;
+	char buf[ETHER_ADDR_LEN];
+	if_t ifp;
 
 	vfte = &vfu->vfu_vfte;
 	if (vfte->vf_protoaddr.sa_family != AF_INET)
@@ -793,7 +797,9 @@ vpc_fte_update(struct vpc_softc *vs, struct vpc_fte_update *vfu, bool add)
 			free(ftable, M_VPC);
 		}
 	} else {
+		ifp = NULL;
 		/* do an arp resolve on proto addr so that it's in cache */
+		(void)vpc_nd_lookup(vs, &ifp, &vfte->vf_protoaddr, buf);
 		vpc_ftable_insert(ftable,(caddr_t)vfte->vf_hwaddr,
 						  &vfte->vf_protoaddr);
 	}
