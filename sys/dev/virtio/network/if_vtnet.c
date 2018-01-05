@@ -970,7 +970,6 @@ vtnet_setup_interface(struct vtnet_softc *sc)
 	/* Tell the upper layer(s) we support long frames. */
 	ifp->if_hdrlen = sizeof(struct ether_vlan_header);
 	ifp->if_capabilities |= IFCAP_JUMBO_MTU | IFCAP_VLAN_MTU;
-	ifp->if_capabilities |= IFCAP_VXLANDECAP;
 
 	if (virtio_with_feature(dev, VIRTIO_NET_F_CSUM)) {
 		ifp->if_capabilities |= IFCAP_TXCSUM | IFCAP_TXCSUM_IPV6;
@@ -1016,6 +1015,7 @@ vtnet_setup_interface(struct vtnet_softc *sc)
 	 * Capabilities after here are not enabled by default.
 	 */
 
+	ifp->if_capabilities |= IFCAP_VXLANDECAP;
 	if (sc->vtnet_flags & VTNET_FLAG_VLAN_FILTER) {
 		ifp->if_capabilities |= IFCAP_VLAN_HWFILTER;
 
