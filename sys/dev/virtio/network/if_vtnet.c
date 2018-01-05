@@ -1714,11 +1714,12 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 	struct vtnet_softc *sc;
 	struct ifnet *ifp;
 	struct ether_header *eh;
-	int vxlan_enabled, vxlan_port;
+	int vxlan_enabled, vxlan_port, soft_csum;
 
 	sc = rxq->vtnrx_sc;
 	ifp = sc->vtnet_ifp;
 	vxlan_enabled = !!(ifp->if_capenable & IFCAP_VXLANDECAP);
+	soft_csum = !!(ifp->if_capenable & IFCAP_RXCSUM);
 	vxlan_port = sc->vtnet_vxlan_port;
 
 	if (ifp->if_capenable & IFCAP_VLAN_HWTAGGING) {
@@ -1755,7 +1756,7 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 
 	VTNET_RXQ_UNLOCK(rxq);
 	if (vxlan_enabled)
-		iflib_vxlan_decap(m, vxlan_port);
+		iflib_vxlan_decap(m, vxlan_port, soft_csum);
 	(*ifp->if_input)(ifp, m);
 	VTNET_RXQ_LOCK(rxq);
 }
