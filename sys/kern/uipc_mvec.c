@@ -308,9 +308,9 @@ mvec_cksum_skip(struct mbuf *m, int len, int skip)
 	struct mvec_header mh;
 	struct mvec_ent *me;
 
-	if (!((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC)))
-		return (in_cksum_skip(m, len, skip));
+	MPASS((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC));
 
+	len -= skip;
 	mvec_seek(m, &mc, skip);
 	mh = *(MBUF2MH(m));
 	me = MHMEI(m, &mh, mc.mc_idx);
