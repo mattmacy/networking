@@ -632,11 +632,14 @@ mchain_to_mvec(struct mbuf *m, int how)
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
 
 	me = mext->me_ents;
-	me_count = MBUF2REF(mnew);
 	MPASS(mh->mh_start == 1);
 	me->me_cl = NULL;
 	me->me_off = me->me_len = 0;
 	me++;
+	me_count = MBUF2REF(mnew);
+	if (dupref)
+		bzero(me_count, count*sizeof(void *));
+	me_count++;
 	mp = m;
 	do {
 		mnext = mp->m_next;
@@ -656,7 +659,6 @@ mchain_to_mvec(struct mbuf *m, int how)
 		me->me_len = mp->m_len;
 		me->me_eop = 0;
 		if (dupref) {
-			me_count->ext_cnt = NULL;
 			if (m->m_flags & M_EXT) {
 				if (mp->m_ext.ext_flags & EXT_FLAG_EMBREF) {
 					me_count->ext_cnt = &mp->m_ext.ext_count;
