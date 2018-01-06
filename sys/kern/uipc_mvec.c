@@ -566,6 +566,7 @@ mvec_header_init(struct mbuf *mnew)
 	mnew->m_ext.ext_type = EXT_MVEC;
 }
 
+
 struct mbuf *
 mchain_to_mvec(struct mbuf *m, int how)
 {
@@ -623,6 +624,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	me_count = (m_refcnt_t *)(me + count);
 	me->me_cl = NULL;
 	me++;
+	mp = m;
 	do {
 		mnext = mp->m_next;
 		if (mp->m_flags & M_EXT) {
@@ -661,6 +663,34 @@ mchain_to_mvec(struct mbuf *m, int how)
 	} while (mp);
 
 	return (mnew);
+}
+
+struct mbuf *
+pktchain_to_mvec(struct mbuf *m, int mtu, int how)
+{
+	struct mbuf *mh, *mt, *mp, *mnext, *mnew;
+
+	mp = m;
+	mt = mh = NULL;
+	while (mp) {
+		mnext = mp->m_nextpkt;
+		if (!m_ismvec(mp) && mp->m_pkthdr.len > mtu) {
+			mnew = mchain_to_mvec(mp, how);
+			if (__predict_false(mnew == NULL)) {
+				m_freem(mp);
+			} else
+				mp = mnew;
+		}
+		MPASS(mp);
+		if (mh == NULL) {
+			mh = mt = mp;
+		} else {
+			mt->m_nextpkt = mp;
+			mt = mp;
+		}
+		mp = mnext;
+	}
+	return (mh);
 }
 
 static void

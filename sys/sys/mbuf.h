@@ -382,6 +382,9 @@ void mvec_free(struct mbuf *m);
  */
 struct mbuf *mchain_to_mvec(struct mbuf *m, int how);
 
+struct mbuf *pktchain_to_mvec(struct mbuf *m, int mtu, int how);
+
+
 /*
  * Convert mvec `m` to mbuf chain non-destructively.
  * Returns NULL if not successful. It is the caller's
