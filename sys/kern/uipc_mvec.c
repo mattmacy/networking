@@ -354,12 +354,14 @@ mvec_prepend(struct mbuf *m, int size)
 	struct mvec_header *mh;
 	struct mvec_ent *me;
 	struct mbuf *data;
+	struct mbuf_ext *mext;
 
 	MPASS(size <= MSIZE);
 	if (__predict_false((data = m_get(M_NOWAIT, MT_NOINIT)) == NULL))
 		return (NULL);
 
-	mh = MBUF2MH(m);
+	mext = (struct mbuf_ext *)m;
+	mh = &mext->me_mh;
 	if (__predict_true(mh->mh_start)) {
 		mh->mh_start--;
 		mh->mh_used++;
