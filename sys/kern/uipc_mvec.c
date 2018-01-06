@@ -82,6 +82,33 @@ union q_util {
 };
 
 
+#ifdef INVARIANTS
+static void
+mvec_sanity(struct mbuf *m)
+{
+	struct mbuf_ext *mext;
+	struct mvec_header *mh;
+	struct mvec_ent *me;
+	int i, total;
+
+	mext = (void*)m;
+	mh = &mext->me_mh;
+	me = &mext->me_ents[mh->mh_start];
+	total = 0;
+	MPASS(m->m_len == me->me_len);
+	MPASS(m->m_data == (me->me_cl + me->me_off));
+	for (i = mh->mh_start; i < mh->mh_used + mh->mh_start; i++) {
+		MPASS(me->me_cl);
+		MPASS(me->me_cl != (void *)0xdeadc0dedeadc0de);
+		total += me->me_len;
+	}
+	MPASS(total == m->m_pkthdr.len);
+}
+#else
+static void
+mvec_sanity(struct mbuf *m) {}
+#endif
+
 static void
 mvec_buffer_free(struct mbuf *m)
 {
@@ -346,7 +373,6 @@ skip_start:
 	REDUCE16;
 	return (~sum & 0xffff);
 }
-
 
 struct mbuf *
 mvec_prepend(struct mbuf *m, int size)
@@ -664,6 +690,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 		me++;
 	} while (mp);
 
+	mvec_sanity(mnew);
 	return (mnew);
 }
 
@@ -777,6 +804,7 @@ mvec_to_mchain(struct mbuf *mp, int how)
 	struct mvec_header *pmhdr, mhdr;
 	struct mbuf *mh, *mt, *m;
 
+	mvec_sanity(mp);
 	pmhdr = MBUF2MH(mp);
 	bcopy(pmhdr, &mhdr, sizeof(mhdr));
 	mh = mt = NULL;
@@ -1139,5 +1167,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		mvec_buffer_free(m);
 	} else
 		atomic_add_int(mnew->m_ext.ext_cnt, 1);
+
+	mvec_sanity(mnew);
 	return (mnew);
 }
