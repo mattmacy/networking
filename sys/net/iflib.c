@@ -3407,7 +3407,7 @@ iflib_load_mbuf(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 
 	m_head = *m_headp;
  retry:
-	if ((m_head->m_flags & M_EXT) && (m_head->m_ext.ext_type == EXT_MVEC)) {
+	if (m_ismvec(m_head)) {
 		err = iflib_busdma_load_mvec_sg(txq, tag, map, m_headp, nsegs,
 										max_segs, BUS_DMA_NOWAIT);
 	} else {

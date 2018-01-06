@@ -318,7 +318,7 @@ vpc_csum_skip(struct mbuf *m, int len, int skip)
 {
 	uint16_t csum;
 
-	if ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC))
+	if (m_ismvec(m))
 		csum = mvec_cksum_skip(m, len, skip);
 	else
 		csum = in_cksum_skip(m, len, skip);
@@ -514,14 +514,13 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	struct sockaddr *dst;
 	struct route ro;
 	struct ifnet *ifp;
-	int rc, ismvec, hdrsize;
+	int rc, hdrsize;
 
 	m = *mp;
 	*mp = NULL;
-	ismvec = ((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC));
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
-	if (ismvec) {
+	if (m_ismvec(m)) {
 		mh = mvec_prepend(m, hdrsize);
 	} else {
 		mh = m_gethdr(M_NOWAIT, MT_NOINIT);
@@ -578,8 +577,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	 */
 	if (!!(m->m_pkthdr.csum_flags & CSUM_TSO) &
 		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
-		if (__predict_false(!ismvec)) {
-			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
+		if (__predict_false(m_ismvec(m))) {
 			m_freem(mh);
 			return (EINVAL);
 		}
