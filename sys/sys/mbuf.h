@@ -331,6 +331,8 @@ struct mvec_ent {
 
 #define MBUF_ME_MAX ((MHLEN - sizeof(struct m_ext) - sizeof(struct mvec_header))/sizeof(struct mvec_ent))
 
+#define m_ismvec(m) (((m)->m_flags & M_EXT) && ((m)->m_ext.ext_type == EXT_MVEC))
+
 struct mvec_cursor {
 	uint16_t mc_idx;
 	uint16_t mc_off;
