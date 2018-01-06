@@ -52,7 +52,7 @@ __FBSDID("$FreeBSD$");
 static MALLOC_DEFINE(M_MVEC, "mvec", "mbuf vector");
 
 static int type2len[] = {-1, MCLBYTES, -1, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES, -1, MSIZE};
-#define VALIDTYPES ((1<<EXT_CLUSTER)|(1<<EXT_JUMBOP)|(1<<EXT_JUMBO9)|(1<<EXT_JUMBO16)|(1<<EXT_MVEC))
+static int validtypes = ((1<<EXT_CLUSTER)|(1<<EXT_JUMBOP)|(1<<EXT_JUMBO9)|(1<<EXT_JUMBO16)|(1<<EXT_MVEC));
 
 
 #define ADDCARRY(x)  (x > 65535 ? x -= 65535 : x)
@@ -495,7 +495,7 @@ mvec_ent_size(struct mvec_ent *me)
 	MPASS(me->me_ext_type && (me->me_ext_type < 32));
 
 	type = me->me_ext_type;
-	MPASS((1<<type) & VALIDTYPES);
+	MPASS((1<<type) & validtypes);
 	return (type2len[type]);
 }
 
