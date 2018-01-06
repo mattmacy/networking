@@ -99,7 +99,7 @@ vpci_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 static int
 vpci_transmit(if_t ifp, struct mbuf *m)
 {
-	struct mbuf *mp, *mnext, *mh, *mt, *mtmp;
+	struct mbuf *mp, *mh;
 	if_ctx_t ctx = ifp->if_softc;
 	struct vpci_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *parent = vs->vs_ifparent;
@@ -109,37 +109,15 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 		DPRINTF("freeing without parent\n");
 		return (ENOBUFS);
 	}
-
-	mh = mt = mp = m;
+	mh = mp = pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
+	if (__predict_false(mp == NULL)) {
+		/* better error? */
+		return (ENOBUFS);
+	}
 	while (mp) {
-		mnext = mp->m_nextpkt;
 		mp->m_flags |= M_VXLANTAG;
 		mp->m_pkthdr.vxlanid = vs->vs_vni;
-		if (mp->m_pkthdr.csum_flags & CSUM_TSO) {
-			if (mp->m_pkthdr.len < ifp->if_mtu)
-				mp->m_pkthdr.csum_flags &= ~CSUM_TSO;
-			else if (!m_ismvec(mp)) {
-				mp->m_nextpkt = NULL;
-				mtmp = mchain_to_mvec(mp, M_NOWAIT);
-				if (__predict_false(mtmp == NULL)) {
-					DPRINTF("freeing after failed convert to mvec mnext: %p len: %d\n", mnext, mp->m_pkthdr.len);
-					m_freem(mp);
-					mp = mnext;
-					if (mp == NULL)
-						return (EINVAL);
-					continue;
-				}
-				if (mp == m) {
-					mh = mtmp;
-				} else {
-					mt->m_nextpkt = mtmp;
-					mtmp->m_nextpkt = mnext;
-				}
-				mp = mtmp;
-			}
-		}
-		mt = mp;
-		mp = mnext;
+		mp = mp->m_nextpkt;
 	}
 	return (parent->if_transmit_txq(parent, mh));
 }
