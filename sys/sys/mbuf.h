@@ -901,6 +901,7 @@ m_init(struct mbuf *m, int how, short type, int flags)
 	m->m_len = 0;
 	m->m_flags = flags;
 	m->m_type = type;
+	m->m_ext.ext_free = NULL;
 	if (flags & M_PKTHDR)
 		error = m_pkthdr_init(m, how);
 	else
