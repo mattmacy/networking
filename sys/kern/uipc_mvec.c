@@ -582,19 +582,6 @@ mvec_free(struct mbuf *m)
 	mvec_buffer_free(m);
 }
 
-static void
-mvec_header_init(struct mbuf *mnew)
-{
-	mnew->m_next = NULL;
-	mnew->m_nextpkt = NULL;
-	mnew->m_flags |= M_PKTHDR|M_NOFREE|M_EXT;
-	mnew->m_ext.ext_buf = (caddr_t)mnew;
-	mnew->m_ext.ext_flags = EXT_FLAG_EMBREF|EXT_FLAG_NOFREE;
-	mnew->m_ext.ext_count = 1;
-	mnew->m_ext.ext_type = EXT_MVEC;
-}
-
-
 struct mbuf *
 mchain_to_mvec(struct mbuf *m, int how)
 {
@@ -960,13 +947,14 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 {
 	struct mvec_header *mh, *newmh;
 	struct mvec_ent *me, *mesrc, *medst, *newme, mesrchdr;
+	struct mbuf_ext *mext;
 	struct mbuf *mnew;
 	struct if_pkt_info pi;
 	struct tso_state state;
 	m_refcnt_t *newme_count, *medst_count, *mesrc_count;
 	int segcount, soff, segrem, srem;
 	int i, ntsofrags, segsz, cursegrem, nheaders, hdrsize;
-	int refsize, rem, curseg, count, size, pktrem;
+	int refsize, rem, curseg, count, pktrem;
 	volatile uint32_t *refcnt;
 	bool dupref;
 	caddr_t hdrbuf;
@@ -1007,32 +995,26 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	}
 
 	count = segcount + nheaders;
+	refsize = 0;
 	if (mh->mh_multiref)
 		refsize = count*sizeof(void*);
-	size = count*sizeof(struct mvec_ent) + sizeof(*mh) + sizeof(struct mbuf) + refsize;
-	size += nheaders * hdrsize;
-	/*
-	 * XXX if this fails check mbuf & cluster zones
-	 */
-	if ((mnew = malloc(size, M_MVEC, M_NOWAIT)) == NULL)
-		return (NULL);
 
-	__builtin_prefetch(mnew->m_pktdat);
-	mvec_header_init(mnew);
+	mnew = mvec_alloc(count, refsize, M_NOWAIT);
+	if (__predict_false(mnew == NULL))
+		return (NULL);
+	mext = (void*)mnew;
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
 	mnew->m_len = m->m_len;
-	newmh = (struct mvec_header *)mnew->m_pktdat + sizeof(struct m_ext);
-	newmh->mh_count = count;
+	newmh = &mext->me_mh;
 	newmh->mh_used = count;
 	newmh->mh_multiref = mh->mh_multiref;
 	newmh->mh_multipkt = true;
-	newmh->mh_start = 0;
-	newme = (struct mvec_ent *)(mh + 1);
-	newme_count = (m_refcnt_t *)(me + count);
+	newme = mext->me_ents;
+	newme_count = MBUF2REF(mnew);
 	__builtin_prefetch(newme_count);
 	medst_count = newme_count;
 	medst = newme;
-	mesrc_count = ((m_refcnt_t *)(me + mh->mh_count)) + mh->mh_start;
+	mesrc_count = MBUF2REF(m);
 	mesrc = &me[mh->mh_start];
 
 	soff = 0;
@@ -1051,6 +1033,8 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	/*
 	 * Trim off header info
 	 */
+
+	/* XXX --- use mvec_seek we don't want to modify source */
 	if (mesrc->me_len == hdrsize) {
 		if (dupref)
 			*medst_count = *mesrc_count;
