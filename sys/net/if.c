@@ -3694,7 +3694,7 @@ if_transmit_txq(struct ifnet *ifp, struct mbuf *m)
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
-		if ((mp->m_flags & M_EXT) && (mp->m_ext.ext_type == EXT_MVEC)) {
+		if (m_ismvec(mp)) {
 			mchain = mvec_to_mchain(mp, M_NOWAIT);
 			if (__predict_false(mchain == NULL)) {
 				m_freem(mp);
