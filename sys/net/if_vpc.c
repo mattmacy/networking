@@ -532,8 +532,6 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		bcopy(&m->m_pkthdr, &mh->m_pkthdr, sizeof(struct pkthdr));
 		mh->m_data = mh->m_pktdat;
 		mh->m_nextpkt = NULL;
-		vh = (struct vxlan_header *)mh->m_data;
-		evh = (struct ether_vlan_header *)&vh->vh_ehdr;
 		mh->m_flags = M_PKTHDR;
 		mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
 		mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
@@ -543,6 +541,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		mh->m_next = m;
 		m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
 	}
+	vh = (struct vxlan_header *)mh->m_data;
+	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
 	m->m_nextpkt = NULL;
 
 	if (__predict_true(vpc_cache_lookup(vs, mh, evhvx))) {
