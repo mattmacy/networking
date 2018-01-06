@@ -326,9 +326,9 @@ struct mbuf_ext {
 };
 
 #ifdef _KERNEL
-#define MBUF2MH(m) ((struct mvec_header *)((m)->m_pktdat + sizeof(struct m_ext)))
-#define MBUF2ME(m) ((struct mvec_ent *)((MBUF2MH((m)))+1))
-#define MBUF2REF(m) ((m_refcnt_t *)(MBUF2ME(m) + mh->mh_count))
+#define MBUF2MH(m) (((struct mbuf_ext *)(m))->me_mh)
+#define MBUF2ME(m) (((struct mbuf_ext *)(m))->me_ents)
+#define MBUF2REF(m) (MBUF2ME(m) + MBUF2MH(m)->mh_count)
 
 #define MHMEI(m, mh, idx) (MBUF2ME(m) + (mh)->mh_start + (idx))
 #define MHREFI(m, mh, idx) (MBUF2REF(m) + (mh)->mh_start + (idx))
