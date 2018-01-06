@@ -319,6 +319,7 @@ struct mvec_ent {
 	uint8_t		me_ext_type;
 };
 
+#ifdef _KERNEL
 #define MBUF2MH(m) ((struct mvec_header *)((m)->m_pktdat + sizeof(struct m_ext)))
 #define MBUF2ME(m) ((struct mvec_ent *)((MBUF2MH((m)))+1))
 #define MBUF2REF(m) ((m_refcnt_t *)(MBUF2MH(m) + mh->mh_count))
@@ -430,6 +431,7 @@ void mvec_copydata(const struct mbuf *m, int off, int len, caddr_t cp);
 struct mbuf *mvec_dup(const struct mbuf *m, int how);
 struct mbuf *mvec_defrag(const struct mbuf *m, int how);
 struct mbuf *mvec_collapse(struct mbuf *m, int how, int maxfrags);
+#endif
 
 /*
  * mbuf flags of global significance and layer crossing.
