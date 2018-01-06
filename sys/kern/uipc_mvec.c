@@ -97,6 +97,7 @@ mvec_sanity(struct mbuf *m)
 	total = 0;
 	MPASS(m->m_len == me->me_len);
 	MPASS(m->m_data == (me->me_cl + me->me_off));
+	MPASS(mh->mh_count <= (mh->mh_start + mh->mh_used));
 	for (i = mh->mh_start; i < mh->mh_used + mh->mh_start; i++, me++) {
 		MPASS(me->me_cl);
 		MPASS(me->me_cl != (void *)0xdeadc0dedeadc0de);
@@ -627,6 +628,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	mext = (struct mbuf_ext *)mnew;
 	mh = &mext->me_mh;
 	mh->mh_used = count-1;
+	MPASS(mh->mh_count == mh->mh_used+1);
 	mh->mh_multiref = dupref;
 	/* leave first entry open for encap */
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
@@ -675,6 +677,8 @@ mchain_to_mvec(struct mbuf *m, int how)
 	} while (mp);
 	mnew->m_len = mext->me_ents[1].me_len;
 	mnew->m_data = (mext->me_ents[1].me_cl + mext->me_ents[1].me_off);
+	mh = MBUF2MH(mnew);
+	MPASS(mh->mh_count == mh->mh_start + mh->mh_used);
 	mvec_sanity(mnew);
 	return (mnew);
 }
