@@ -319,6 +319,12 @@ struct mvec_ent {
 	uint8_t		me_ext_type;
 };
 
+struct mbuf_ext {
+	struct mbuf me_mbuf;
+	struct mvec_header me_mh;
+	struct mvec_ent me_ents[0];
+};
+
 #ifdef _KERNEL
 #define MBUF2MH(m) ((struct mvec_header *)((m)->m_pktdat + sizeof(struct m_ext)))
 #define MBUF2ME(m) ((struct mvec_ent *)((MBUF2MH((m)))+1))
