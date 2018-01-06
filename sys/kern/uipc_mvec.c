@@ -40,6 +40,15 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/in_cksum.h>
 
+
+#define MVEC_DEBUG
+
+#ifdef MVEC_DEBUG
+#define  DPRINTF printf
+#else
+#define DPRINTF(...)
+#endif
+
 static MALLOC_DEFINE(M_MVEC, "mvec", "mbuf vector");
 
 static int type2len[] = {-1, MCLBYTES, -1, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES, -1, MSIZE};
@@ -578,8 +587,10 @@ mchain_to_mvec(struct mbuf *m, int how)
 			 * bail on ext_free -- we can't efficiently pass an mbuf
 			 * at free time and m_ext adds up to a lot of space
 			 */
-			if (mp->m_ext.ext_free != NULL)
+			if (mp->m_ext.ext_free != NULL) {
+				DPRINTF("%s ext_free is set: %p\n", __func__, mp->m_ext.ext_free);
 				return (NULL);
+			}
 			if (!(mp->m_ext.ext_flags & EXT_FLAG_EMBREF && mp->m_ext.ext_count == 1))
 				dupref = true;
 		}
@@ -592,8 +603,10 @@ mchain_to_mvec(struct mbuf *m, int how)
 	if (dupref)
 		size += count*sizeof(void*);
 	mnew = malloc(size, M_MVEC, how);
-	if (mnew == NULL)
+	if (mnew == NULL) {
+		DPRINTF("%s malloc failed\n", __func__);
 		return (NULL);
+	}
 	me_count = NULL;
 
 	mvec_header_init(mnew);
