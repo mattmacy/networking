@@ -577,7 +577,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	 */
 	if (!!(m->m_pkthdr.csum_flags & CSUM_TSO) &
 		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
-		if (__predict_false(m_ismvec(m))) {
+		if (__predict_false(!m_ismvec(m))) {
+			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
 			m_freem(mh);
 			return (EINVAL);
 		}
