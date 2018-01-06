@@ -118,7 +118,7 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 		if (mp->m_pkthdr.csum_flags & CSUM_TSO) {
 			if (mp->m_pkthdr.len < ifp->if_mtu)
 				mp->m_pkthdr.csum_flags &= ~CSUM_TSO;
-			else if ((mp->m_flags & M_EXT) && (mp->m_ext.ext_type == EXT_MVEC)) {
+			else if (!m_ismvec(mp)) {
 				mp->m_nextpkt = NULL;
 				mtmp = mchain_to_mvec(mp, M_NOWAIT);
 				if (__predict_false(mtmp == NULL)) {
