@@ -122,8 +122,11 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 				mp->m_nextpkt = NULL;
 				mtmp = mchain_to_mvec(mp, M_NOWAIT);
 				if (__predict_false(mtmp == NULL)) {
+					DPRINTF("freeing after failed convert to mvec mnext: %p len: %d\n", mnext, mp->m_pkthdr.len);
 					m_freem(mp);
 					mp = mnext;
+					if (mp == NULL)
+						return (EINVAL);
 					continue;
 				}
 				if (mp == m) {
@@ -138,7 +141,6 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 		mt = mp;
 		mp = mnext;
 	}
-
 	return (parent->if_transmit_txq(parent, mh));
 }
 
