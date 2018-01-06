@@ -441,10 +441,7 @@ mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 
 	mh = MBUF2MH(m);
 	*((uint64_t *)mh) = 0;
-	if (count > MBUF_ME_MAX)
-		mh->mh_count = count;
-	else
-		mh->mh_count = MBUF_ME_MAX;
+	mh->mh_count = count;
 	mh->mh_mvtype = type;
 	/* leave room for prepend */
 	mh->mh_start = 1;
@@ -455,11 +452,14 @@ mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 	m->m_next = m->m_nextpkt = NULL;
 	m->m_len = 0;
 	m->m_data = NULL;
-	m->m_flags = M_NOFREE|M_EXT;
+	m->m_flags = M_PKTHDR|M_NOFREE|M_EXT;
+	m->m_ext.ext_free = NULL;
+	m->m_ext.ext_arg1 = m->m_ext.ext_arg2 = NULL;
 	m->m_ext.ext_flags = EXT_FLAG_EMBREF;
 	m->m_ext.ext_type = EXT_MVEC;
 	m->m_ext.ext_size = MSIZE;
 	m->m_ext.ext_buf = (caddr_t)m;
+	m->m_ext.ext_cnt = NULL;
 	m->m_ext.ext_count = 1;
 	return (0);
 }
@@ -601,11 +601,12 @@ mchain_to_mvec(struct mbuf *m, int how)
 	struct mbuf *mp, *mnext, *mnew;
 	struct mvec_header *mh;
 	struct mvec_ent *me;
+	struct mbuf_ext *mext;
 	int count, size;
 	bool dupref;
-	m_refcnt_t *me_count, countp;
+	m_refcnt_t *me_count;
 
-	count = 0;
+	size = count = 0;
 	mp = m;
 	dupref = false;
 	do {
@@ -628,29 +629,25 @@ mchain_to_mvec(struct mbuf *m, int how)
 
 	/* add spare */
 	count++;
-	size = count*sizeof(struct mvec_ent) + sizeof(*mh) + sizeof(struct mbuf);
 	if (dupref)
-		size += count*sizeof(void*);
-	mnew = malloc(size, M_MVEC, how);
+		size = count*sizeof(void*);
+	mnew = mvec_alloc(count, size, how);
+
 	if (mnew == NULL) {
 		DPRINTF("%s malloc failed\n", __func__);
 		return (NULL);
 	}
-	me_count = NULL;
-
-	mvec_header_init(mnew);
-	mnew->m_len = m->m_len;
-	mh = (struct mvec_header *)mnew->m_pktdat + sizeof(struct m_ext);
-	mh->mh_count = count;
-	mh->mh_used = count - 1;
+	mext = (struct mbuf_ext *)mnew;
+	mh = &mext->me_mh;
 	mh->mh_multiref = dupref;
 	/* leave first entry open for encap */
-	mh->mh_start = 1;
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
 
-	me = (struct mvec_ent *)(mh + 1);
-	me_count = (m_refcnt_t *)(me + count);
+	me = mext->me_ents;
+	me_count = MBUF2REF(mnew);
+	MPASS(mh->mh_start == 1);
 	me->me_cl = NULL;
+	me->me_off = me->me_len = 0;
 	me++;
 	mp = m;
 	do {
@@ -658,38 +655,36 @@ mchain_to_mvec(struct mbuf *m, int how)
 		if (mp->m_flags & M_EXT) {
 			me->me_cl = mp->m_ext.ext_buf;
 			me->me_off = ((uintptr_t)mp->m_data - (uintptr_t)mp->m_ext.ext_buf);
-			me->me_len = mp->m_len;
-			me->me_eop = 0;
 			me->me_type = MVEC_MANAGED;
 			me->me_ext_flags = mp->m_ext.ext_flags;
 			me->me_ext_type = mp->m_ext.ext_type;
 		} else {
 			me->me_cl = (caddr_t)mp;
 			me->me_off = ((uintptr_t)(mp->m_data) - (uintptr_t)mp);
-			me->me_len = mp->m_len;
-			me->me_eop = 0;
 			me->me_type = MVEC_MBUF;
 			me->me_ext_flags = 0;
 			me->me_ext_type = EXT_MBUF;
 		}
+		me->me_len = mp->m_len;
+		me->me_eop = 0;
 		if (dupref) {
-			countp.ext_cnt = NULL;
-			if (mp->m_flags & M_EXT) {
+			me_count->ext_cnt = NULL;
+			if (m->m_flags & M_EXT) {
 				if (mp->m_ext.ext_flags & EXT_FLAG_EMBREF) {
-					countp.ext_cnt = &mp->m_ext.ext_count;
+					me_count->ext_cnt = &mp->m_ext.ext_count;
 					me->me_ext_flags &= ~EXT_FLAG_EMBREF;
 				} else
-					countp.ext_cnt = mp->m_ext.ext_cnt;
+					me_count->ext_cnt = mp->m_ext.ext_cnt;
 			}
 			if (mp->m_flags & M_NOFREE)
 				me->me_ext_flags |= EXT_FLAG_NOFREE;
-			*me_count = countp;
-			me_count++;
 		}
+		me_count++;
 		mp = mnext;
 		me++;
 	} while (mp);
-
+	mnew->m_len = mext->me_ents[1].me_len;
+	mnew->m_data = (mext->me_ents[1].me_cl + mext->me_ents[1].me_off);
 	mvec_sanity(mnew);
 	return (mnew);
 }
