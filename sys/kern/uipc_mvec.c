@@ -545,13 +545,6 @@ mvec_pullup(struct mbuf *m, int count)
 		copylen -= len;
 		i++;
 	} while (copylen);
-	i = 1;
-	while (MHMEI(m, mh, i)->me_len == 0)
-		i++;
-	if (__predict_false(i != 1)) {
-		mh->mh_start += (i - 1);
-		bcopy(mecur, MHMEI(m, mh, 0), sizeof(*mecur));
-	}
 	m->m_data = ME_SEG(m, mh, 0);
 	m->m_len = ME_LEN(m, mh, 0);
 	mvec_sanity(m);
@@ -985,6 +978,8 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	if (nheaders*segsz != pktrem)
 		nheaders++;
 	for (segcount = i = 0; i < mh->mh_count; i++, me++) {
+		if (__predict_false(me->me_len == 0))
+			continue;
 		rem = me->me_len;
 		if (rem < cursegrem) {
 			cursegrem -= rem;
@@ -1045,6 +1040,10 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	for (i = 1; i < nheaders; i++) {
 		segrem = min(segsz, pktrem);
 		do {
+			if (__predict_false(mesrc->me_len == 0)) {
+				mesrc_count++;
+				continue;
+			}
 			if (soff == 0) {
 				if (dupref && (mesrc_count->ext_cnt != NULL)) {
 					atomic_add_int(mesrc_count->ext_cnt, 1);
