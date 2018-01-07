@@ -1039,8 +1039,8 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		bzero(medst_count, count*sizeof(void *));
 		medst_count++;
 	}
-	/* bump dest past header */
-	medst->me_cl = NULL;
+	medst[0].me_cl = NULL;
+	medst[0].me_len = 0;
 	/*
 	 * Packet segmentation loop
 	 */
@@ -1048,6 +1048,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	dsti = 1;
 	for (i = 1; i < nheaders; i++) {
 		segrem = min(segsz, pktrem);
+		MPASS(srci < MBUF2MH(m)->mh_count);
 		do {
 			if (__predict_false(mesrc[srci].me_len == 0)) {
 				srci++;
@@ -1075,6 +1076,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 				medst[dsti].me_eop = 1;
 				soff = 0;
 				medst[dsti].me_len = srem;
+				segrem = 0;
 				srci++;
 			} else if (srem < segrem) {
 				medst[dsti].me_eop = 0;
@@ -1086,11 +1088,12 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 				medst[dsti].me_eop = 1;
 				soff += segrem;
 				medst[dsti].me_len = segrem;
+				segrem = 0;
 			}
 			mnew->m_pkthdr.len += medst[dsti].me_len;
 			dsti++;
 			medst_count++;
-		} while (medst[dsti].me_eop == 0);
+		} while (segrem);
 		pktrem -= segrem;
 		/* skip next header */
 		medst[dsti].me_cl = NULL;
