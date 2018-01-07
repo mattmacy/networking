@@ -99,6 +99,9 @@ mvec_sanity(struct mbuf *m)
 	MPASS(m->m_data == (me->me_cl + me->me_off));
 	MPASS(mh->mh_count >= (mh->mh_start + mh->mh_used));
 	for (i = mh->mh_start; i < mh->mh_used + mh->mh_start; i++, me++) {
+		if (__predict_false(me->me_len == 0))
+			continue;
+
 		MPASS(me->me_cl);
 		MPASS(me->me_cl != (void *)0xdeadc0dedeadc0de);
 		total += me->me_len;
@@ -1032,6 +1035,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
 	mnew->m_pkthdr.len = 0;
 	newmh = &mext->me_mh;
+	newmh->mh_start = 0;
 	newmh->mh_used = count;
 	newmh->mh_multiref = mh->mh_multiref;
 	newmh->mh_multipkt = true;
@@ -1059,7 +1063,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	 */
 	srci = mc.mc_idx;
 	dsti = 1;
-	for (i = 1; i < nheaders; i++) {
+	for (i = 0; i < nheaders; i++) {
 		segrem = min(segsz, pktrem);
 		MPASS(srci < MBUF2MH(m)->mh_count);
 		do {
@@ -1144,6 +1148,10 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		medst[dsti].me_eop = 0;
 		hdrbuf += hdrsize;
 	}
+
+	mnew->m_len = MBUF2ME(mnew)->me_len;
+	mnew->m_data = (MBUF2ME(mnew)->me_cl + MBUF2ME(mnew)->me_off);
+	mvec_sanity(mnew);
 	if (dofree) {
 		if (mesrc->me_cl && (mesrc->me_type == MVEC_MBUF) && mesrc->me_len == hdrsize)
 			uma_zfree_arg(zone_mbuf, mesrc->me_cl, (void *)MB_DTOR_SKIP);
@@ -1159,8 +1167,5 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 			mnew->m_ext.ext_cnt = &m->m_ext.ext_count;
 		atomic_add_int(mnew->m_ext.ext_cnt, 1);
 	}
-	mnew->m_len = MBUF2ME(mnew)->me_len;
-	mnew->m_data = (MBUF2ME(mnew)->me_cl + MBUF2ME(mnew)->me_off);
-	mvec_sanity(mnew);
 	return (mnew);
 }
