@@ -576,7 +576,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
-	if (!!(m->m_pkthdr.csum_flags & CSUM_TSO) &
+	if (!!(mh->m_pkthdr.csum_flags & CSUM_TSO) &
 		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
 		if (__predict_false(!m_ismvec(mh))) {
 			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
@@ -590,6 +590,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 			return (ENOMEM);
 		}
 		mh = (void*)mtmp;
+		vh = (struct vxlan_header *)mh->m_data;
 	}
 	mh->m_pkthdr.rcvif = ifp;
 	vpc_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx);
