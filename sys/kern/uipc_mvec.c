@@ -507,6 +507,7 @@ mvec_pullup(struct mbuf *m, int count)
 	struct mvec_ent *mecur, *menxt;
 	int tailroom, size, copylen, doff, i, len;
 
+	mvec_sanity(m);
 	MPASS(count <= m->m_pkthdr.len);
 	mh = MBUF2MH(m);
 	mecur = MHMEI(m, mh, 0);
@@ -515,6 +516,8 @@ mvec_pullup(struct mbuf *m, int count)
 	MPASS(tailroom >= 0);
 	copylen = count - mecur->me_len;
 
+	if (__predict_false(count <= mecur->me_len))
+		return (m);
 	/*
 	 * XXX - If we're not the exclusive owner we need to allocate a new
 	 * buffer regardless.
@@ -836,9 +839,9 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 {
 	struct ether_vlan_header *evh;
 	struct mvec_header *mh = MBUF2MH(m);
-	struct mvec_ent *me = MHMEI(m, mh, 0);
 
-	if (__predict_false(me->me_len - prehdrlen < MIN_HDR_LEN) &&
+	mvec_sanity(m);
+	if (__predict_false(m->m_len < MIN_HDR_LEN + prehdrlen) &&
 		__predict_false(mvec_pullup(m, prehdrlen + MIN_HDR_LEN) == NULL))
 			return (ENOMEM);
 	evh = (struct ether_vlan_header *)(ME_SEG(m, mh, 0) + prehdrlen);
@@ -856,29 +859,26 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 			int minthlen;
 
 			minthlen = pi->ipi_ehdrlen + sizeof(*ip) + sizeof(*th);
-			if (__predict_false(me->me_len - prehdrlen < minthlen) &&
+			if (__predict_false(m->m_len < minthlen + prehdrlen) &&
 				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
-			me = MHMEI(m, mh, 0);
 			ip = (struct ip *)(ME_SEG(m, mh, 0) + prehdrlen + pi->ipi_ehdrlen);
 			pi->ipi_ip_hlen = ip->ip_hl << 2;
 			pi->ipi_ipproto = ip->ip_p;
 			if (ip->ip_p != IPPROTO_TCP)
 				return (EINVAL);
 			minthlen = pi->ipi_ehdrlen + pi->ipi_ip_hlen + sizeof(*th);
-			if (__predict_false(me[0].me_len - prehdrlen < minthlen) &&
+			if (__predict_false(m->m_len < minthlen + prehdrlen) &&
 				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
-			me = MHMEI(m, mh, 0);
 			th = (struct tcphdr *)(ME_SEG(m, mh, 0) + prehdrlen + pi->ipi_ehdrlen + pi->ipi_ip_hlen);
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
 			pi->ipi_tcp_seq = th->th_seq;
 			minthlen = pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen;
-			if (__predict_false(me[0].me_len - prehdrlen < minthlen) &&
+			if (__predict_false(m->m_len < minthlen + prehdrlen) &&
 				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
-			me = MHMEI(m, mh, 0);
 			if (prehdrlen == 0) {
 				th->th_sum = in_pseudo(ip->ip_src.s_addr,
 									   ip->ip_dst.s_addr, htons(IPPROTO_TCP));
