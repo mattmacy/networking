@@ -778,6 +778,9 @@ mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
 		mh->m_pkthdr.len += mt->m_len;
 		mt->m_data = me->me_cl + me->me_off;
 	}
+#ifdef INVARIANTS
+	m_sanity(mh, 0);
+#endif
 	return (mh);
  fail:
 	if (mh)
@@ -796,14 +799,19 @@ mvec_to_mchain(struct mbuf *mp, int how)
 	bcopy(pmhdr, &mhdr, sizeof(mhdr));
 	mh = mt = NULL;
 	while (mhdr.mh_used) {
-		if (__predict_false((m = mvec_to_mchain_pkt(mp, &mhdr, how)) == NULL))
+		if (__predict_false((m = mvec_to_mchain_pkt(mp, &mhdr, how)) == NULL)) {
+			DPRINTF("mvec_to_mchain_pkt failed\n");
 			goto fail;
+		}
 		if (mh != NULL) {
 			mt->m_nextpkt = m;
 			mt = m;
 		} else
 			mh = mt = m;
 	}
+#ifdef INVARIANTS
+	m_sanity(mh, 0);
+#endif
 	return (mh);
  fail:
 	m_freechain(mh);
