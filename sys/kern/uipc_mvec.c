@@ -121,6 +121,9 @@ mvec_buffer_free(struct mbuf *m)
 			free(m, M_MVEC);
 			break;
 		case MVALLOC_MBUF:
+#ifdef INVARIANTS
+			m->m_flags &= ~M_NOFREE;
+#endif
 			uma_zfree_arg(zone_mbuf, m, (void *)MB_DTOR_SKIP);
 			break;
 	}
@@ -1144,7 +1147,8 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		mvec_buffer_free(m);
 	} else
 		atomic_add_int(mnew->m_ext.ext_cnt, 1);
-
+	mnew->m_len = MBUF2ME(mnew)->me_len;
+	mnew->m_data = (MBUF2ME(mnew)->me_cl + MBUF2ME(mnew)->me_off);
 	mvec_sanity(mnew);
 	return (mnew);
 }
