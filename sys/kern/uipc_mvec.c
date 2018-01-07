@@ -970,10 +970,19 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	int i, ntsofrags, segsz, cursegrem, nheaders, hdrsize;
 	int refsize, rem, curseg, count, pktrem, srci, dsti;
 	volatile uint32_t *refcnt;
-	bool dupref;
+	bool dupref, dofree;
 	caddr_t hdrbuf;
 
 	mvec_sanity(m);
+	dofree = false;
+	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+		refcnt = &m->m_ext.ext_count;
+	} else {
+		refcnt = m->m_ext.ext_cnt;
+	}
+	if (freesrc && (*refcnt == 1))
+		dofree = true;
+
 	segsz = m->m_pkthdr.tso_segsz;
 	pktrem = m->m_pkthdr.len;
 	refsize = 0;
@@ -1060,9 +1069,10 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 				continue;
 			}
 			if (soff == 0) {
-				if (dupref && (mesrc_count->ext_cnt != NULL)) {
-					atomic_add_int(mesrc_count->ext_cnt, 1);
+				if (dupref) {
 					*medst_count = *mesrc_count;
+					if (!dofree && (mesrc_count->ext_cnt != NULL))
+						atomic_add_int(mesrc_count->ext_cnt, 1);
 				}
 				mesrc_count++;
 				medst->me_type = mesrc->me_type;
@@ -1134,19 +1144,21 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		medst[dsti].me_eop = 0;
 		hdrbuf += hdrsize;
 	}
-
-	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
-		refcnt = &m->m_ext.ext_count;
-	} else {
-		refcnt = m->m_ext.ext_cnt;
-	}
-	if (freesrc && (*refcnt == 1)) {
+	if (dofree) {
+		if (mesrc->me_cl && (mesrc->me_type == MVEC_MBUF) && mesrc->me_len == hdrsize)
+			uma_zfree_arg(zone_mbuf, mesrc->me_cl, (void *)MB_DTOR_SKIP);
 		mnew->m_ext.ext_count = 1;
 		if (!(m->m_ext.ext_flags & EXT_FLAG_EMBREF))
 			mvec_buffer_free(__containerof(refcnt, struct mbuf, m_ext.ext_count));
+		/* XXX we're leaking here */
 		mvec_buffer_free(m);
-	} else
+	} else {
+		if (m->m_ext.ext_flags & EXT_FLAG_EMBREF)
+			mnew->m_ext.ext_cnt = m->m_ext.ext_cnt;
+		else
+			mnew->m_ext.ext_cnt = &m->m_ext.ext_count;
 		atomic_add_int(mnew->m_ext.ext_cnt, 1);
+	}
 	mnew->m_len = MBUF2ME(mnew)->me_len;
 	mnew->m_data = (MBUF2ME(mnew)->me_cl + MBUF2ME(mnew)->me_off);
 	mvec_sanity(mnew);
