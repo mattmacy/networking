@@ -326,15 +326,15 @@ struct mbuf_ext {
 };
 
 #ifdef _KERNEL
-#define MBUF2MH(m) (&(((struct mbuf_ext *)(m))->me_mh))
-#define MBUF2ME(m) (((struct mbuf_ext *)(m))->me_ents)
-#define MBUF2REF(m) ((m_refcnt_t *)(MBUF2ME(m) + MBUF2MH(m)->mh_count))
+#define MBUF2MH(m_) (&(((struct mbuf_ext *)(m_))->me_mh))
+#define MBUF2ME(m_) (((struct mbuf_ext *)(m_))->me_ents)
+#define MBUF2REF(m_) ((m_refcnt_t *)(MBUF2ME(m_) + MBUF2MH(m_)->mh_count))
 
-#define MHMEI(m, mh, idx) (MBUF2ME(m) + (mh)->mh_start + (idx))
-#define MHREFI(m, mh, idx) (MBUF2REF(m) + (mh)->mh_start + (idx))
+#define MHMEI(m_, mh_, idx_) (MBUF2ME(m_) + (mh_)->mh_start + (idx_))
+#define MHREFI(m_, mh_, idx_) (MBUF2REF(m_) + (mh_)->mh_start + (idx_))
 
-#define ME_SEG(m, mh, idx) (MHMEI(m, mh,idx)->me_cl + MHMEI(m, mh, idx)->me_off)
-#define ME_LEN(m, mh, idx) (MHMEI(m, mh,idx)->me_len)
+#define ME_SEG(m_, mh_, idx_) (MHMEI(m_, mh_,idx_)->me_cl + MHMEI(m_, mh_, idx_)->me_off)
+#define ME_LEN(m_, mh_, idx_) (MHMEI(m_, mh_,idx_)->me_len)
 
 #define MBUF_ME_MAX ((MHLEN - sizeof(struct m_ext) - sizeof(struct mvec_header))/sizeof(struct mvec_ent))
 
