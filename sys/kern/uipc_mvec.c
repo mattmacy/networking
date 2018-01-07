@@ -1033,7 +1033,6 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		return (NULL);
 	mext = (void*)mnew;
 	bcopy(&m->m_pkthdr, &mnew->m_pkthdr, sizeof(struct pkthdr));
-	mnew->m_pkthdr.len = 0;
 	newmh = &mext->me_mh;
 	newmh->mh_start = 0;
 	newmh->mh_used = count;
@@ -1108,10 +1107,10 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 				medst[dsti].me_len = segrem;
 				segrem = 0;
 			}
-			mnew->m_pkthdr.len += medst[dsti].me_len;
 			dsti++;
 			medst_count++;
 		} while (segrem);
+
 		pktrem -= segrem;
 		/* skip next header */
 		medst[dsti].me_cl = NULL;
@@ -1151,6 +1150,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 
 	mnew->m_len = MBUF2ME(mnew)->me_len;
 	mnew->m_data = (MBUF2ME(mnew)->me_cl + MBUF2ME(mnew)->me_off);
+	mnew->m_pkthdr.len = m->m_pkthdr.len + (nheaders - 1)*hdrsize;
 	mvec_sanity(mnew);
 	if (dofree) {
 		if (mesrc->me_cl && (mesrc->me_type == MVEC_MBUF) && mesrc->me_len == hdrsize)
