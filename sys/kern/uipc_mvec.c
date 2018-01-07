@@ -721,15 +721,17 @@ pktchain_to_mvec(struct mbuf *m, int mtu, int how)
 }
 
 static void
-m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
+m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 {
 	struct mvec_ent *me;
+	struct mbuf *headm;
 
-	me = MHMEI(head, mh, 0);
+	headm = &head->me_mbuf;
+	me = &head->me_ents[head->me_mh.mh_start];
 	m->m_ext.ext_buf = me->me_cl;
-	m->m_ext.ext_arg1 = head->m_ext.ext_arg1;
-	m->m_ext.ext_arg2 = head->m_ext.ext_arg2;
-	m->m_ext.ext_free = head->m_ext.ext_free;
+	m->m_ext.ext_arg1 = headm->m_ext.ext_arg1;
+	m->m_ext.ext_arg2 = headm->m_ext.ext_arg2;
+	m->m_ext.ext_free = headm->m_ext.ext_free;
 	m->m_ext.ext_type = me->me_ext_type;
 	if (me->me_ext_type) {
 		m->m_ext.ext_flags = me->me_ext_flags;
@@ -744,36 +746,41 @@ m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 	 *     - point at mvec refcnt and increment
 	 *  2) cluster has a normal external refcount
 	 */
-	if (__predict_true(!MBUF2MH(head)->mh_multiref)) {
+	if (__predict_true(!head->me_mh.mh_multiref)) {
 		m->m_ext.ext_flags = EXT_FLAG_MVECREF;
-		if (head->m_ext.ext_flags & EXT_FLAG_EMBREF)
-			m->m_ext.ext_cnt = &head->m_ext.ext_count;
+		if (headm->m_ext.ext_flags & EXT_FLAG_EMBREF)
+			m->m_ext.ext_cnt = &headm->m_ext.ext_count;
 		else
-			m->m_ext.ext_cnt = head->m_ext.ext_cnt;
+			m->m_ext.ext_cnt = headm->m_ext.ext_cnt;
 	} else {
-		m_refcnt_t *ref = MHREFI(m, mh, 0);
+		m_refcnt_t *ref = MHREFI(headm, mh, 0);
 
 		m->m_ext.ext_cnt = ref->ext_cnt;
+		if (ref->ext_cnt == NULL) {
+			m->m_ext.ext_flags |= EXT_FLAG_EMBREF;
+			m->m_ext.ext_count = 1;
+		}
 	}
 	atomic_add_int(m->m_ext.ext_cnt, 1);
 }
 
 static struct mbuf *
-mvec_to_mchain_pkt(struct mbuf *mp, struct mvec_header *mhdr, int how)
+mvec_to_mchain_pkt(struct mbuf_ext *mp, struct mvec_header *mhdr, int how)
 {
 	struct mvec_ent *me;
-	struct mbuf *m, *mh, *mt;
+	struct mbuf *m, *mh, *mt, *mpm;
 
 	if (__predict_false((mh = m_gethdr(how, MT_DATA)) == NULL))
 		return (NULL);
 
+	mpm = &mp->me_mbuf;
 	me = MHMEI(mp, mhdr, 0);
 	mh->m_flags |= M_EXT;
-	mh->m_flags |= mp->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
+	mh->m_flags |= mpm->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
 	/* XXX update csum_data after encap */
-	mh->m_pkthdr.csum_data = mp->m_pkthdr.csum_data;
-	mh->m_pkthdr.csum_flags = mp->m_pkthdr.csum_flags;
-	mh->m_pkthdr.vxlanid = mp->m_pkthdr.vxlanid;
+	mh->m_pkthdr.csum_data = mpm->m_pkthdr.csum_data;
+	mh->m_pkthdr.csum_flags = mpm->m_pkthdr.csum_flags;
+	mh->m_pkthdr.vxlanid = mpm->m_pkthdr.vxlanid;
 	m_ext_init(mh, mp, mhdr);
 	mh->m_data = me->me_cl + me->me_off;
 	mh->m_pkthdr.len = mh->m_len = me->me_len;
@@ -815,7 +822,7 @@ mvec_to_mchain(struct mbuf *mp, int how)
 	bcopy(pmhdr, &mhdr, sizeof(mhdr));
 	mh = mt = NULL;
 	while (mhdr.mh_used) {
-		if (__predict_false((m = mvec_to_mchain_pkt(mp, &mhdr, how)) == NULL)) {
+		if (__predict_false((m = mvec_to_mchain_pkt((struct mbuf_ext *)mp, &mhdr, how)) == NULL)) {
 			DPRINTF("mvec_to_mchain_pkt failed\n");
 			goto fail;
 		}
