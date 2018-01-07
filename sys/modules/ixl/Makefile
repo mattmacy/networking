@@ -14,5 +14,6 @@ SRCS    += i40e_common.c i40e_nvm.c i40e_adminq.c i40e_lan_hmc.c i40e_hmc.c
 
 # Debug messages / sysctls
 # CFLAGS += -DIXL_DEBUG
+CFLAGS+= -O0 
 
 .include <bsd.kmod.mk>
