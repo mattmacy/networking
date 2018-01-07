@@ -550,6 +550,8 @@ mvec_pullup(struct mbuf *m, int count)
 		bcopy(mecur, MHMEI(m, mh, 0), sizeof(*mecur));
 	}
 	m->m_data = ME_SEG(m, mh, 0);
+	m->m_len = ME_LEN(m, mh, 0);
+	mvec_sanity(m);
 	return (m);
 }
 
@@ -893,6 +895,7 @@ mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
 			/* XXX unsupported -- error */
 			break;
 	}
+	mvec_sanity(m);
 	return (0);
 }
 
@@ -966,6 +969,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	bool dupref;
 	caddr_t hdrbuf;
 
+	mvec_sanity(m);
 	segsz = m->m_pkthdr.tso_segsz;
 	pktrem = m->m_pkthdr.len;
 	refsize = 0;
