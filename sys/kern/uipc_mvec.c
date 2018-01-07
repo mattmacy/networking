@@ -957,7 +957,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 {
 	struct mvec_header *mh, *newmh;
 	struct mvec_cursor mc;
-	struct mvec_ent *me, *mesrc, *medst, *newme, mesrchdr;
+	struct mvec_ent *me, *mesrc, *medst, *newme;
 	struct mbuf_ext *mext;
 	struct mbuf *mnew;
 	struct if_pkt_info pi;
@@ -1012,6 +1012,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	if (mh->mh_multiref)
 		refsize = count*sizeof(void*);
 
+	refsize += (count * nheaders);
 	mnew = mvec_alloc(count, refsize, M_NOWAIT);
 	if (__predict_false(mnew == NULL))
 		return (NULL);
@@ -1106,34 +1107,28 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	 */
 	medst = newme;
 	mesrc = MHMEI(m, MBUF2MH(m), 0);
-	bcopy(mesrc, medst, sizeof(*medst));
-	mnew->m_data = (mesrc->me_cl + mesrc->me_off);
-	mnew->m_len = mesrc->me_len;
-	medst->me_len = prehdrlen;
-	if (mesrc->me_len > prehdrlen)
-		medst->me_type = MVEC_UNMANAGED;
-	tso_init(&state, medst->me_cl + medst->me_off, &pi, prehdrlen);
-	tso_fixup(&state, medst->me_cl + medst->me_off, segsz, false);
+
 
 	/*
 	 * Header initialization loop
 	 */
 	hdrbuf = ((caddr_t)(newme + count)) + refsize;
-	for (i = 1; i < nheaders; i++) {
+	tso_init(&state, mesrc->me_cl + mesrc->me_off, &pi, prehdrlen);
+	for (dsti = i = 0; i < nheaders; i++) {
 		MPASS(pktrem > 0);
 		/* skip ahead to next header slot */
-		while (medst->me_cl != NULL)
-			medst++;
-		bcopy(mesrchdr.me_cl + mesrchdr.me_off, hdrbuf, hdrsize);
+		while (medst[dsti].me_cl != NULL)
+			dsti++;
+		bcopy(mesrc->me_cl + mesrc->me_off, hdrbuf, hdrsize);
 		tso_fixup(&state, hdrbuf, min(pktrem, segsz), (pktrem <= segsz));
 		pktrem -= segsz;
-		medst->me_cl = hdrbuf;
-		medst->me_off = 0;
-		medst->me_len = hdrsize;
-		medst->me_type = MVEC_UNMANAGED;
-		medst->me_ext_flags = 0;
-		medst->me_ext_type = 0;
-		medst->me_eop = 0;
+		medst[dsti].me_cl = hdrbuf;
+		medst[dsti].me_off = 0;
+		medst[dsti].me_len = hdrsize;
+		medst[dsti].me_type = MVEC_UNMANAGED;
+		medst[dsti].me_ext_flags = 0;
+		medst[dsti].me_ext_type = 0;
+		medst[dsti].me_eop = 0;
 		hdrbuf += hdrsize;
 	}
 
