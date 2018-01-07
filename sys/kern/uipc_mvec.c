@@ -965,7 +965,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	m_refcnt_t *newme_count, *medst_count, *mesrc_count;
 	int segcount, soff, segrem, srem;
 	int i, ntsofrags, segsz, cursegrem, nheaders, hdrsize;
-	int refsize, rem, curseg, count, pktrem;
+	int refsize, rem, curseg, count, pktrem, srci, dsti;
 	volatile uint32_t *refcnt;
 	bool dupref;
 	caddr_t hdrbuf;
@@ -1032,7 +1032,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	 * skip past header info
 	 */
 	mvec_seek(m, &mc, hdrsize);
-	mesrc = &MBUF2ME(m)[mc.mc_idx];
+	mesrc = MBUF2ME(m);
 	mesrc_count = &MBUF2REF(m)[mc.mc_idx];
 	soff = mc.mc_off;
 	if (dupref) {
@@ -1041,15 +1041,16 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 	}
 	/* bump dest past header */
 	medst->me_cl = NULL;
-	medst++;
 	/*
 	 * Packet segmentation loop
 	 */
+	srci = mc.mc_idx;
+	dsti = 1;
 	for (i = 1; i < nheaders; i++) {
 		segrem = min(segsz, pktrem);
 		do {
-			if (__predict_false(mesrc->me_len == 0)) {
-				mesrc++;
+			if (__predict_false(mesrc[srci].me_len == 0)) {
+				srci++;
 				mesrc_count++;
 				continue;
 			}
@@ -1067,33 +1068,33 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 				medst->me_ext_flags = 0;
 				medst->me_ext_type = 0;
 			}
-			srem = mesrc->me_len - soff;
-			medst->me_cl = mesrc->me_cl;
-			medst->me_off = mesrc->me_off + soff;
+			srem = mesrc[srci].me_len - soff;
+			medst[dsti].me_cl = mesrc[srci].me_cl;
+			medst[dsti].me_off = mesrc[srci].me_off + soff;
 			if (srem == segrem) {
-				medst->me_eop = 1;
+				medst[dsti].me_eop = 1;
 				soff = 0;
-				medst->me_len = srem;
-				mesrc++;
+				medst[dsti].me_len = srem;
+				srci++;
 			} else if (srem < segrem) {
-				medst->me_eop = 0;
+				medst[dsti].me_eop = 0;
 				soff = 0;
-				medst->me_len = srem;
+				medst[dsti].me_len = srem;
 				segrem -= srem;
-				mesrc++;
+				srci++;
 			} else {
-				medst->me_eop = 1;
+				medst[dsti].me_eop = 1;
 				soff += segrem;
-				medst->me_len = segrem;
+				medst[dsti].me_len = segrem;
 			}
-			mnew->m_pkthdr.len += medst->me_len;
-			medst++;
+			mnew->m_pkthdr.len += medst[dsti].me_len;
+			dsti++;
 			medst_count++;
-		} while (medst->me_eop == 0);
+		} while (medst[dsti].me_eop == 0);
 		pktrem -= segrem;
 		/* skip next header */
-		medst->me_cl = NULL;
-		medst++;
+		medst[dsti].me_cl = NULL;
+		dsti++;
 		medst_count++;
 	}
 
