@@ -1049,6 +1049,7 @@ mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc)
 		segrem = min(segsz, pktrem);
 		do {
 			if (__predict_false(mesrc->me_len == 0)) {
+				mesrc++;
 				mesrc_count++;
 				continue;
 			}
