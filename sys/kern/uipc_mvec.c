@@ -356,6 +356,11 @@ mvec_cksum_skip(struct mbuf *m, int len, int skip)
 	len -= skip;
 	mvec_seek(m, &mc, skip);
 	mh = *(MBUF2MH(m));
+
+	/* XXX */
+	if (mh.mh_multipkt)
+		return (0);
+
 	me = MHMEI(m, &mh, mc.mc_idx);
 	addr = me->me_cl + me->me_off;
 	goto skip_start;
@@ -720,14 +725,19 @@ m_ext_init(struct mbuf *m, struct mbuf *head, struct mvec_header *mh)
 {
 	struct mvec_ent *me;
 
-	me = MHMEI(m, mh, 0);
+	me = MHMEI(head, mh, 0);
 	m->m_ext.ext_buf = me->me_cl;
 	m->m_ext.ext_arg1 = head->m_ext.ext_arg1;
 	m->m_ext.ext_arg2 = head->m_ext.ext_arg2;
 	m->m_ext.ext_free = head->m_ext.ext_free;
 	m->m_ext.ext_type = me->me_ext_type;
-	m->m_ext.ext_flags = me->me_ext_flags;
-	m->m_ext.ext_size = mvec_ent_size(me);
+	if (me->me_ext_type) {
+		m->m_ext.ext_flags = me->me_ext_flags;
+		m->m_ext.ext_size = mvec_ent_size(me);
+	} else {
+		m->m_ext.ext_flags = EXT_FLAG_NOFREE;
+		m->m_ext.ext_size = 0;
+	}
 	/*
 	 * There are 3 cases for refcount transfer:
 	 *  1) all clusters are owned by the mvec [default]
