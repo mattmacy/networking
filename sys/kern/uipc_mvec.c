@@ -725,8 +725,10 @@ m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 {
 	struct mvec_ent *me;
 	struct mbuf *headm;
+	bool doref;
 
 	headm = &head->me_mbuf;
+	doref = true;
 	me = &head->me_ents[head->me_mh.mh_start];
 	m->m_ext.ext_buf = me->me_cl;
 	m->m_ext.ext_arg1 = headm->m_ext.ext_arg1;
@@ -759,9 +761,11 @@ m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 		if (ref->ext_cnt == NULL) {
 			m->m_ext.ext_flags |= EXT_FLAG_EMBREF;
 			m->m_ext.ext_count = 1;
+			doref = false;
 		}
 	}
-	atomic_add_int(m->m_ext.ext_cnt, 1);
+	if (doref)
+		atomic_add_int(m->m_ext.ext_cnt, 1);
 }
 
 static struct mbuf *
