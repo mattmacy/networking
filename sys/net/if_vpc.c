@@ -509,7 +509,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 {
 	struct ether_vlan_header *evh, *evhvx;
 	struct vxlan_header *vh;
-	struct mbuf *mh, *m, *mtmp;
+	struct mbuf_ext *mtmp;
+	struct mbuf *mh, *m;
 	struct vpc_ftable *vf;
 	struct sockaddr *dst;
 	struct route ro;
@@ -582,13 +583,13 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 			m_freem(mh);
 			return (EINVAL);
 		}
-		mtmp = mvec_tso(m, hdrsize, true);
+		mtmp = mvec_tso((struct mbuf_ext*)m, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
 			DPRINTF("%s mvec_tso failed\n", __func__);
 			m_freem(mh);
 			return (ENOMEM);
 		}
-		mh = mtmp;
+		mh = (void*)mtmp;
 	}
 	mh->m_pkthdr.rcvif = ifp;
 	vpc_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx);
