@@ -97,7 +97,7 @@ mvec_sanity(struct mbuf *m)
 	total = 0;
 	MPASS(m->m_len == me->me_len);
 	MPASS(m->m_data == (me->me_cl + me->me_off));
-	MPASS(mh->mh_count <= (mh->mh_start + mh->mh_used));
+	MPASS(mh->mh_count >= (mh->mh_start + mh->mh_used));
 	for (i = mh->mh_start; i < mh->mh_used + mh->mh_start; i++, me++) {
 		MPASS(me->me_cl);
 		MPASS(me->me_cl != (void *)0xdeadc0dedeadc0de);
