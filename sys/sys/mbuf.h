@@ -386,7 +386,7 @@ void mvec_free(struct mbuf *m);
  * NULL on failure. It is the caller's responsibility to free
  * the source on success.
  */
-struct mbuf *mchain_to_mvec(struct mbuf *m, int how);
+struct mbuf_ext *mchain_to_mvec(struct mbuf *m, int how);
 
 struct mbuf *pktchain_to_mvec(struct mbuf *m, int mtu, int how);
 
@@ -403,7 +403,7 @@ struct mbuf *mvec_to_mchain(struct mbuf *m, int how);
  * treated as encapsulation and copied to the front of every
  * packet. Non-destructive.
  */
-struct mbuf *mvec_tso(struct mbuf *m, int prehdrlen, bool freesrc);
+struct mbuf_ext *mvec_tso(struct mbuf_ext *m, int prehdrlen, bool freesrc);
 
 /*
  * Create size bytes of room at the front of `m`. Will allocate a
@@ -422,7 +422,7 @@ struct mbuf *mvec_append(struct mbuf *m, caddr_t cl, uint16_t off,
 /*
  * Allocate mvec with `count` entries and `len` additional bytes.
  */
-struct mbuf *mvec_alloc(uint8_t count, int len, int how);
+struct mbuf_ext *mvec_alloc(uint8_t count, int len, int how);
 
 /*
  * Initialize an mbuf `m` from zone_mbuf as an mvec.

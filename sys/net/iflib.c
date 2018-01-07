@@ -2533,6 +2533,7 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 {
 	int i, padlen , cidx, flid;
 	struct mbuf *m, *mtmp;
+	struct mbuf_ext *mv;
 	iflib_fl_t fl;
 	caddr_t cl;
 
@@ -2545,10 +2546,11 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 		m = fl->ifl_sds.ifsd_m[cidx];
 		fl->ifl_sds.ifsd_m[cidx] = NULL;
 		mvec_init_mbuf(m, ri->iri_nfrags, MVALLOC_MBUF);
+		mv = (void*)m;
 	} else {
-		m = mvec_alloc(ri->iri_nfrags, 0, M_NOWAIT);
+		mv = mvec_alloc(ri->iri_nfrags, 0, M_NOWAIT);
 	}
-	if (__predict_false(m == NULL))
+	if (__predict_false(mv == NULL))
 		return (NULL);
 	padlen = ri->iri_pad;
 	do {
@@ -2561,7 +2563,7 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 		cl = *sd->ifsd_cl;
 		*sd->ifsd_cl = NULL;
 
-		mtmp = mvec_append(m, cl, padlen, ri->iri_frags[i].irf_len - padlen,
+		mtmp = mvec_append((void*)mv, cl, padlen, ri->iri_frags[i].irf_len - padlen,
 						   sd->ifsd_fl->ifl_cltype);
 		padlen = 0;
 		MPASS(mtmp != NULL);
