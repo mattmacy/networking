@@ -521,6 +521,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	*mp = NULL;
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
+	m->m_nextpkt = NULL;
 	if (m_ismvec(m)) {
 		mh = mvec_prepend(m, hdrsize);
 	} else {
@@ -544,16 +545,15 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	}
 	vh = (struct vxlan_header *)mh->m_data;
 	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
-	m->m_nextpkt = NULL;
 
 	if (__predict_true(vpc_cache_lookup(vs, mh, evhvx))) {
 		*mp = mh;
 		return (0);
 	}
 	/* lookup MAC->IP forwarding table */
-	vf = vpc_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
+	vf = vpc_vxlanid_lookup(vs, mh->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
-		DPRINTF("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
+		DPRINTF("vxlanid %d not found\n", mh->m_pkthdr.vxlanid);
 		m_freem(mh);
 		return (ENOENT);
 	}
@@ -578,12 +578,12 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	 */
 	if (!!(m->m_pkthdr.csum_flags & CSUM_TSO) &
 		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
-		if (__predict_false(!m_ismvec(m))) {
+		if (__predict_false(!m_ismvec(mh))) {
 			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
 			m_freem(mh);
 			return (EINVAL);
 		}
-		mtmp = mvec_tso((struct mbuf_ext*)m, hdrsize, true);
+		mtmp = mvec_tso((struct mbuf_ext*)mh, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
 			DPRINTF("%s mvec_tso failed\n", __func__);
 			m_freem(mh);
