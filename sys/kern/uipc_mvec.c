@@ -1107,13 +1107,13 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 						atomic_add_int(mesrc_count->ext_cnt, 1);
 				}
 				mesrc_count++;
-				medst->me_type = mesrc[srci].me_type;
-				medst->me_ext_flags = mesrc[srci].me_ext_flags;
-				medst->me_ext_type = mesrc[srci].me_ext_type;
+				medst[dsti].me_type = mesrc[srci].me_type;
+				medst[dsti].me_ext_flags = mesrc[srci].me_ext_flags;
+				medst[dsti].me_ext_type = mesrc[srci].me_ext_type;
 			} else {
-				medst->me_type = MVEC_UNMANAGED;
-				medst->me_ext_flags = 0;
-				medst->me_ext_type = 0;
+				medst[dsti].me_type = MVEC_UNMANAGED;
+				medst[dsti].me_ext_flags = 0;
+				medst[dsti].me_ext_type = 0;
 			}
 			srem = mesrc[srci].me_len - soff;
 			medst[dsti].me_cl = mesrc[srci].me_cl;
