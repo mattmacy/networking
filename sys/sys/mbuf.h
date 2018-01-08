@@ -946,19 +946,6 @@ m_gethdr(int how, short type)
 	return (m);
 }
 
-static __inline struct mbuf *
-m_getcl(int how, short type, int flags)
-{
-	struct mbuf *m;
-	struct mb_args args;
-
-	args.flags = flags;
-	args.type = type;
-	m = uma_zalloc_arg(zone_pack, &args, how);
-	MBUF_PROBE4(m__getcl, how, type, flags, m);
-	return (m);
-}
-
 /*
  * XXX: m_cljset() is a dangerous API.  One must attach only a new,
  * unreferenced cluster to an mbuf(9).  It is not possible to assert
@@ -997,6 +984,22 @@ m_cljset(struct mbuf *m, void *cl, int type)
 	m->m_ext.ext_count = 1;
 	m->m_flags |= M_EXT;
 	MBUF_PROBE3(m__cljset, m, cl, type);
+}
+
+static __inline struct mbuf *
+m_getcl(int how, short type, int flags)
+{
+	struct mbuf *m;
+	struct mb_args args;
+	caddr_t cl;
+
+	args.flags = flags;
+	args.type = type;
+	m = uma_zalloc_arg(zone_mbuf, &args, how);
+	cl = uma_zalloc_arg(zone_clust, &args, how);
+	m_cljset(m, cl, EXT_CLUSTER);
+	MBUF_PROBE4(m__getcl, how, type, flags, m);
+	return (m);
 }
 
 static __inline void
