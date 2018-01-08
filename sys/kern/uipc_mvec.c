@@ -1046,17 +1046,20 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	for (segcount = i = 0; i < mh->mh_count; i++, me++) {
 		if (__predict_false(me->me_len == 0))
 			continue;
+		MPASS(pktrem > 0);
+		MPASS(pktrem >= cursegrem);
+		MPASS(cursegrem > 0);
 		if (me->me_len < cursegrem) {
 			cursegrem -= me->me_len;
 			pktrem -= me->me_len;
 		} else if (me->me_len >= cursegrem) {
 			rem = me->me_len - cursegrem;
 			pktrem -= me->me_len;
-			while (rem > 0) {
-				rem -= segsz;
+			while (rem) {
+				rem -= min(segsz, rem);
 				segcount++;
 			}
-			cursegrem = min(pktrem, segsz + rem);
+			cursegrem = min(pktrem, segsz);
 		}
 		segcount++;
 	}
