@@ -748,7 +748,7 @@ m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 		m->m_ext.ext_size = me->me_len + me->me_off;
 	}
 	/*
-	 * There are 3 cases for refcount transfer:
+	 * There are 2 cases for refcount transfer:
 	 *  1) all clusters are owned by the mvec [default]
 	 *     - point at mvec refcnt and increment
 	 *  2) cluster has a normal external refcount
@@ -765,6 +765,7 @@ m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 		m->m_ext.ext_cnt = ref->ext_cnt;
 		if (ref->ext_cnt == NULL) {
 			m->m_ext.ext_flags |= EXT_FLAG_EMBREF;
+			m->m_ext.ext_type = 0;
 			m->m_ext.ext_count = 1;
 			doref = false;
 		}
