@@ -1012,8 +1012,8 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	struct tso_state state;
 	m_refcnt_t *newme_count, *medst_count, *mesrc_count;
 	int segcount, soff, segrem, srem;
-	int i, segsz, cursegrem, nheaders, hdrsize, len;
-	int refsize, rem, count, pktrem, srci, dsti;
+	int i, segsz, nheaders, hdrsize;
+	int refsize, count, pktrem, srci, dsti;
 	volatile uint32_t *refcnt;
 	bool dupref, dofree;
 	caddr_t hdrbuf;
@@ -1041,31 +1041,35 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	nheaders = pktrem / segsz;
 	if (nheaders*segsz != pktrem)
 		nheaders++;
-	cursegrem = segsz;
+	segrem = segsz;
 	segcount = refsize = 0;
 	mvec_seek(m, &mc, hdrsize);
 	soff = mc.mc_off;
-	for (srci = mc.mc_idx; srci < mh->mh_count; srci++) {
-		if (__predict_false(me[srci].me_len == 0))
+	srci = mc.mc_idx;
+	while (pktrem > 0) {
+		MPASS(pktrem >= segrem);
+		MPASS(srci < mprev->me_mh.mh_count);
+		if (__predict_false(me[srci].me_len == 0)) {
+			srci++;
 			continue;
-		MPASS(pktrem > 0);
-		MPASS(pktrem >= cursegrem);
-		MPASS(cursegrem > 0);
-		len = me[srci].me_len - soff;
-		soff = 0;
-		if (len < cursegrem) {
-			cursegrem -= len;
-			pktrem -= len;
-		} else if (len >= cursegrem) {
-			rem = len - cursegrem;
-			pktrem -= len;
-			while (rem) {
-				rem -= min(segsz, rem);
-				segcount++;
-			}
-			cursegrem = min(pktrem, segsz);
 		}
-		segcount++;
+		segrem = min(pktrem, segsz);
+		do {
+			int used;
+
+			srem = me[srci].me_len - soff;
+			used = min(segrem, srem);
+			srem -= used;
+			if (srem) {
+				soff += segrem;
+			} else {
+				srci++;
+				soff = 0;
+			}
+			segrem -= used;
+			pktrem -= used;
+			segcount++;
+		} while (segrem);
 	}
 
 	count = segcount + nheaders;
