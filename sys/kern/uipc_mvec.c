@@ -602,6 +602,9 @@ mchain_to_mvec(struct mbuf *m, int how)
 	bool dupref;
 	m_refcnt_t *me_count;
 
+	if (__predict_false(m_ismvec(m)))
+		return ((struct mbuf_ext *)m);
+
 	size = count = 0;
 	mp = m;
 	dupref = false;
@@ -695,32 +698,28 @@ mchain_to_mvec(struct mbuf *m, int how)
 	return (mnew);
 }
 
-struct mbuf *
+struct mbuf_ext *
 pktchain_to_mvec(struct mbuf *m, int mtu, int how)
 {
-	struct mbuf *mh, *mt, *mp, *mnext;
-	struct mbuf_ext *mnew;
+	struct mbuf *mp, *mnext;
+	struct mbuf_ext *mnew, *mh, *mt;
 
-	mh = mp = m;
-	mt = NULL;
+	mp = m;
+	mh = mt = NULL;
 	while (mp) {
 		mnext = mp->m_nextpkt;
-		if (m_ismvec(mp) || mp->m_pkthdr.len <= mtu) {
-			mt = mp;
-			mp = mnext;
-			continue;
-		}
 		mnew = mchain_to_mvec(mp, how);
 		if (__predict_false(mnew == NULL)) {
 			m_freem(mp);
+			mp = mnext;
 			continue;
 		}
-		if (mp == mh)
-			mh = (void *)mnew;
-		else if (mt)
-			mt->m_nextpkt = (void *)mnew;
-		mp = (void*)mnew;
-		mt = mp;
+		if (mh == NULL) {
+			mh = mt = mnew;
+		} else {
+			mt->me_mbuf.m_nextpkt = (void*)mnew;
+			mt = mnew;
+		}
 		mp = mnext;
 	}
 	return (mh);

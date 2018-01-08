@@ -388,7 +388,7 @@ void mvec_free(struct mbuf *m);
  */
 struct mbuf_ext *mchain_to_mvec(struct mbuf *m, int how);
 
-struct mbuf *pktchain_to_mvec(struct mbuf *m, int mtu, int how);
+struct mbuf_ext *pktchain_to_mvec(struct mbuf *m, int mtu, int how);
 
 
 /*
