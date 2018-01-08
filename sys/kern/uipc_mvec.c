@@ -660,6 +660,9 @@ mchain_to_mvec(struct mbuf *m, int how)
 			me->me_ext_flags = mp->m_ext.ext_flags;
 			MPASS(mp->m_ext.ext_type < 32);
 			me->me_ext_type = mp->m_ext.ext_type;
+#ifdef INVARIANTS
+			(void)mvec_ent_size(me);
+#endif			
 		} else {
 			me->me_cl = (caddr_t)mp;
 			me->me_off = ((uintptr_t)(mp->m_data) - (uintptr_t)mp);
