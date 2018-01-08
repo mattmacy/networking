@@ -740,7 +740,7 @@ m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 	} else {
 		m->m_ext.ext_flags = EXT_FLAG_NOFREE;
 		/* Only used by m_sanity so just call it our size */
-		m->m_ext.ext_size = me->me_len;
+		m->m_ext.ext_size = me->me_len + me->me_off;
 	}
 	/*
 	 * There are 3 cases for refcount transfer:
@@ -790,13 +790,11 @@ mvec_to_mchain_pkt(struct mbuf_ext *mp, struct mvec_header *mhdr, int how)
 	mh->m_pkthdr.len = mh->m_len = me->me_len;
 	mhdr->mh_start++;
 	mhdr->mh_used--;
+	me++;
 	mt = mh;
 	while (!me->me_eop && mhdr->mh_used) {
 		if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
 			goto fail;
-		me++;
-		mhdr->mh_start++;
-		mhdr->mh_used--;
 		mt->m_next = m;
 		mt = m;
 		mt->m_flags |= M_EXT;
@@ -804,6 +802,9 @@ mvec_to_mchain_pkt(struct mbuf_ext *mp, struct mvec_header *mhdr, int how)
 		mt->m_len = me->me_len;
 		mh->m_pkthdr.len += mt->m_len;
 		mt->m_data = me->me_cl + me->me_off;
+		mhdr->mh_start++;
+		mhdr->mh_used--;
+		me++;
 	}
 #ifdef INVARIANTS
 	m_sanity(mh, 0);
