@@ -739,7 +739,8 @@ m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 		m->m_ext.ext_size = mvec_ent_size(me);
 	} else {
 		m->m_ext.ext_flags = EXT_FLAG_NOFREE;
-		m->m_ext.ext_size = 0;
+		/* Only used by m_sanity so just call it our size */
+		m->m_ext.ext_size = me->me_len;
 	}
 	/*
 	 * There are 3 cases for refcount transfer:
