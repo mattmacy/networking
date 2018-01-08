@@ -1053,8 +1053,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	if (mh->mh_multiref)
 		refsize = count*sizeof(void*);
 
-	refsize += (nheaders * hdrsize);
-	mnew = mvec_alloc(count, refsize, M_NOWAIT);
+	mnew = mvec_alloc(count, refsize + (nheaders * hdrsize), M_NOWAIT);
 	if (__predict_false(mnew == NULL))
 		return (NULL);
 	bcopy(&m->m_pkthdr, &mnew->me_mbuf.m_pkthdr, sizeof(struct pkthdr));
