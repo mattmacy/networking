@@ -1104,19 +1104,33 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	 * Packet segmentation loop
 	 */
 	srci = mc.mc_idx;
-	dsti = 1;
 	pktrem = m->m_pkthdr.len - hdrsize;
-	for (i = 0; i < nheaders; i++) {
+	for (dsti = i = 0; i < nheaders; i++) {
+		/* skip header */
+		medst[dsti].me_cl = NULL;
+		dsti++;
+		medst_count++;
+
 		MPASS(pktrem > 0);
 		segrem = min(segsz, pktrem);
 		do {
+			int used;
+
 			MPASS(srci < mprev->me_mh.mh_count);
 			MPASS(dsti < mnew->me_mh.mh_count);
+			/*
+			 * Skip past any empty slots
+			 */
 			if (__predict_false(mesrc[srci].me_len == 0)) {
 				srci++;
 				mesrc_count++;
 				continue;
 			}
+			/*
+			 * At the start of a source descriptor:
+			 * copy its attributes and, if dupref,
+			 * its refcnt
+			 */
 			if (soff == 0) {
 				if (dupref) {
 					*medst_count = *mesrc_count;
@@ -1132,38 +1146,27 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 				medst[dsti].me_ext_flags = 0;
 				medst[dsti].me_ext_type = 0;
 			}
+			/*
+			 * Remaining value is len - off
+			 */
 			srem = mesrc[srci].me_len - soff;
 			medst[dsti].me_cl = mesrc[srci].me_cl;
 			medst[dsti].me_off = mesrc[srci].me_off + soff;
-			if (srem == segrem) {
-				medst[dsti].me_eop = 1;
-				soff = 0;
-				medst[dsti].me_len = srem;
-				segrem = 0;
-				pktrem -= segrem;
-				srci++;
-			} else if (srem < segrem) {
-				medst[dsti].me_eop = 0;
-				soff = 0;
-				medst[dsti].me_len = srem;
-				pktrem -= srem;
-				segrem -= srem;
-				srci++;
-			} else {
-				medst[dsti].me_eop = 1;
+			used = min(segrem, srem);
+			segrem -= used;
+			pktrem -= used;
+			srem -= used;
+			medst[dsti].me_len = used;
+			medst[dsti].me_eop = (segrem == 0);
+			if (srem) {
 				soff += segrem;
-				pktrem -= segrem;
-				medst[dsti].me_len = segrem;
-				segrem = 0;
+			} else {
+				srci++;
+				soff = 0;
 			}
 			dsti++;
 			medst_count++;
 		} while (segrem);
-
-		/* skip next header */
-		medst[dsti].me_cl = NULL;
-		dsti++;
-		medst_count++;
 	}
 	/*
 	 * Special case first header
