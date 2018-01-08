@@ -314,7 +314,7 @@ vpc_ip_init(struct vpc_ftable *vf, struct vxlan_header *vh, struct sockaddr *dst
 
 
 static uint16_t
-vpc_csum_skip(struct mbuf *m, int len, int skip)
+vpc_cksum_skip(struct mbuf *m, int len, int skip)
 {
 	uint16_t csum;
 
@@ -364,7 +364,7 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	vhdr->v_vxlanid = htonl(vf->vf_vni) >> 8;
 	if (!(ifp->if_capenable & IFCAP_TXCSUM)) {
 		ip->ip_sum = in_cksum_hdr(ip);
-		uh->uh_sum = vpc_csum_skip(m, ntohs(ip->ip_len) + sizeof(*eh), sizeof(*ip) + sizeof(*eh));
+		uh->uh_sum = vpc_cksum_skip(m, ntohs(ip->ip_len) + sizeof(*eh), sizeof(*ip) + sizeof(*eh));
 	}
 }
 
@@ -614,16 +614,16 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf **mp, bool *can_batch)
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
 		rc = vpc_vxlan_encap(vs, &m);
-		if (rc)
+		if (__predict_false(rc))
 			break;
-		if (mh != NULL) {
-			if (ifp != m->m_pkthdr.rcvif)
-				*can_batch = false;
+		if (mh == NULL) {
+			mh = mt = m;
+			ifp = m->m_pkthdr.rcvif;
+		} else {
 			mt->m_nextpkt = m;
 			mt = m;
-		} else {
-			ifp = m->m_pkthdr.rcvif;
-			mh = mt = m;
+			if (__predict_false(ifp != m->m_pkthdr.rcvif))
+				*can_batch = false;
 		}
 		m = mnext;
 	} while (m != NULL);
