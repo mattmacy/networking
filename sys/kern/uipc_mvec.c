@@ -953,7 +953,8 @@ struct tso_state {
 	uint16_t ts_idx;
 	uint16_t ts_prehdrlen;
 	uint16_t ts_hdrlen;
-	uint16_t ts_len_off;
+	uint16_t ts_ip_len_off;
+	uint16_t ts_uh_len_off;
 };
 
 static void
@@ -968,10 +969,12 @@ tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen, 
 	state->ts_prehdrlen = prehdrlen;
 	state->ts_hdrlen = hdrlen;
 	state->ts_seq = pi->ipi_tcp_seq;
-	state->ts_len_off = 0;
+	state->ts_uh_len_off = state->ts_ip_len_off = 0;
 	/* XXX assuming !VLAN */
-	if (prehdrlen)
-		state->ts_len_off = ETHER_HDR_LEN + sizeof(*ip) + offsetof(struct udphdr, uh_ulen);
+	if (prehdrlen) {
+		state->ts_uh_len_off = ETHER_HDR_LEN + sizeof(*ip) + offsetof(struct udphdr, uh_ulen);
+		state->ts_ip_len_off = ETHER_HDR_LEN + offsetof(struct ip, ip_len);
+	}
 }
 
 static void
@@ -980,12 +983,14 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 	if_pkt_info_t pi = state->ts_pi;
 	struct ip *ip;
 	struct tcphdr *th;
-	uint16_t encap_len, *udphdr_lenp;
+	uint16_t encap_len, *hdr_lenp;
 
 	encap_len = len + state->ts_hdrlen - state->ts_prehdrlen - pi->ipi_ehdrlen;
-	if (state->ts_len_off) {
-		udphdr_lenp = (uint16_t *)(hdr + state->ts_len_off);
-		*udphdr_lenp = htons(len + state->ts_hdrlen - ETHER_HDR_LEN - sizeof(*ip));
+	if (state->ts_prehdrlen) {
+		hdr_lenp = (uint16_t *)(hdr + state->ts_uh_len_off);
+		*hdr_lenp = htons(len + state->ts_hdrlen - ETHER_HDR_LEN - sizeof(*ip));
+		hdr_lenp = (uint16_t *)(hdr + state->ts_ip_len_off);
+		*hdr_lenp = htons(len + state->ts_hdrlen - ETHER_HDR_LEN);
 	}
 	if (pi->ipi_etype == ETHERTYPE_IP) {
 		ip = (struct ip *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen);
