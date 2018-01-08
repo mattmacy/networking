@@ -644,7 +644,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	MPASS(mh->mh_start == 1);
 	me->me_cl = NULL;
 	me->me_off = me->me_len = 0;
-	me->ext_type = me->ext_flags = 0;
+	me->me_ext_type = me->me_ext_flags = 0;
 	me++;
 	me_count = MBUF2REF(mnew);
 	if (dupref)
