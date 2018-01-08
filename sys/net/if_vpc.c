@@ -515,12 +515,13 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	struct sockaddr *dst;
 	struct route ro;
 	struct ifnet *ifp;
-	int rc, hdrsize;
+	int rc, hdrsize, istso;
 
 	m = *mp;
 	*mp = NULL;
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
+	istso = (m->m_pkthdr.csum_flags & CSUM_TSO);
 	m->m_nextpkt = NULL;
 	if (m_ismvec(m)) {
 		mh = mvec_prepend(m, hdrsize);
@@ -535,14 +536,14 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		mh->m_data = mh->m_pktdat;
 		mh->m_nextpkt = NULL;
 		mh->m_flags = M_PKTHDR;
-		mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
-		mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
 		/* XXX v4 only */
 		mh->m_pkthdr.len += hdrsize;
 		mh->m_len = hdrsize;
 		mh->m_next = m;
 		m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
 	}
+	mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
+	mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
 	vh = (struct vxlan_header *)mh->m_data;
 	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
 
@@ -576,8 +577,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
-	if (!!(mh->m_pkthdr.csum_flags & CSUM_TSO) &
-		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
+	if (istso & !(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
 		if (__predict_false(!m_ismvec(mh))) {
 			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
 			m_freem(mh);
