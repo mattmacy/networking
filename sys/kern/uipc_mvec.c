@@ -968,7 +968,7 @@ tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen, 
 	state->ts_idx = ntohs(ip->ip_id);
 	state->ts_prehdrlen = prehdrlen;
 	state->ts_hdrlen = hdrlen;
-	state->ts_seq = pi->ipi_tcp_seq;
+	state->ts_seq = ntohl(pi->ipi_tcp_seq);
 	state->ts_uh_len_off = state->ts_ip_len_off = 0;
 	/* XXX assuming !VLAN */
 	if (prehdrlen) {
