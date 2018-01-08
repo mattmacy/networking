@@ -862,11 +862,13 @@ mvec_to_mchain(struct mbuf *mp, int how)
 #define MIN_HDR_LEN   (ETHER_HDR_LEN + sizeof(struct ip) + sizeof(struct tcphdr))
 
 static int
-mvec_parse_header(struct mbuf *m, int prehdrlen, if_pkt_info_t pi)
+mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 {
 	struct ether_vlan_header *evh;
-	struct mvec_header *mh = MBUF2MH(m);
+	struct mvec_header *mh = &mp->me_mh;
+	struct mbuf *m;
 
+	m = (void*)mp;
 	mvec_sanity(m);
 	if (__predict_false(m->m_len < MIN_HDR_LEN + prehdrlen) &&
 		__predict_false(mvec_pullup(m, prehdrlen + MIN_HDR_LEN) == NULL))
@@ -1010,11 +1012,11 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	segsz = m->m_pkthdr.tso_segsz;
 	pktrem = m->m_pkthdr.len;
 	refsize = 0;
-	mh = (struct mvec_header *)(m->m_pktdat + sizeof(struct m_ext));
-	me = (struct mvec_ent *)(mh + 1);
+	mh = &mprev->me_mh;
+	me = mprev->me_ents;
 	dupref = mh->mh_multiref;
 	pi.ipi_tso_segsz = segsz;
-	if (mvec_parse_header(m, prehdrlen, &pi))
+	if (mvec_parse_header(mprev, prehdrlen, &pi))
 		return (NULL);
 	hdrsize = prehdrlen + pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
 	pktrem -= hdrsize;
@@ -1068,7 +1070,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	 * skip past header info
 	 */
 	mvec_seek(m, &mc, hdrsize);
-	mesrc = MBUF2ME(m);
+	mesrc = mprev->me_ents;
 	mesrc_count = &MBUF2REF(m)[mc.mc_idx];
 	soff = mc.mc_off;
 	if (dupref) {
@@ -1084,8 +1086,9 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	dsti = 1;
 	for (i = 0; i < nheaders; i++) {
 		segrem = min(segsz, pktrem);
-		MPASS(srci < MBUF2MH(m)->mh_count);
 		do {
+			MPASS(srci < mprev->me_mh.mh_count);
+			MPASS(dsti < mnew->me_mh.mh_count);
 			if (__predict_false(mesrc[srci].me_len == 0)) {
 				srci++;
 				mesrc_count++;
@@ -1168,8 +1171,8 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 		hdrbuf += hdrsize;
 	}
 
-	mnew->me_mbuf.m_len = MBUF2ME(mnew)->me_len;
-	mnew->me_mbuf.m_data = (MBUF2ME(mnew)->me_cl + MBUF2ME(mnew)->me_off);
+	mnew->me_mbuf.m_len = mnew->me_ents->me_len;
+	mnew->me_mbuf.m_data = (mnew->me_ents->me_cl + mnew->me_ents->me_off);
 	mnew->me_mbuf.m_pkthdr.len = m->m_pkthdr.len + (nheaders - 1)*hdrsize;
 	mvec_sanity((struct mbuf *)mnew);
 	if (dofree) {
