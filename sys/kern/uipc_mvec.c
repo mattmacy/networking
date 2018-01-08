@@ -826,12 +826,18 @@ mvec_to_mchain(struct mbuf *mp, int how)
 {
 	struct mvec_header *pmhdr, mhdr;
 	struct mbuf *mh, *mt, *m;
+#ifdef INVARIANTS
+	int count = 0;
+#endif
 
 	mvec_sanity(mp);
 	pmhdr = MBUF2MH(mp);
 	bcopy(pmhdr, &mhdr, sizeof(mhdr));
 	mh = mt = NULL;
 	while (mhdr.mh_used) {
+#ifdef INVARIANTS
+		count++;
+#endif
 		if (__predict_false((m = mvec_to_mchain_pkt((struct mbuf_ext *)mp, &mhdr, how)) == NULL)) {
 			DPRINTF("mvec_to_mchain_pkt failed\n");
 			goto fail;
@@ -843,6 +849,12 @@ mvec_to_mchain(struct mbuf *mp, int how)
 			mh = mt = m;
 	}
 #ifdef INVARIANTS
+	m = mh;
+	while (m) {
+		m = m->m_nextpkt;
+		count--;
+	}
+	MPASS(count == 0);
 	m_sanity(mh, 0);
 #endif
 	return (mh);
@@ -1030,6 +1042,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	nheaders = pktrem / segsz;
 	if (nheaders*segsz != pktrem)
 		nheaders++;
+	cursegrem = segsz;
 	for (segcount = i = 0; i < mh->mh_count; i++, me++) {
 		if (__predict_false(me->me_len == 0))
 			continue;
