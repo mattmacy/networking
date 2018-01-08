@@ -1108,6 +1108,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	for (dsti = i = 0; i < nheaders; i++) {
 		/* skip header */
 		medst[dsti].me_cl = NULL;
+		medst[dsti].me_len = 0;
 		dsti++;
 		medst_count++;
 
@@ -1116,6 +1117,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 		do {
 			int used;
 
+			MPASS(pktrem > 0);
 			MPASS(srci < mprev->me_mh.mh_count);
 			MPASS(dsti < mnew->me_mh.mh_count);
 			/*
@@ -1137,7 +1139,6 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 					if (!dofree && (mesrc_count->ext_cnt != NULL))
 						atomic_add_int(mesrc_count->ext_cnt, 1);
 				}
-				mesrc_count++;
 				medst[dsti].me_type = mesrc[srci].me_type;
 				medst[dsti].me_ext_flags = mesrc[srci].me_ext_flags;
 				medst[dsti].me_ext_type = mesrc[srci].me_ext_type;
@@ -1153,17 +1154,18 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			medst[dsti].me_cl = mesrc[srci].me_cl;
 			medst[dsti].me_off = mesrc[srci].me_off + soff;
 			used = min(segrem, srem);
-			segrem -= used;
-			pktrem -= used;
 			srem -= used;
-			medst[dsti].me_len = used;
-			medst[dsti].me_eop = (segrem == 0);
 			if (srem) {
 				soff += segrem;
 			} else {
 				srci++;
+				mesrc_count++;
 				soff = 0;
 			}
+			segrem -= used;
+			pktrem -= used;
+			medst[dsti].me_eop = (segrem == 0);
+			medst[dsti].me_len = used;
 			dsti++;
 			medst_count++;
 		} while (segrem);
