@@ -851,11 +851,12 @@ mvec_to_mchain(struct mbuf *mp, int how)
 #ifdef INVARIANTS
 	m = mh;
 	while (m) {
+		MPASS(m->m_data);
+		m_sanity(m, 0);
 		m = m->m_nextpkt;
 		count--;
 	}
 	MPASS(count == 0);
-	m_sanity(mh, 0);
 #endif
 	return (mh);
  fail:
