@@ -790,11 +790,11 @@ mvec_to_mchain_pkt(struct mbuf_ext *mp, struct mvec_header *mhdr, int how)
 	mh->m_pkthdr.len = mh->m_len = me->me_len;
 	mhdr->mh_start++;
 	mhdr->mh_used--;
-	me++;
 	mt = mh;
 	while (!me->me_eop && mhdr->mh_used) {
 		if (__predict_false((m = m_get(how, MT_DATA)) == NULL))
 			goto fail;
+		me++;
 		mt->m_next = m;
 		mt = m;
 		mt->m_flags |= M_EXT;
@@ -804,7 +804,6 @@ mvec_to_mchain_pkt(struct mbuf_ext *mp, struct mvec_header *mhdr, int how)
 		mt->m_data = me->me_cl + me->me_off;
 		mhdr->mh_start++;
 		mhdr->mh_used--;
-		me++;
 	}
 #ifdef INVARIANTS
 	m_sanity(mh, 0);
