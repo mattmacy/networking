@@ -662,7 +662,7 @@ mb_free_ext(struct mbuf *m)
 		if (__predict_false(m->m_ext.ext_flags & EXT_FLAG_MVECREF)) {
 			MPASS(!(m->m_ext.ext_flags & EXT_FLAG_EMBREF));
 			MPASS(mref != m);
-			mvec_free(mref);
+			mvec_free((struct mbuf_ext *)mref);
 			goto skip;
 		}
 		switch (m->m_ext.ext_type) {
@@ -692,7 +692,7 @@ mb_free_ext(struct mbuf *m)
 			uma_zfree(zone_mbuf, m->m_ext.ext_buf);
 			break;
 		case EXT_MVEC:
-			mvec_free(m);
+			mvec_free((struct mbuf_ext*)m);
 			return;
 			break;
 		case EXT_SFBUF:
