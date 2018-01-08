@@ -1029,7 +1029,6 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 		dofree = true;
 
 	segsz = m->m_pkthdr.tso_segsz;
-	pktrem = m->m_pkthdr.len;
 	refsize = 0;
 	mh = &mprev->me_mh;
 	me = mprev->me_ents;
@@ -1038,7 +1037,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	if (mvec_parse_header(mprev, prehdrlen, &pi))
 		return (NULL);
 	hdrsize = prehdrlen + pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
-	pktrem -= hdrsize;
+	pktrem = m->m_pkthdr.len - hdrsize;
 	nheaders = pktrem / segsz;
 	if (nheaders*segsz != pktrem)
 		nheaders++;
@@ -1048,13 +1047,15 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			continue;
 		if (me->me_len < cursegrem) {
 			cursegrem -= me->me_len;
+			pktrem -= me->me_len;
 		} else if (me->me_len >= cursegrem) {
 			rem = me->me_len - cursegrem;
+			pktrem -= me->me_len;
 			while (rem > 0) {
 				rem -= segsz;
 				segcount++;
 			}
-			cursegrem = segsz + rem;
+			cursegrem = min(pktrem, segsz + rem);
 		}
 		segcount++;
 	}
@@ -1096,6 +1097,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	 */
 	srci = mc.mc_idx;
 	dsti = 1;
+	pktrem = m->m_pkthdr.len - hdrsize;
 	for (i = 0; i < nheaders; i++) {
 		MPASS(pktrem > 0);
 		segrem = min(segsz, pktrem);
