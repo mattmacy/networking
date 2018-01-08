@@ -796,7 +796,6 @@ u_int		 m_fixhdr(struct mbuf *);
 struct mbuf	*m_fragment(struct mbuf *, int, int);
 void		 m_freem(struct mbuf *);
 struct mbuf	*m_get2(int, int, short, int);
-struct mbuf	*m_getjcl(int, short, int, int);
 struct mbuf	*m_getm2(struct mbuf *, int, int, short, int);
 struct mbuf	*m_getptr(struct mbuf *, int, int *);
 u_int		 m_length(struct mbuf *, struct mbuf **);
@@ -985,30 +984,37 @@ m_cljset(struct mbuf *m, void *cl, int type)
 	m->m_flags |= M_EXT;
 	MBUF_PROBE3(m__cljset, m, cl, type);
 }
+/*
+ * m_getjcl() returns an mbuf with a cluster of the specified size attached.
+ * For size it takes MCLBYTES, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES.
+ */
+static __inline struct mbuf *
+m_getjcl(int how, short type, int flags, int size)
+{
+	struct mb_args args;
+	struct mbuf *m, *n;
+	uma_zone_t zone;
+
+	args.flags = flags;
+	args.type = type;
+
+	m = uma_zalloc_arg(zone_mbuf, &args, how);
+	if (m == NULL)
+		return (NULL);
+
+	zone = m_getzone(size);
+	n = uma_zalloc_arg(zone, m, how);
+	if (n == NULL) {
+		uma_zfree(zone_mbuf, m);
+		return (NULL);
+	}
+	return (m);
+}
 
 static __inline struct mbuf *
 m_getcl(int how, short type, int flags)
 {
-	struct mbuf *m;
-	struct mb_args args;
-	caddr_t cl;
-
-	args.flags = flags;
-	args.type = type;
-	m = uma_zalloc_arg(zone_mbuf, &args, how);
-	if (__predict_false(m == NULL))
-		return (NULL);
-	if (__predict_false(m_init(m, how, MT_DATA, flags)))
-		goto fail;
-	cl = uma_zalloc_arg(zone_clust, &args, how);
-	if (__predict_false(cl == NULL))
-		goto fail;
-	m_cljset(m, cl, EXT_CLUSTER);
-	MBUF_PROBE4(m__getcl, how, type, flags, m);
-	return (m);
- fail:
-	uma_zfree(zone_mbuf, m);
-	return (NULL);
+	return (m_getjcl(how, type, flags, MCLBYTES));
 }
 
 static __inline void
