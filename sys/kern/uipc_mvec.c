@@ -559,15 +559,15 @@ mvec_pullup(struct mbuf *m, int count)
 }
 
 void
-mvec_free(struct mbuf *m)
+mvec_free(struct mbuf_ext *m)
 {
 	struct mvec_header *mh;
 	struct mvec_ent *me;
 	m_refcnt_t *me_count;
 	int i;
 
-	mh = (struct mvec_header *)m->m_pktdat + sizeof(struct m_ext);
-	me = (struct mvec_ent *)(mh + 1);
+	mh = &m->me_mh;
+	me = m->me_ents;
 	me_count = (m_refcnt_t *)(me + mh->mh_count);
 
 	for (i = 0; i < mh->mh_count; i++, me_count++, me++) {
@@ -585,7 +585,7 @@ mvec_free(struct mbuf *m)
 				break;
 		}
 	}
-	mvec_buffer_free(m);
+	mvec_buffer_free((void*)m);
 }
 
 struct mbuf_ext *

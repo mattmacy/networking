@@ -379,7 +379,7 @@ struct mbuf * mvec_pullup(struct mbuf *m, int count);
  * Perform accounting neccesary to free all references contained
  * and `m` itself
  */
-void mvec_free(struct mbuf *m);
+void mvec_free(struct mbuf_ext *m);
 
 /*
  * Convert mbuf chain `m` to mvec non-destructively. Returns
