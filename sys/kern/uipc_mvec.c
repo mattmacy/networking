@@ -701,24 +701,26 @@ pktchain_to_mvec(struct mbuf *m, int mtu, int how)
 	struct mbuf *mh, *mt, *mp, *mnext;
 	struct mbuf_ext *mnew;
 
-	mp = m;
-	mt = mh = NULL;
+	mh = mp = m;
+	mt = NULL;
 	while (mp) {
 		mnext = mp->m_nextpkt;
-		if (!m_ismvec(mp) && mp->m_pkthdr.len > mtu) {
-			mnew = mchain_to_mvec(mp, how);
-			if (__predict_false(mnew == NULL)) {
-				m_freem(mp);
-			} else
-				mp = (void*)mnew;
-		}
-		MPASS(mp);
-		if (mh == NULL) {
-			mh = mt = mp;
-		} else {
-			mt->m_nextpkt = mp;
+		if (m_ismvec(mp) || mp->m_pkthdr.len <= mtu) {
 			mt = mp;
+			mp = mnext;
+			continue;
 		}
+		mnew = mchain_to_mvec(mp, how);
+		if (__predict_false(mnew == NULL)) {
+			m_freem(mp);
+			continue;
+		}
+		if (mp == mh)
+			mh = (void *)mnew;
+		else if (mt)
+			mt->m_nextpkt = (void *)mnew;
+		mp = (void*)mnew;
+		mt = mp;
 		mp = mnext;
 	}
 	return (mh);
@@ -1097,7 +1099,6 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	mvec_seek(m, &mc, hdrsize);
 	mesrc = mprev->me_ents;
 	mesrc_count = &MBUF2REF(m)[mc.mc_idx];
-	soff = mc.mc_off;
 	if (dupref) {
 		bzero(medst_count, count*sizeof(void *));
 		medst_count++;
@@ -1108,6 +1109,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	 * Packet segmentation loop
 	 */
 	srci = mc.mc_idx;
+	soff = mc.mc_off;
 	pktrem = m->m_pkthdr.len - hdrsize;
 	for (dsti = i = 0; i < nheaders; i++) {
 		/* skip header */
