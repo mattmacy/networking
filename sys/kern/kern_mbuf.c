@@ -693,6 +693,7 @@ mb_free_ext(struct mbuf *m)
 			break;
 		case EXT_MVEC:
 			mvec_free(m);
+			return;
 			break;
 		case EXT_SFBUF:
 		case EXT_NET_DRV:

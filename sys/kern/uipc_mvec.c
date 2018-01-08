@@ -124,9 +124,6 @@ mvec_buffer_free(struct mbuf *m)
 			free(m, M_MVEC);
 			break;
 		case MVALLOC_MBUF:
-#ifdef INVARIANTS
-			m->m_flags &= ~M_NOFREE;
-#endif
 			uma_zfree_arg(zone_mbuf, m, (void *)MB_DTOR_SKIP);
 			break;
 	}
@@ -464,7 +461,7 @@ mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 	m->m_next = m->m_nextpkt = NULL;
 	m->m_len = 0;
 	m->m_data = NULL;
-	m->m_flags = M_PKTHDR|M_NOFREE|M_EXT;
+	m->m_flags = M_PKTHDR|M_EXT;
 	m->m_ext.ext_free = NULL;
 	m->m_ext.ext_arg1 = m->m_ext.ext_arg2 = NULL;
 	m->m_ext.ext_flags = EXT_FLAG_EMBREF;
