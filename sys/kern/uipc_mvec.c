@@ -1011,8 +1011,8 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	struct tso_state state;
 	m_refcnt_t *newme_count, *medst_count, *mesrc_count;
 	int segcount, soff, segrem, srem;
-	int i, ntsofrags, segsz, cursegrem, nheaders, hdrsize;
-	int refsize, rem, curseg, count, pktrem, srci, dsti;
+	int i, segsz, cursegrem, nheaders, hdrsize;
+	int refsize, rem, count, pktrem, srci, dsti;
 	volatile uint32_t *refcnt;
 	bool dupref, dofree;
 	caddr_t hdrbuf;
@@ -1046,24 +1046,17 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	for (segcount = i = 0; i < mh->mh_count; i++, me++) {
 		if (__predict_false(me->me_len == 0))
 			continue;
-		rem = me->me_len;
-		if (rem < cursegrem) {
-			cursegrem -= rem;
-			segcount++;
-		} else if (rem == cursegrem) {
-			segcount++;
-			ntsofrags = 0;
-			cursegrem = segsz;
-		} else {
-			while (rem) {
-				curseg = min(rem, cursegrem);
-				rem -= curseg;
-				cursegrem -= curseg;
-				if (!cursegrem)
-					cursegrem = segsz;
+		if (me->me_len < cursegrem) {
+			cursegrem -= me->me_len;
+		} else if (me->me_len >= cursegrem) {
+			rem = me->me_len - cursegrem;
+			while (rem > 0) {
+				rem -= segsz;
 				segcount++;
 			}
+			cursegrem = segsz + rem;
 		}
+		segcount++;
 	}
 
 	count = segcount + nheaders;
