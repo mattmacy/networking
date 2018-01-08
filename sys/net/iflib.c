@@ -6904,7 +6904,7 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
 	m->m_flags |= M_VXLANTAG;
 	m->m_pkthdr.vxlanid = ntohl(vxlanid);
 	/* XXX --- only once validated */
-	m->m_pkthdr.csum_flags |= CSUM_DATA_VALID|CSUM_PSEUDO_HDR;
+	m->m_pkthdr.csum_flags |= CSUM_DATA_VALID|CSUM_PSEUDO_HDR|CSUM_IP_CHECKED|CSUM_IP_VALID;
 	m->m_pkthdr.csum_data = 0xffff;
 	if (__predict_true(m->m_len < len)) {
 		m->m_len -= len;
