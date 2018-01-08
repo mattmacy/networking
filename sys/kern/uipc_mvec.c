@@ -1105,9 +1105,9 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 						atomic_add_int(mesrc_count->ext_cnt, 1);
 				}
 				mesrc_count++;
-				medst->me_type = mesrc->me_type;
-				medst->me_ext_flags = mesrc->me_ext_flags;
-				medst->me_ext_type = mesrc->me_ext_type;
+				medst->me_type = mesrc[srci].me_type;
+				medst->me_ext_flags = mesrc[srci].me_ext_flags;
+				medst->me_ext_type = mesrc[srci].me_ext_type;
 			} else {
 				medst->me_type = MVEC_UNMANAGED;
 				medst->me_ext_flags = 0;
