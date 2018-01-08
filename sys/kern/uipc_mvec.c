@@ -1085,6 +1085,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	srci = mc.mc_idx;
 	dsti = 1;
 	for (i = 0; i < nheaders; i++) {
+		MPASS(pktrem > 0);
 		segrem = min(segsz, pktrem);
 		do {
 			MPASS(srci < mprev->me_mh.mh_count);
