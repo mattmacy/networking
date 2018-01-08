@@ -688,6 +688,9 @@ mb_free_ext(struct mbuf *m)
 			uma_zfree(zone_jumbo16, m->m_ext.ext_buf);
 			uma_zfree(zone_mbuf, mref);
 			break;
+		case EXT_MBUF:
+			uma_zfree(zone_mbuf, m->m_ext.ext_buf);
+			break;
 		case EXT_MVEC:
 			mvec_free(m);
 			break;
@@ -808,36 +811,6 @@ m_get2(int size, int how, short type, int flags)
 		return (NULL);
 	}
 
-	return (m);
-}
-
-/*
- * m_getjcl() returns an mbuf with a cluster of the specified size attached.
- * For size it takes MCLBYTES, MJUMPAGESIZE, MJUM9BYTES, MJUM16BYTES.
- */
-struct mbuf *
-m_getjcl(int how, short type, int flags, int size)
-{
-	struct mb_args args;
-	struct mbuf *m, *n;
-	uma_zone_t zone;
-
-	if (size == MCLBYTES)
-		return m_getcl(how, type, flags);
-
-	args.flags = flags;
-	args.type = type;
-
-	m = uma_zalloc_arg(zone_mbuf, &args, how);
-	if (m == NULL)
-		return (NULL);
-
-	zone = m_getzone(size);
-	n = uma_zalloc_arg(zone, m, how);
-	if (n == NULL) {
-		uma_zfree(zone_mbuf, m);
-		return (NULL);
-	}
 	return (m);
 }
 
