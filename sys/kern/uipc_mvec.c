@@ -1117,16 +1117,19 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 				soff = 0;
 				medst[dsti].me_len = srem;
 				segrem = 0;
+				pktrem -= segrem;
 				srci++;
 			} else if (srem < segrem) {
 				medst[dsti].me_eop = 0;
 				soff = 0;
 				medst[dsti].me_len = srem;
+				pktrem -= srem;
 				segrem -= srem;
 				srci++;
 			} else {
 				medst[dsti].me_eop = 1;
 				soff += segrem;
+				pktrem -= segrem;
 				medst[dsti].me_len = segrem;
 				segrem = 0;
 			}
@@ -1134,7 +1137,6 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			medst_count++;
 		} while (segrem);
 
-		pktrem -= segrem;
 		/* skip next header */
 		medst[dsti].me_cl = NULL;
 		dsti++;
