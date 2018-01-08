@@ -996,10 +996,19 @@ m_getcl(int how, short type, int flags)
 	args.flags = flags;
 	args.type = type;
 	m = uma_zalloc_arg(zone_mbuf, &args, how);
+	if (__predict_false(m == NULL))
+		return (NULL);
+	if (__predict_false(m_init(m, how, MT_DATA, flags)))
+		goto fail;
 	cl = uma_zalloc_arg(zone_clust, &args, how);
+	if (__predict_false(cl == NULL))
+		goto fail;
 	m_cljset(m, cl, EXT_CLUSTER);
 	MBUF_PROBE4(m__getcl, how, type, flags, m);
 	return (m);
+ fail:
+	uma_zfree(zone_mbuf, m);
+	return (NULL);
 }
 
 static __inline void
