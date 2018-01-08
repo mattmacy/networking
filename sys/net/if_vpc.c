@@ -523,6 +523,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	hdrsize = sizeof(struct vxlan_header);
 	istso = (m->m_pkthdr.csum_flags & CSUM_TSO);
 	m->m_nextpkt = NULL;
+	/* temporary */
+	MPASS(m_ismvec(m));
 	if (m_ismvec(m)) {
 		mh = mvec_prepend(m, hdrsize);
 	} else {
@@ -573,11 +575,14 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
 	}
+	mh->m_pkthdr.rcvif = ifp;
+	vpc_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx);
+	vpc_cache_update(mh, evhvx, ifp->if_index);
 
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
-	if (istso & !(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
+	if (istso && !(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
 		if (__predict_false(!m_ismvec(mh))) {
 			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
 			m_freem(mh);
@@ -590,11 +595,9 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 			return (ENOMEM);
 		}
 		mh = (void*)mtmp;
-		vh = (struct vxlan_header *)mh->m_data;
+	} else {
+		MPASS(mh->m_pkthdr.len - ETHER_HDR_LEN <= ifp->if_mtu);
 	}
-	mh->m_pkthdr.rcvif = ifp;
-	vpc_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx);
-	vpc_cache_update(mh, evhvx, ifp->if_index);
 	*mp = mh;
 	return (0);
 }
