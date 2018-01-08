@@ -644,6 +644,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	MPASS(mh->mh_start == 1);
 	me->me_cl = NULL;
 	me->me_off = me->me_len = 0;
+	me->ext_type = me->ext_flags = 0;
 	me++;
 	me_count = MBUF2REF(mnew);
 	if (dupref)
@@ -657,6 +658,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 			me->me_off = ((uintptr_t)mp->m_data - (uintptr_t)mp->m_ext.ext_buf);
 			me->me_type = MVEC_MANAGED;
 			me->me_ext_flags = mp->m_ext.ext_flags;
+			MPASS(mp->m_ext.ext_type < 32);
 			me->me_ext_type = mp->m_ext.ext_type;
 		} else {
 			me->me_cl = (caddr_t)mp;
@@ -728,7 +730,7 @@ m_ext_init(struct mbuf *m, struct mbuf_ext *head, struct mvec_header *mh)
 
 	headm = &head->me_mbuf;
 	doref = true;
-	me = &head->me_ents[head->me_mh.mh_start];
+	me = &head->me_ents[mh->mh_start];
 	m->m_ext.ext_buf = me->me_cl;
 	m->m_ext.ext_arg1 = headm->m_ext.ext_arg1;
 	m->m_ext.ext_arg2 = headm->m_ext.ext_arg2;
