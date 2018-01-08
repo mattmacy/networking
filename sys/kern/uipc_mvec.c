@@ -348,7 +348,7 @@ mvec_cksum_skip(struct mbuf *m, int len, int skip)
 	struct mvec_header mh;
 	struct mvec_ent *me;
 
-	MPASS((m->m_flags & M_EXT) && (m->m_ext.ext_type == EXT_MVEC));
+	MPASS(m_ismvec(m));
 
 	len -= skip;
 	mvec_seek(m, &mc, skip);
@@ -874,6 +874,7 @@ mvec_to_mchain(struct mbuf *mp, int how)
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
+#include <netinet/udp.h>
 
 #include <machine/in_cksum.h>
 
@@ -948,21 +949,29 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 
 struct tso_state {
 	if_pkt_info_t ts_pi;
+	tcp_seq ts_seq;
 	uint16_t ts_idx;
 	uint16_t ts_prehdrlen;
-	tcp_seq ts_seq;
+	uint16_t ts_hdrlen;
+	uint16_t ts_len_off;
 };
 
 static void
-tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen)
+tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen, int hdrlen)
 {
 	struct ip *ip;
 
+	MPASS(hdrlen > prehdrlen);
 	ip = (struct ip *)(hdr + prehdrlen + pi->ipi_ehdrlen);
 	state->ts_pi = pi;
 	state->ts_idx = ntohs(ip->ip_id);
 	state->ts_prehdrlen = prehdrlen;
+	state->ts_hdrlen = hdrlen;
 	state->ts_seq = pi->ipi_tcp_seq;
+	state->ts_len_off = 0;
+	/* XXX assuming !VLAN */
+	if (prehdrlen)
+		state->ts_len_off = ETHER_HDR_LEN + sizeof(*ip) + offsetof(struct udphdr, uh_ulen);
 }
 
 static void
@@ -971,10 +980,16 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 	if_pkt_info_t pi = state->ts_pi;
 	struct ip *ip;
 	struct tcphdr *th;
+	uint16_t encap_len, *udphdr_lenp;
 
+	encap_len = len + state->ts_hdrlen - state->ts_prehdrlen - pi->ipi_ehdrlen;
+	if (state->ts_len_off) {
+		udphdr_lenp = (uint16_t *)(hdr + state->ts_len_off);
+		*udphdr_lenp = htons(len + state->ts_hdrlen - ETHER_HDR_LEN - sizeof(*ip));
+	}
 	if (pi->ipi_etype == ETHERTYPE_IP) {
 		ip = (struct ip *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen);
-		ip->ip_len = htons(len);
+		ip->ip_len = htons(encap_len);
 		ip->ip_id = htons(state->ts_idx);
 		ip->ip_sum = 0;
 		state->ts_idx++;
@@ -1181,7 +1196,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	 * Header initialization loop
 	 */
 	hdrbuf = ((caddr_t)(newme + count)) + refsize;
-	tso_init(&state, mesrc->me_cl + mesrc->me_off, &pi, prehdrlen);
+	tso_init(&state, mesrc->me_cl + mesrc->me_off, &pi, prehdrlen, hdrsize);
 	pktrem = m->m_pkthdr.len - hdrsize;
 	for (dsti = i = 0; i < nheaders; i++) {
 		MPASS(pktrem > 0);
