@@ -1156,6 +1156,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	 */
 	hdrbuf = ((caddr_t)(newme + count)) + refsize;
 	tso_init(&state, mesrc->me_cl + mesrc->me_off, &pi, prehdrlen);
+	pktrem = m->m_pkthdr.len - hdrsize;
 	for (dsti = i = 0; i < nheaders; i++) {
 		MPASS(pktrem > 0);
 		/* skip ahead to next header slot */
