@@ -109,7 +109,7 @@ vpci_transmit(if_t ifp, struct mbuf *m)
 		DPRINTF("freeing without parent\n");
 		return (ENOBUFS);
 	}
-	mh = mp = pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
+	mh = mp = (void*)pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
 	if (__predict_false(mp == NULL)) {
 		/* better error? */
 		return (ENOBUFS);
