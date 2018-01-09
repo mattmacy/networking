@@ -228,6 +228,7 @@ typedef struct if_softc_ctx {
 
 	iflib_intr_mode_t isc_intr;
 	uint8_t	isc_min_tx_latency; /* disable doorbell update batching */
+	uint8_t	isc_rx_mvec_enable; /* generate mvecs on rx */
 	uint16_t isc_max_frame_size; /* set at init time by driver */
 	uint16_t isc_min_frame_size; /* set at init time by driver, only used if
 					IFLIB_NEED_ETHER_PAD is set. */

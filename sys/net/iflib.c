@@ -618,11 +618,6 @@ static int iflib_no_tx_batch = 0;
 SYSCTL_INT(_net_iflib, OID_AUTO, no_tx_batch, CTLFLAG_RW,
 		   &iflib_no_tx_batch, 0, "minimize transmit latency at the possible expense of throughput");
 
-/*
- * XXX -- notyet
- */
-static int rxmvec_enable = 0;
-
 #if IFLIB_DEBUG_COUNTERS
 
 static int iflib_tx_seen;
@@ -2626,8 +2621,9 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	if_ctx_t ctx = rxq->ifr_ctx;
 	struct if_rxsd sd;
 	struct mbuf *m;
-	int rc;
+	int rxmvec_enable, rc;
 
+	rxmvec_enable = ctx->ifc_softc_ctx.isc_rx_mvec_enable;
 	/* should I merge this back in now that the two paths are basically duplicated? */
 	if (ri->iri_nfrags == 1 &&
 	    ri->iri_frags[0].irf_len <= IFLIB_RX_COPY_THRESH &&
@@ -2652,7 +2648,7 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 		MPASS(ri->iri_len == ri->iri_frags[0].irf_len);
 		m->m_pkthdr.len = m->m_len = ri->iri_len;
 	} else {
-		if (rxmvec_enable && (ri->iri_nfrags > 1)) {
+		if (rxmvec_enable) {
 			m = assemble_segments_mvec(rxq, ri, &sd);
 		} else {
 			m = assemble_segments(rxq, ri, &sd);
@@ -6893,17 +6889,15 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
 			return;
 	}
 
-	/* XXX - multiple ports? */
-	if (uh->uh_dport != vxlan_port) {
+	if (uh->uh_dport != vxlan_port)
 		return;
-	}
 	len += sizeof(*uh) + sizeof(*vh);
 	vh = (struct vxlan_header *)(uh + 1);
 	vxlanid = vh->vxlh_vni;
 	eh = (struct ether_vlan_header *)(vh + 1);
 	m->m_flags |= M_VXLANTAG;
 	m->m_pkthdr.vxlanid = ntohl(vxlanid);
-	/* XXX --- only once validated */
+	/* XXX --- only once validated --- check if the NIC has in fact validated these */
 	m->m_pkthdr.csum_flags |= CSUM_DATA_VALID|CSUM_PSEUDO_HDR|CSUM_IP_CHECKED|CSUM_IP_VALID;
 	m->m_pkthdr.csum_data = 0xffff;
 	if (__predict_true(m->m_len < len)) {
