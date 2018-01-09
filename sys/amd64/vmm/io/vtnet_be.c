@@ -1549,7 +1549,7 @@ vb_attach_post(if_ctx_t ctx)
 	}
 	vb_dev_reset(vs);
 	scctx->isc_min_tx_latency = 1;
-
+	scctx->isc_rx_mvec_enable = 1;
 	/*
 	 * If interface was created by bhyve
 	 * plug everything together here
