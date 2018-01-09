@@ -348,10 +348,6 @@ typedef struct iflib_sw_tx_desc_array {
 				 CSUM_IP_UDP|CSUM_IP_TCP|CSUM_IP_SCTP| \
 				 CSUM_IP6_UDP|CSUM_IP6_TCP|CSUM_IP6_SCTP)
 
-
-static DPCPU_DEFINE(uint8_t *, tx_q_batch_count);
-static DPCPU_DEFINE(struct mbuf **, tx_q_batch_sort);
-
 struct iflib_txq {
 	qidx_t		ift_in_use;
 	qidx_t		ift_cidx;
@@ -3182,12 +3178,13 @@ iflib_remove_mbuf(iflib_txq_t txq, int pidx)
 
 static int
 iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
-						  struct mbuf **m0, int *nsegs, int max_segs, int flags)
+						  struct mbuf **m0, int max_segs, int flags)
 {
 	int i, count, rem, pidx, ntxd;
 	if_ctx_t ctx;
 	if_shared_ctx_t		sctx;
 	if_softc_ctx_t		scctx;
+	int pktcount, pktlen;
 	struct mbuf *m, **ifsd_m;
 	struct mvec_header *mh;
 	struct mvec_ent *me;
@@ -3206,13 +3203,26 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	sctx = ctx->ifc_sctx;
 	scctx = &ctx->ifc_softc_ctx;
 	segs = txq->ift_segs;
+	pktcount = pktlen = 0;
+	txq->ift_seg_offs[0] = 0;
 	if (sctx->isc_flags & IFLIB_TXD_ENCAP_PIO) {
 		for (i = 0; i < count && me->me_len; i++, me++, segs++) {
 			segs->ds_addr = (bus_addr_t)(me->me_cl + me->me_off);
 			segs->ds_len = me->me_len;
 			rem -= me->me_len;
+			if (!mh->mh_multipkt)
+				continue;
+			if (pktlen == 0)
+				txq->ift_seg_offs[pktcount] = i;
+			pktlen += me->me_len;
+			if (me->me_eop) {
+				txq->ift_seg_lens[pktcount] = pktlen;
+				pktcount++;
+				pktlen = 0;
+			}
 		}
-		*nsegs = i;
+		txq->ift_nsegs = i;
+		txq->ift_pkt_count = mh->mh_multipkt ? pktcount : 1;
 		return (rem ? EFBIG : 0);
 	} else if (map != NULL) {
 		/*
@@ -3243,6 +3253,8 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 				MPASS(ifsd_m[next] == NULL);
 			}
 #endif
+			if (pktlen == 0)
+				txq->ift_seg_offs[pktcount] = segi;
 			while (buflen > 0) {
 				if (segi >= max_segs)
 					goto err;
@@ -3257,8 +3269,17 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 				rem -= sgsize;
 				segi++;
 			}
+			if (!mh->mh_multipkt)
+				continue;
+			pktlen += me->me_len;
+			if (me->me_eop) {
+				txq->ift_seg_lens[pktcount] = pktlen;
+				pktcount++;
+				pktlen = 0;
+			}
 		}
-		*nsegs = segi;
+		txq->ift_pkt_count = mh->mh_multipkt ? pktcount : 1;
+		txq->ift_nsegs = segi;
 		return (rem ? EFBIG : 0);
 	}
  err:
@@ -3268,7 +3289,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 
 static int
 iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
-			  struct mbuf **m0, int *nsegs, int max_segs, int flags)
+			  struct mbuf **m0, int max_segs, int flags)
 {
 	if_ctx_t ctx;
 	if_shared_ctx_t		sctx;
@@ -3278,6 +3299,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	bus_dma_segment_t *segs;
 
 	m = *m0;
+	txq->ift_pkt_count = 1;
 
 	/*
 	 * Please don't ever do this
@@ -3296,7 +3318,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			segs[i].ds_len = tmp->m_len;
 			tmp = tmp->m_next;
 		}
-		*nsegs = i;
+		txq->ift_nsegs = i;
 		return (0);
 	}
 
@@ -3305,12 +3327,15 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	ntxd = txq->ift_size;
 	pidx = txq->ift_pidx;
 	if (map != NULL) {
+		int nsegs;
+
 		uint8_t *ifsd_flags = txq->ift_sds.ifsd_flags;
 
 		err = bus_dmamap_load_mbuf_sg(tag, map,
-					      *m0, segs, nsegs, BUS_DMA_NOWAIT);
+					      *m0, segs, &nsegs, BUS_DMA_NOWAIT);
 		if (err)
 			return (err);
+		txq->ift_nsegs = nsegs;
 		ifsd_flags[pidx] |= TX_SW_DESC_MAPPED;
 		count = 0;
 		m = *m0;
@@ -3325,7 +3350,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			m = m->m_next;
 			count++;
 		} while (m != NULL);
-		if (count > *nsegs) {
+		if (count > txq->ift_nsegs) {
 			ifsd_m[pidx] = *m0;
 			ifsd_m[pidx]->m_flags |= M_TOOBIG;
 			return (0);
@@ -3389,7 +3414,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			tmp = m;
 			m = m->m_next;
 		} while (m != NULL);
-		*nsegs = i;
+		txq->ift_nsegs = i;
 	}
 	return (0);
 err:
@@ -3399,7 +3424,7 @@ err:
 
 static int
 iflib_load_mbuf(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
-				struct mbuf **m_headp, int *nsegs, int max_segs)
+				struct mbuf **m_headp, int max_segs)
 {
 	int err;
 	struct mbuf *m_head;
@@ -3407,10 +3432,10 @@ iflib_load_mbuf(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	m_head = *m_headp;
  retry:
 	if (m_ismvec(m_head)) {
-		err = iflib_busdma_load_mvec_sg(txq, tag, map, m_headp, nsegs,
+		err = iflib_busdma_load_mvec_sg(txq, tag, map, m_headp,
 										max_segs, BUS_DMA_NOWAIT);
 	} else {
-		err = iflib_busdma_load_mbuf_sg(txq, tag, map, m_headp, nsegs,
+		err = iflib_busdma_load_mbuf_sg(txq, tag, map, m_headp,
 										max_segs, BUS_DMA_NOWAIT);
 	}
 	if (__predict_false(err)) {
@@ -3443,7 +3468,7 @@ iflib_load_mbuf(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	 *        descriptors - this does not hold true on all drivers, e.g.
 	 *        cxgb
 	 */
-	if (__predict_false(*nsegs + 2 > TXQ_AVAIL(txq))) {
+	if (__predict_false(txq->ift_nsegs + 2 > TXQ_AVAIL(txq))) {
 		txq->ift_no_desc_avail++;
 		if (map != NULL)
 			bus_dmamap_unload(tag, map);
@@ -3534,7 +3559,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	void			*next_txd;
 	bus_dmamap_t		map;
 	struct if_pkt_info	pi;
-	int err, nsegs, ndesc, max_segs, pidx, cidx, next, ntxd;
+	int err, ndesc, max_segs, pidx, cidx, next, ntxd;
 	bus_dma_tag_t desc_tag;
 	bool remapped;
 
@@ -3599,7 +3624,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 		m_head = *m_headp;
 	}
  retry:
-	if ((err = iflib_load_mbuf(txq, desc_tag, map, m_headp, &nsegs, max_segs)))
+	if ((err = iflib_load_mbuf(txq, desc_tag, map, m_headp, max_segs)))
 		return (err);
 	/*
 	 * On Intel cards we can greatly reduce the number of TX interrupts
@@ -3607,15 +3632,15 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	 * However, this also means that the driver will need to keep track
 	 * of the descriptors that RS was set on to check them for the DD bit.
 	 */
-	txq->ift_rs_pending += nsegs + 1;
+	txq->ift_rs_pending += txq->ift_nsegs + 1;
 	if (txq->ift_rs_pending > TXQ_MAX_RS_DEFERRED(txq) ||
-	     iflib_no_tx_batch || (TXQ_AVAIL(txq) - nsegs - 1) <= MAX_TX_DESC(ctx)) {
+	     iflib_no_tx_batch || (TXQ_AVAIL(txq) - txq->ift_nsegs - 1) <= MAX_TX_DESC(ctx)) {
 		pi.ipi_flags |= IPI_TX_INTR;
 		txq->ift_rs_pending = 0;
 	}
 
 	pi.ipi_segs = txq->ift_segs;
-	pi.ipi_nsegs = nsegs;
+	pi.ipi_nsegs = txq->ift_nsegs;
 
 	MPASS(pidx >= 0 && pidx < txq->ift_size);
 #ifdef PKT_DEBUG
@@ -5237,16 +5262,6 @@ iflib_device_iov_add_vf(device_t dev, uint16_t vfnum, const nvlist_t *params)
 static int
 iflib_module_init(void)
 {
-	int i;
-	struct mbuf ***m;
-	uint8_t **count;
-
-	CPU_FOREACH(i) {
-		m = DPCPU_ID_PTR(i, tx_q_batch_sort);
-		*m = malloc(sizeof(*m)*IFLIB_MAX_TX_BATCH*IFLIB_MAX_TX_QUEUES, M_IFLIB, M_WAITOK|M_ZERO);
-		count = DPCPU_ID_PTR(i, tx_q_batch_count);
-		*count = malloc(sizeof(uint8_t)*IFLIB_MAX_TX_QUEUES, M_IFLIB, M_WAITOK|M_ZERO);
-	}
 	return (0);
 }
 
