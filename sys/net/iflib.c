@@ -2960,7 +2960,7 @@ print_pkt(if_pkt_info_t pi)
 #define IS_TSO6(pi) ((pi)->ipi_csum_flags & CSUM_IP6_TSO)
 
 static int
-iflib_parse_header(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp)
+iflib_parse_header(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp, int segoff)
 {
 	if_shared_ctx_t sctx = txq->ift_ctx->ifc_sctx;
 	struct ether_vlan_header *eh;
@@ -3550,68 +3550,18 @@ iflib_ether_pad(device_t dev, struct mbuf **m_head, uint16_t min_frame_size)
 }
 
 static int
-iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
+iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struct mbuf **m_headp, int *segoff)
 {
-	if_ctx_t		ctx;
-	if_shared_ctx_t		sctx;
-	if_softc_ctx_t		scctx;
-	struct mbuf		*m_head;
-	void			*next_txd;
-	bus_dmamap_t		map;
 	struct if_pkt_info	pi;
-	int err, ndesc, max_segs, pidx, cidx, next, ntxd;
-	bus_dma_tag_t desc_tag;
-	bool remapped;
+	struct mbuf *m_head;
+	if_ctx_t		ctx;
+	int err, ndesc, pidx;
 
+	m_head = *m_headp;
 	ctx = txq->ift_ctx;
-	sctx = ctx->ifc_sctx;
-	scctx = &ctx->ifc_softc_ctx;
-	ntxd = txq->ift_size;
-	m_head = *m_headp;
-	map = NULL;
-	remapped = false;
-
-	/*
-	 * If we're doing TSO the next descriptor to clean may be quite far ahead
-	 */
-	cidx = txq->ift_cidx;
-	pidx = txq->ift_pidx;
-	if (ctx->ifc_flags & IFC_PREFETCH) {
-		next = (cidx + CACHE_PTR_INCREMENT) & (ntxd-1);
-		if (!(ctx->ifc_flags & IFC_PSEUDO)){
-			/* XXX add check for TXCQ -- but in right flags */
-			next_txd = calc_next_txd(txq, cidx, 0);
-			prefetch(next_txd);
-		}
-
-		/* prefetch the next cache line of mbuf pointers and flags */
-		prefetch(&txq->ift_sds.ifsd_m[next]);
-		if (txq->ift_sds.ifsd_map != NULL) {
-			prefetch(&txq->ift_sds.ifsd_map[next]);
-			next = (cidx + CACHE_LINE_SIZE) & (ntxd-1);
-			prefetch(&txq->ift_sds.ifsd_flags[next]);
-		}
-	} else if (txq->ift_sds.ifsd_map != NULL)
-		map = txq->ift_sds.ifsd_map[pidx];
-
-	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
-		desc_tag = txq->ift_tso_desc_tag;
-		max_segs = scctx->isc_tx_tso_segments_max;
-	} else {
-		desc_tag = txq->ift_desc_tag;
-		max_segs = scctx->isc_tx_nsegments;
-	}
-	if ((sctx->isc_flags & IFLIB_NEED_ETHER_PAD) &&
-	    __predict_false(m_head->m_pkthdr.len < scctx->isc_min_frame_size)) {
-		err = iflib_ether_pad(ctx->ifc_dev, m_headp, scctx->isc_min_frame_size);
-		if (err)
-			return err;
-	}
-	m_head = *m_headp;
-
 	pkt_info_zero(&pi);
 	pi.ipi_mflags = (m_head->m_flags & (M_VLANTAG|M_BCAST|M_MCAST));
-	pi.ipi_pidx = pidx;
+	pidx = pi.ipi_pidx = txq->ift_pidx;
 	pi.ipi_qsidx = txq->ift_id;
 	pi.ipi_len = m_head->m_pkthdr.len;
 	pi.ipi_csum_flags = m_head->m_pkthdr.csum_flags;
@@ -3619,13 +3569,10 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 
 	/* deliberate bitwise OR to make one condition */
 	if (__predict_true((pi.ipi_csum_flags | pi.ipi_vtag))) {
-		if (__predict_false((err = iflib_parse_header(txq, &pi, m_headp)) != 0))
+		if (__predict_false((err = iflib_parse_header(txq, &pi, m_headp, *segoff)) != 0))
 			return (err);
 		m_head = *m_headp;
 	}
- retry:
-	if ((err = iflib_load_mbuf(txq, desc_tag, map, m_headp, max_segs)))
-		return (err);
 	/*
 	 * On Intel cards we can greatly reduce the number of TX interrupts
 	 * we see by only setting report status on every Nth descriptor.
@@ -3675,14 +3622,84 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 		 */
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
-	} else if (__predict_false(err == EFBIG && remapped)) {
-		*m_headp = m_head = iflib_remove_mbuf(txq, txq->ift_pidx);
-		remapped = true;
+	} else if (!m_ismvec(m_head) && __predict_false(err == EFBIG)) {
+		*m_headp = iflib_remove_mbuf(txq, txq->ift_pidx);
 		txq->ift_txd_encap_efbig++;
-		if ((*m_headp = m_head = m_defrag(*m_headp, M_NOWAIT)) != NULL)
-			goto retry;
+		if ((*m_headp = m_defrag(*m_headp, M_NOWAIT)) != NULL)
+			return (EFBIG);
 	} else
 		DBG_COUNTER_INC(encap_txd_encap_fail);
+	return (0);
+}
+
+static int
+iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
+{
+	if_ctx_t		ctx;
+	if_shared_ctx_t		sctx;
+	if_softc_ctx_t		scctx;
+	struct mbuf		*m_head;
+	void			*next_txd;
+	bus_dmamap_t		map;
+	int i, rc, err, max_segs, next, ntxd, segoff;
+	bus_dma_tag_t desc_tag;
+	bool remapped;
+
+	ctx = txq->ift_ctx;
+	sctx = ctx->ifc_sctx;
+	scctx = &ctx->ifc_softc_ctx;
+	ntxd = txq->ift_size;
+	m_head = *m_headp;
+	map = NULL;
+	remapped = false;
+
+	/*
+	 * If we're doing TSO the next descriptor to clean may be quite far ahead
+	 */
+	if (ctx->ifc_flags & IFC_PREFETCH) {
+		int cidx = txq->ift_cidx;
+		next = (cidx + CACHE_PTR_INCREMENT) & (ntxd-1);
+		if (!(ctx->ifc_flags & IFC_PSEUDO)){
+			/* XXX add check for TXCQ -- but in right flags */
+			next_txd = calc_next_txd(txq, cidx, 0);
+			prefetch(next_txd);
+		}
+
+		/* prefetch the next cache line of mbuf pointers and flags */
+		prefetch(&txq->ift_sds.ifsd_m[next]);
+		if (txq->ift_sds.ifsd_map != NULL) {
+			prefetch(&txq->ift_sds.ifsd_map[next]);
+			next = (cidx + CACHE_LINE_SIZE) & (ntxd-1);
+			prefetch(&txq->ift_sds.ifsd_flags[next]);
+		}
+	} else if (txq->ift_sds.ifsd_map != NULL)
+		map = txq->ift_sds.ifsd_map[txq->ift_pidx];
+
+	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
+		desc_tag = txq->ift_tso_desc_tag;
+		max_segs = scctx->isc_tx_tso_segments_max;
+	} else {
+		desc_tag = txq->ift_desc_tag;
+		max_segs = scctx->isc_tx_nsegments;
+	}
+
+	if ((sctx->isc_flags & IFLIB_NEED_ETHER_PAD) &&
+	    __predict_false(m_head->m_pkthdr.len < scctx->isc_min_frame_size)) {
+		err = iflib_ether_pad(ctx->ifc_dev, m_headp, scctx->isc_min_frame_size);
+		if (err)
+			return err;
+	}
+ retry:
+	if ((err = iflib_load_mbuf(txq, desc_tag, map, m_headp, max_segs)))
+		return (err);
+	for (segoff = i = 0; i < txq->ift_pkt_count; i++) {
+		rc = iflib_encap_one(txq, desc_tag, map, m_headp, &segoff);
+		err = rc ? rc : err;
+	}
+	if ((err == EFBIG) && (txq->ift_pkt_count == 1) && (remapped == false)) {
+		remapped = true;
+		goto retry;
+	}
 	return (err);
 }
 
