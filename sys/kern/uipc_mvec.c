@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2017 Matthew Macy <matt.macy@joyent.com>
+ * Copyright (C) 2017 Joyent Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
