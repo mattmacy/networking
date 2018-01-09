@@ -2432,7 +2432,7 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd,
 	sd->ifsd_cl = &fl->ifl_sds.ifsd_cl[cidx];
 	MPASS(fl->ifl_credits);
 	if (fetchmbuf &&
-		__predict_false(*sd->ifsd_m == NULL)) {
+		__predict_false(sd->ifsd_m == NULL)) {
 		MPASS(rxq->ifr_ctx->ifc_sctx->isc_flags & IFLIB_SKIP_CLREFILL);
 		fl->ifl_sds.ifsd_m[cidx] = m_gethdr(M_NOWAIT, MT_NOINIT);
 	} else {
