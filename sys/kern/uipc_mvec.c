@@ -517,7 +517,7 @@ mvec_pullup(struct mbuf *m, int idx, int count)
 	int tailroom, size, copylen, doff, i, len;
 
 	/* XXX --- fix */
-	MPASS(i == 0);
+	MPASS(idx == 0);
 	mvec_sanity(m);
 	MPASS(count <= m->m_pkthdr.len);
 	mh = MBUF2MH(m);
