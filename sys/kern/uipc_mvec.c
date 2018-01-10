@@ -85,7 +85,7 @@ union q_util {
 
 
 #ifdef INVARIANTS
-static void
+void
 mvec_sanity(struct mbuf *m)
 {
 	struct mbuf_ext *mext;
@@ -110,9 +110,6 @@ mvec_sanity(struct mbuf *m)
 	}
 	MPASS(total == m->m_pkthdr.len);
 }
-#else
-static void
-mvec_sanity(struct mbuf *m) {}
 #endif
 
 static void
