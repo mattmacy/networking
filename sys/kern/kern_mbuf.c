@@ -692,6 +692,11 @@ mb_free_ext(struct mbuf *m)
 			uma_zfree(zone_mbuf, m->m_ext.ext_buf);
 			break;
 		case EXT_MVEC:
+			if (m->m_ext.ext_flags & EXT_FLAG_EXTFREE) {
+				KASSERT(m->m_ext.ext_free != NULL,
+						("%s: ext_free not set", __func__));
+				m->m_ext.ext_free(m);
+			}
 			mvec_free((struct mbuf_ext*)m);
 			return;
 			break;
