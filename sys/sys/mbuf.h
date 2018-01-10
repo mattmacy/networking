@@ -444,8 +444,14 @@ void mvec_copydata(const struct mbuf *m, int off, int len, caddr_t cp);
 struct mbuf *mvec_dup(const struct mbuf *m, int how);
 struct mbuf *mvec_defrag(const struct mbuf *m, int how);
 struct mbuf *mvec_collapse(struct mbuf *m, int how, int maxfrags);
+
+#ifdef INVARIANTS
+void mvec_sanity(struct mbuf *m);
+#else
+static __inline void mvec_sanity(struct mbuf *m __unused) {}
 #endif
 
+#endif
 /*
  * mbuf flags of global significance and layer crossing.
  * Those of only protocol/layer specific significance are to be mapped
@@ -623,6 +629,7 @@ struct mbuf *mvec_collapse(struct mbuf *m, int how, int maxfrags);
 #define	EXT_FLAG_EMBREF		0x000001	/* embedded ext_count */
 #define	EXT_FLAG_EXTREF		0x000002	/* external ext_cnt, notyet */
 #define	EXT_FLAG_MVECREF	0x000004	/* reference is an mvec */
+#define	EXT_FLAG_EXTFREE	0x000008	/* ext_free is valid */
 
 #define	EXT_FLAG_NOFREE		0x000010	/* don't free mbuf to pool, notyet */
 
