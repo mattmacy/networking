@@ -510,12 +510,14 @@ mvec_ent_size(struct mvec_ent *me)
 }
 
 struct mbuf *
-mvec_pullup(struct mbuf *m, int count)
+mvec_pullup(struct mbuf *m, int idx, int count)
 {
 	struct mvec_header *mh;
 	struct mvec_ent *mecur, *menxt;
 	int tailroom, size, copylen, doff, i, len;
 
+	/* XXX --- fix */
+	MPASS(i == 0);
 	mvec_sanity(m);
 	MPASS(count <= m->m_pkthdr.len);
 	mh = MBUF2MH(m);
@@ -892,7 +894,7 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 	m = (void*)mp;
 	mvec_sanity(m);
 	if (__predict_false(m->m_len < MIN_HDR_LEN + prehdrlen) &&
-		__predict_false(mvec_pullup(m, prehdrlen + MIN_HDR_LEN) == NULL))
+		__predict_false(mvec_pullup(m, 0, prehdrlen + MIN_HDR_LEN) == NULL))
 			return (ENOMEM);
 	evh = (struct ether_vlan_header *)(ME_SEG(m, mh, 0) + prehdrlen);
 	if (evh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
@@ -910,7 +912,7 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 
 			minthlen = pi->ipi_ehdrlen + sizeof(*ip) + sizeof(*th);
 			if (__predict_false(m->m_len < minthlen + prehdrlen) &&
-				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
+				__predict_false(mvec_pullup(m, 0, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
 			ip = (struct ip *)(ME_SEG(m, mh, 0) + prehdrlen + pi->ipi_ehdrlen);
 			pi->ipi_ip_hlen = ip->ip_hl << 2;
@@ -919,7 +921,7 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 				return (EINVAL);
 			minthlen = pi->ipi_ehdrlen + pi->ipi_ip_hlen + sizeof(*th);
 			if (__predict_false(m->m_len < minthlen + prehdrlen) &&
-				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
+				__predict_false(mvec_pullup(m, 0, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
 			th = (struct tcphdr *)(ME_SEG(m, mh, 0) + prehdrlen + pi->ipi_ehdrlen + pi->ipi_ip_hlen);
 			pi->ipi_tcp_hflags = th->th_flags;
@@ -927,7 +929,7 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 			pi->ipi_tcp_seq = th->th_seq;
 			minthlen = pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen;
 			if (__predict_false(m->m_len < minthlen + prehdrlen) &&
-				__predict_false(mvec_pullup(m, prehdrlen + minthlen) == NULL))
+				__predict_false(mvec_pullup(m, 0, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
 			if (prehdrlen == 0) {
 				th->th_sum = in_pseudo(ip->ip_src.s_addr,
