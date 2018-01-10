@@ -339,6 +339,9 @@ struct mbuf_ext {
 #define MBUF_ME_MAX ((MHLEN - sizeof(struct m_ext) - sizeof(struct mvec_header))/sizeof(struct mvec_ent))
 
 #define m_ismvec(m) (((m)->m_flags & M_EXT) && ((m)->m_ext.ext_type == EXT_MVEC))
+#define me_data(me) ((me)->me_cl + (me)->me_off)
+/* XXX --- fix */
+#define ME_WRITABLE(m, i) (0)
 
 struct mvec_cursor {
 	uint16_t mc_idx;
@@ -371,9 +374,9 @@ void mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int off);
 void mvec_adj(struct mbuf *m, int req_len);
 
 /*
- * Make the first `count` bytes of `m` contiguous
+ * Make the first `count` bytes of `m` index `idx` contiguous
  */
-struct mbuf * mvec_pullup(struct mbuf *m, int count);
+struct mbuf *mvec_pullup(struct mbuf *m, int idx, int count);
 
 /*
  * Perform accounting neccesary to free all references contained
@@ -431,6 +434,7 @@ int mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type);
 
 
 uint16_t mvec_cksum_skip(struct mbuf *m, int len, int skip);
+
 
 /*
  * Mvec analogs to mbuf helpers that should be implemented sooner
