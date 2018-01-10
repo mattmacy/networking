@@ -2562,12 +2562,12 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 		padlen = 0;
 		MPASS(mtmp != NULL);
 	} while (++i < ri->iri_nfrags);
-
+	mvec_sanity(m);
 	return (m);
 }
 
 static void
-iflib_check_rx_notify(iflib_rxq_t rxq, if_rxd_info_t ri, struct mbuf *m)
+iflib_check_rx_notify(iflib_rxq_t rxq, if_rxd_info_t ri, struct mbuf *m, int rxmvec_enable)
 {
 	if_ctx_t ctx = rxq->ifr_ctx;
 	struct mbuf *mnext;
@@ -2582,32 +2582,25 @@ iflib_check_rx_notify(iflib_rxq_t rxq, if_rxd_info_t ri, struct mbuf *m)
 	ri->iri_cookie2 = 0;
 
 	MPASS(ctx->ifc_sctx->isc_rx_completion != NULL);
-#ifdef notyet
-	/*
-	 * Handle small packet synchronously
-	 *
-	 * XXX would require locking as this is potentially running
-	 * concurrently with transmit
-	 */
-	if (m->m_len == m->m_pkthdr.len && !(m->m_flags & M_EXT)) {
-		m->m_ext.ext_arg1 = arg1;
-		m->m_ext.ext_arg2 = arg2;
-		ctx->ifc_sctx->isc_rx_completion(m);
-		return;
-	}
-#endif
 	/* UGH */
 	m->m_pkthdr.fibnum = segsz;
-	do {
-		mnext = m->m_next;
-		m->m_ext.ext_count = 1;
+	if (rxmvec_enable) {
 		m->m_ext.ext_arg1 = arg1;
 		m->m_ext.ext_arg2 = arg2;
-		m->m_ext.ext_flags = EXT_FLAG_EMBREF;
-		m->m_ext.ext_type = EXT_NET_DRV;
+		m->m_ext.ext_flags |= EXT_FLAG_EXTFREE;
 		m->m_ext.ext_free = ctx->ifc_sctx->isc_rx_completion;
-		m = mnext;
-	} while (m);
+	} else {
+		do {
+			mnext = m->m_next;
+			m->m_ext.ext_count = 1;
+			m->m_ext.ext_arg1 = arg1;
+			m->m_ext.ext_arg2 = arg2;
+			m->m_ext.ext_flags = EXT_FLAG_EMBREF;
+			m->m_ext.ext_type = EXT_NET_DRV;
+			m->m_ext.ext_free = ctx->ifc_sctx->isc_rx_completion;
+			m = mnext;
+		} while (m);
+	}
 }
 
 
@@ -2654,7 +2647,7 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 		}
 	}
 	if (ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION) {
-		iflib_check_rx_notify(rxq, ri, m);
+		iflib_check_rx_notify(rxq, ri, m, rxmvec_enable);
 	}
 	m->m_pkthdr.len = ri->iri_len;
 	if (ri->iri_ifp == NULL)
@@ -3752,7 +3745,6 @@ iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struc
 	if_ctx_t		ctx;
 	int err, ndesc, pidx, pktidx;
 
-	pktidx = txq->ift_seg_offs[pktno];
 	m_head = *m_headp;
 	ctx = txq->ift_ctx;
 	pkt_info_zero(&pi);
@@ -3782,6 +3774,7 @@ iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struc
 		txq->ift_rs_pending = 0;
 	}
 
+	pktidx = txq->ift_seg_offs[pktno];
 	pi.ipi_segs = &txq->ift_segs[pktidx];
 	pi.ipi_nsegs = txq->ift_seg_counts[pktno];
 
