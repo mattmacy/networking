@@ -452,7 +452,10 @@ mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 
 	mh = MBUF2MH(m);
 	*((uint64_t *)mh) = 0;
-	mh->mh_count = count;
+	if (type == MVALLOC_MBUF)
+		mh->mh_count = MBUF_ME_MAX;
+	else
+		mh->mh_count = count;
 	mh->mh_mvtype = type;
 	/* leave room for prepend */
 	mh->mh_start = 1;
