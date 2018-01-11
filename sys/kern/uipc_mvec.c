@@ -444,15 +444,15 @@ mvec_append(struct mbuf *m, caddr_t cl, uint16_t off,
 	return (m);
 }
 
-int
-mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
+static int
+mvec_init_mbuf_(struct mbuf *m, uint8_t count, uint8_t type, int len)
 {
 	struct mvec_header *mh;
 	int rc;
 
 	mh = MBUF2MH(m);
 	*((uint64_t *)mh) = 0;
-	if (type == MVALLOC_MBUF)
+	if (type == MVALLOC_MBUF && len == 0)
 		mh->mh_count = MBUF_ME_MAX;
 	else
 		mh->mh_count = count;
@@ -478,6 +478,13 @@ mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
 	return (0);
 }
 
+int
+mvec_init_mbuf(struct mbuf *m, uint8_t count, uint8_t type)
+{
+
+	return (mvec_init_mbuf_(m, count, type, 0));
+}
+
 struct mbuf_ext *
 mvec_alloc(uint8_t count, int len, int how)
 {
@@ -496,7 +503,7 @@ mvec_alloc(uint8_t count, int len, int how)
 	}
 	if (__predict_false(m == NULL))
 		return (NULL);
-	mvec_init_mbuf((struct mbuf *)m, count, type);
+	mvec_init_mbuf_((struct mbuf *)m, count, type, len);
 	return (m);
 }
 
