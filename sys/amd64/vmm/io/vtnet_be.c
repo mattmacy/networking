@@ -1033,10 +1033,6 @@ vb_intr_msix(struct vb_softc *vs, int q)
 static void
 vb_txflags(struct mbuf *m, struct pinfo *pinfo)
 {
-	int16_t data = (int16_t)m->m_pkthdr.csum_data;
-
-	if (data > 0)
-		*(uint16_t *)(m->m_data + pinfo->ehdrlen + pinfo->l3size + data) = 0;
 	m->m_pkthdr.tso_segsz = m->m_pkthdr.fibnum;
 	m->m_pkthdr.fibnum = 0;
 }
