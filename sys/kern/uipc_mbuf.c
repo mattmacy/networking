@@ -807,6 +807,9 @@ m_pullup(struct mbuf *n, int len)
 	int count;
 	int space;
 
+	if (m_ismvec(n))
+		return (mvec_pullup(n, 0, len));
+
 	/*
 	 * If first mbuf has no cluster, and has room for len bytes
 	 * without shifting current data, pullup into it,
