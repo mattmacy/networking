@@ -328,7 +328,7 @@ sglist_append_mvec(struct sglist *sg, struct mbuf *m0)
 	struct mvec_ent *me;
 	int i, error;
 
-	MPASS(m != NULL);
+	MPASS(m0 != NULL);
 
 	mext = (void*)m0;
 	mh = &mext->me_mh;
