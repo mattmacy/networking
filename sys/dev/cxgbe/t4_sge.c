@@ -2070,6 +2070,40 @@ m_advance(struct mbuf **pm, int *poffset, int len)
 	return ((void *)p);
 }
 
+static inline int
+count_mvec_nsegs(struct mbuf *m)
+{
+	struct mbuf_ext *mext;
+	struct mvec_header *mh;
+	struct mvec_ent *me;
+	vm_paddr_t lastb, next;
+	vm_offset_t va;
+	int i, len, nsegs;
+
+	MPASS(m != NULL);
+
+	mext = (void*)m;
+	mh = &mext->me_mh;
+	me = &mext->me_ents[mh->mh_start];
+
+	nsegs = 0;
+	lastb = 0;
+	for (i = 0; i < mh->mh_used; i++, me++) {
+		len = me->me_len;
+		if (__predict_false(len == 0))
+			continue;
+		va = (vm_offset_t)me_data(me);
+		next = pmap_kextract(va);
+		nsegs += sglist_count(me_data(me), len);
+		if (lastb + 1 == next)
+			nsegs--;
+		lastb = pmap_kextract(va + len - 1);
+	}
+
+	MPASS(nsegs > 0);
+	return (nsegs);
+}
+
 /*
  * Can deal with empty mbufs in the chain that have m_len = 0, but the chain
  * must have at least one mbuf that's not empty.
@@ -2082,6 +2116,8 @@ count_mbuf_nsegs(struct mbuf *m)
 	int len, nsegs;
 
 	MPASS(m != NULL);
+	if (m_ismvec(m))
+		return (count_mvec_nsegs(m));
 
 	nsegs = 0;
 	lastb = 0;
@@ -2113,6 +2149,7 @@ parse_pkt(struct adapter *sc, struct mbuf **mp)
 	struct mbuf *m0 = *mp, *m;
 	int rc, nsegs, defragged = 0, offset;
 	struct ether_header *eh;
+	struct mvec_cursor mc;
 	void *l3hdr;
 #if defined(INET) || defined(INET6)
 	struct tcphdr *tcp;
@@ -2176,7 +2213,10 @@ restart:
 		m0->m_pkthdr.l2hlen = sizeof(*eh);
 
 	offset = 0;
-	l3hdr = m_advance(&m, &offset, m0->m_pkthdr.l2hlen);
+	if (m_ismvec(m))
+		l3hdr = mvec_seek(m, &mc, m0->m_pkthdr.l2hlen);
+	else
+		l3hdr = m_advance(&m, &offset, m0->m_pkthdr.l2hlen);
 
 	switch (eh_type) {
 #ifdef INET6
@@ -2207,7 +2247,10 @@ restart:
 
 #if defined(INET) || defined(INET6)
 	if (needs_tso(m0)) {
-		tcp = m_advance(&m, &offset, m0->m_pkthdr.l3hlen);
+		if (m_ismvec(m))
+			tcp = mvec_seek(m, &mc, m0->m_pkthdr.l3hlen);
+		else
+			tcp = m_advance(&m, &offset, m0->m_pkthdr.l3hlen);
 		m0->m_pkthdr.l4hlen = tcp->th_off * 4;
 	}
 #endif
