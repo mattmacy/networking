@@ -191,7 +191,7 @@ mvec_ent_free(struct mvec_header *mh, int idx)
 	}
 }
 
-void
+void *
 mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
 {
 	struct mvec_ent *me = MBUF2ME(m);
@@ -214,8 +214,11 @@ mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
 		} else {
 			rem = 0;
 			mc->mc_idx++;
+			me++;
 		}
 	} while(rem);
+
+	return (void *)(me_data(me) + mc->mc_off);
 }
 
 static void
