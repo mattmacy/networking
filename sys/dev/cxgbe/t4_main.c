@@ -217,6 +217,8 @@ static driver_t vcc_driver = {
 static void cxgbe_init(void *);
 static int cxgbe_ioctl(struct ifnet *, unsigned long, caddr_t);
 static int cxgbe_transmit(struct ifnet *, struct mbuf *);
+static int cxgbe_mbuf_to_qid(struct ifnet *, struct mbuf *);
+static int cxgbe_transmit_txq(struct ifnet *, struct mbuf *);
 static void cxgbe_qflush(struct ifnet *);
 static int cxgbe_media_change(struct ifnet *);
 static void cxgbe_media_status(struct ifnet *, struct ifmediareq *);
@@ -1464,6 +1466,8 @@ cxgbe_vi_attach(device_t dev, struct vi_info *vi)
 	ifp->if_init = cxgbe_init;
 	ifp->if_ioctl = cxgbe_ioctl;
 	ifp->if_transmit = cxgbe_transmit;
+	ifp->if_transmit_txq = cxgbe_transmit_txq;
+	ifp->if_mbuf_to_qid = cxgbe_mbuf_to_qid;
 	ifp->if_qflush = cxgbe_qflush;
 	ifp->if_get_counter = cxgbe_get_counter;
 
@@ -1833,6 +1837,42 @@ fail:
 	}
 
 	return (rc);
+}
+
+static int
+cxgbe_transmit_txq(struct ifnet *ifp, struct mbuf *m)
+{
+	struct mbuf *mp, *mnext;
+	int rc, lasterr;
+
+	mp = m;
+	lasterr = 0;
+	do {
+		mnext = mp->m_nextpkt;
+		mp->m_nextpkt = NULL;
+
+		rc = cxgbe_transmit(ifp, mp);
+		if (__predict_false(rc)) {
+			lasterr = rc;
+			if (rc == ENOBUFS) {
+				m_freechain(mnext);
+				return (rc);
+			}
+		}
+	} while (mp != NULL);
+	return (lasterr);
+}
+
+static int
+cxgbe_mbuf_to_qid(struct ifnet *ifp, struct mbuf *m)
+{
+	struct vi_info *vi = ifp->if_softc;
+
+	if (M_HASHTYPE_GET(m) != M_HASHTYPE_NONE)
+		return ((m->m_pkthdr.flowid % (vi->ntxq - vi->rsrv_noflowq)) +
+		    vi->rsrv_noflowq);
+
+	return (0);
 }
 
 static int
