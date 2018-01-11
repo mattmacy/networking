@@ -319,6 +319,37 @@ sglist_append_phys(struct sglist *sg, vm_paddr_t paddr, size_t len)
 	return (error);
 }
 
+int
+sglist_append_mvec(struct sglist *sg, struct mbuf *m0)
+{
+	struct sgsave save;
+	struct mbuf_ext *mext;
+	struct mvec_header *mh;
+	struct mvec_ent *me;
+	int i, error;
+
+	MPASS(m != NULL);
+
+	mext = (void*)m0;
+	mh = &mext->me_mh;
+	me = &mext->me_ents[mh->mh_start];
+
+	if (__predict_false(sg->sg_maxseg == 0))
+		return (EINVAL);
+
+	SGLIST_SAVE(sg, save);
+	for (i = 0; i < mh->mh_used; i++, me++) {
+		if (__predict_false(me->me_len == 0))
+			continue;
+		error = sglist_append(sg, me_data(me), me->me_len);
+		if (__predict_false(error)) {
+			SGLIST_RESTORE(sg, save);
+			return (error);
+		}
+	}
+	return (0);
+}
+
 /*
  * Append the segments that describe a single mbuf chain to a
  * scatter/gather list.  If there are insufficient segments, then this
@@ -333,6 +364,9 @@ sglist_append_mbuf(struct sglist *sg, struct mbuf *m0)
 
 	if (sg->sg_maxseg == 0)
 		return (EINVAL);
+
+	if (m_ismvec(m0))
+		return (sglist_append_mvec(sg, m0));
 
 	error = 0;
 	SGLIST_SAVE(sg, save);
