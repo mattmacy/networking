@@ -452,7 +452,7 @@ vb_txd_credits_update(void *arg, uint16_t txqid, bool clear)
 	int16_t vpidx;
 	int32_t delta;
 
-	vpidx = vs->vs_queues[VB_RXQ_IDX].vq_avail->idx % scctx->isc_ntxd[0];
+	vpidx = vs->vs_queues[VB_RXQ_IDX].vq_avail->idx & (scctx->isc_ntxd[0]-1);
 
 	/* credits updated should reflect new
 	 * descriptors available in the ring --
@@ -502,7 +502,7 @@ vb_rxd_available(void *arg, qidx_t rxqid, qidx_t cidx, qidx_t budget)
 	int cnt;
 
 	idx =  vs->vs_queues[VB_TXQ_IDX].vq_avail->idx;
-	idx %= vs->shared->isc_nrxd[0];
+	idx &= (vs->shared->isc_nrxd[0]-1);
 	cnt = (int32_t)idx - (int32_t)cidx;
 	if (cnt < 0)
 		cnt += vs->shared->isc_nrxd[0];
