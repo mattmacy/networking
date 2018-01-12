@@ -253,14 +253,14 @@ static inline u_int txpkt_vm_len16(u_int, u_int);
 static inline u_int txpkts0_len16(u_int);
 static inline u_int txpkts1_len16(void);
 static u_int write_txpkt_wr(struct sge_txq *, struct fw_eth_tx_pkt_wr *,
-    struct mbuf *, u_int);
+    struct mbuf *, u_int, u_int);
 static u_int write_txpkt_vm_wr(struct adapter *, struct sge_txq *,
     struct fw_eth_tx_pkt_vm_wr *, struct mbuf *, u_int);
 static int try_txpkts(struct mbuf *, struct mbuf *, struct txpkts *, u_int);
 static int add_to_txpkts(struct mbuf *, struct txpkts *, u_int);
 static u_int write_txpkts_wr(struct sge_txq *, struct fw_eth_tx_pkts_wr *,
     struct mbuf *, const struct txpkts *, u_int);
-static void write_gl_to_txd(struct sge_txq *, struct mbuf *, caddr_t *, int);
+static void write_gl_to_txd(struct sge_txq *, struct mbuf *, caddr_t *, int, int);
 static inline void copy_to_txd(struct sge_eq *, caddr_t, caddr_t *, int);
 static inline void ring_eq_db(struct adapter *, struct sge_eq *, u_int);
 static inline uint16_t read_hw_cidx(struct sge_eq *);
@@ -1866,8 +1866,7 @@ drain_wrq_wr_list(struct adapter *sc, struct sge_wrq *wrq)
 
 		if (available < eq->sidx / 4 &&
 		    atomic_cmpset_int(&eq->equiq, 0, 1)) {
-			dst->equiq_to_len16 |= htobe32(F_FW_WR_EQUIQ |
-			    F_FW_WR_EQUEQ);
+			dst->equiq_to_len16 |= htobe32(F_FW_WR_EQUIQ | F_FW_WR_EQUEQ);
 			eq->equeqidx = eq->pidx;
 		} else if (IDXDIFF(eq->pidx, eq->equeqidx, eq->sidx) >= 32) {
 			dst->equiq_to_len16 |= htobe32(F_FW_WR_EQUEQ);
@@ -2052,6 +2051,7 @@ m_advance(struct mbuf **pm, int *poffset, int len)
 	int offset = *poffset;
 	uintptr_t p = 0;
 
+	MPASS(!m_ismvec(m));
 	MPASS(len > 0);
 
 	for (;;) {
@@ -2393,6 +2393,53 @@ discard_tx(struct sge_eq *eq)
 	return ((eq->flags & (EQ_ENABLED | EQ_QFLUSH)) != EQ_ENABLED);
 }
 
+static u_int
+eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *available, u_int *dbdiff)
+{
+	struct sge_eq *eq = &txq->eq;
+	struct ifnet *ifp = txq->ifp;
+	struct vi_info *vi = ifp->if_softc;
+	struct port_info *pi = vi->pi;
+	struct adapter *sc = pi->adapter;
+	struct fw_eth_tx_pkts_wr *wr;	/* any fw WR struct will do */
+	int i, n, count, segoff;
+
+	count = sglist_count_mvec_multi(m0, txq->pkt_lens, txq->pkt_offs, TXQ_MAX_PKT_LENS);
+	remaining += count;
+	segoff = 0;
+	for (i = 0; i < count; i++, remaining--) {
+		if (*available < SGE_MAX_WR_NDESC) {
+			*available += reclaim_tx_descs(txq, 64);
+			if (*available < howmany(txq->pkt_lens[i], EQ_ESIZE / 16))
+				return (1);	/* out of descriptors */
+		}
+		wr = (void *)&eq->desc[eq->pidx];
+		ETHER_BPF_MTAPV(ifp, m0, segoff);
+		n = write_txpkt_wr(txq, (void *)wr, m0, *available, i);
+
+		*dbdiff += n;
+		*available -= n;
+		IDXINCR(eq->pidx, n, eq->sidx);
+		if (total_available_tx_desc(eq) < eq->sidx / 4 &&
+			atomic_cmpset_int(&eq->equiq, 0, 1)) {
+			wr->equiq_to_len16 |= htobe32(F_FW_WR_EQUIQ |
+										  F_FW_WR_EQUEQ);
+			eq->equeqidx = eq->pidx;
+		} else if (IDXDIFF(eq->pidx, eq->equeqidx, eq->sidx) >= 32) {
+			wr->equiq_to_len16 |= htobe32(F_FW_WR_EQUEQ);
+			eq->equeqidx = eq->pidx;
+		}
+
+		if (*dbdiff >= 16 && remaining >= 4) {
+			ring_eq_db(sc, eq, *dbdiff);
+			*available += reclaim_tx_descs(txq, 4 * (*dbdiff));
+			*dbdiff = 0;
+		}
+	}
+
+	return (0);
+}
+
 /*
  * r->items[cidx] to r->items[pidx], with a wraparound at r->size, are ready to
  * be consumed.  Return the actual number consumed.  0 indicates a stall.
@@ -2460,6 +2507,13 @@ eth_tx(struct mp_ring *r, u_int cidx, u_int pidx)
 			ETHER_BPF_MTAP(ifp, m0);
 			n = write_txpkt_vm_wr(sc, txq, (void *)wr, m0,
 			    available);
+		} else if (m_ismvec(m0) && MBUF2MH(m0)->mh_multipkt) {
+			if (eth_tx_mvec_multi(txq, m0, remaining, &available, &dbdiff))
+				break;
+			total++;
+			remaining--;
+			cidx = next_cidx;
+			continue;
 		} else if (remaining > 1 &&
 		    try_txpkts(m0, r->items[next_cidx], &txp, available) == 0) {
 
@@ -2492,7 +2546,7 @@ eth_tx(struct mp_ring *r, u_int cidx, u_int pidx)
 			total++;
 			remaining--;
 			ETHER_BPF_MTAP(ifp, m0);
-			n = write_txpkt_wr(txq, (void *)wr, m0, available);
+			n = write_txpkt_wr(txq, (void *)wr, m0, available, 0);
 		}
 		MPASS(n >= 1 && n <= available && n <= SGE_MAX_WR_NDESC);
 
@@ -3631,6 +3685,8 @@ alloc_txq(struct vi_info *vi, struct sge_txq *txq, int idx,
 	TASK_INIT(&txq->tx_reclaim_task, 0, tx_reclaim, eq);
 	txq->ifp = vi->ifp;
 	txq->gl = sglist_alloc(TX_SGL_SEGS, M_WAITOK);
+	txq->pkt_lens = malloc(TXQ_MAX_PKT_LENS, M_CXGBE, M_WAITOK);
+	txq->pkt_offs = malloc(TXQ_MAX_PKT_LENS, M_CXGBE, M_WAITOK);
 	if (sc->flags & IS_VF)
 		txq->cpl_ctrl0 = htobe32(V_TXPKT_OPCODE(CPL_TX_PKT_XT) |
 		    V_TXPKT_INTF(pi->tx_chan));
@@ -3732,6 +3788,8 @@ free_txq(struct vi_info *vi, struct sge_txq *txq)
 
 	sglist_free(txq->gl);
 	free(txq->sdesc, M_CXGBE);
+	free(txq->pkt_lens, M_CXGBE);
+	free(txq->pkt_offs, M_CXGBE);
 	mp_ring_free(txq->r);
 
 	bzero(txq, sizeof(*txq));
@@ -4228,9 +4286,9 @@ write_txpkt_vm_wr(struct adapter *sc, struct sge_txq *txq,
 	 */
 	if (dst == (void *)&eq->desc[eq->sidx]) {
 		dst = (void *)&eq->desc[0];
-		write_gl_to_txd(txq, m0, &dst, 0);
+		write_gl_to_txd(txq, m0, &dst, 0, 0);
 	} else
-		write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx);
+		write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx, 0);
 	txq->sgl_wrs++;
 
 	txq->txpkt_wrs++;
@@ -4251,7 +4309,7 @@ write_txpkt_vm_wr(struct adapter *sc, struct sge_txq *txq,
  */
 static u_int
 write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
-    struct mbuf *m0, u_int available)
+   struct mbuf *m0, u_int available, u_int pktno)
 {
 	struct sge_eq *eq = &txq->eq;
 	struct tx_sdesc *txsd;
@@ -4344,7 +4402,7 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	dst = (void *)(cpl + 1);
 	if (nsegs > 0) {
 
-		write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx);
+		write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx, pktno);
 		txq->sgl_wrs++;
 	} else {
 		struct mbuf *m;
@@ -4535,7 +4593,7 @@ write_txpkts_wr(struct sge_txq *txq, struct fw_eth_tx_pkts_wr *wr,
 		    (uintptr_t)flitp == (uintptr_t)&eq->desc[eq->sidx])
 			flitp = (void *)&eq->desc[0];
 
-		write_gl_to_txd(txq, m, (caddr_t *)(&flitp), checkwrap);
+		write_gl_to_txd(txq, m, (caddr_t *)(&flitp), checkwrap, 0);
 
 	}
 
@@ -4559,14 +4617,15 @@ write_txpkts_wr(struct sge_txq *txq, struct fw_eth_tx_pkts_wr *wr,
  * add a 0 filled flit at the end.
  */
 static void
-write_gl_to_txd(struct sge_txq *txq, struct mbuf *m, caddr_t *to, int checkwrap)
+write_gl_to_txd(struct sge_txq *txq, struct mbuf *m, caddr_t *to, int checkwrap,
+				int pktidx)
 {
 	struct sge_eq *eq = &txq->eq;
 	struct sglist *gl = txq->gl;
 	struct sglist_seg *seg;
 	__be64 *flitp, *wrap;
 	struct ulptx_sgl *usgl;
-	int i, nflits, nsegs;
+	int i, nflits, start, nsegs;
 
 	KASSERT(((uintptr_t)(*to) & 0xf) == 0,
 	    ("%s: SGL must start at a 16 byte boundary: %p", __func__, *to));
@@ -4575,12 +4634,18 @@ write_gl_to_txd(struct sge_txq *txq, struct mbuf *m, caddr_t *to, int checkwrap)
 
 	get_pkt_gl(m, gl);
 	nsegs = gl->sg_nseg;
+	start = 0;
 	MPASS(nsegs > 0);
+	if (m_ismvec(m) && MBUF2MH(m)->mh_multipkt) {
+		MPASS(pktidx < TXQ_MAX_PKT_LENS);
+		start = txq->pkt_offs[pktidx];
+		nsegs = txq->pkt_lens[pktidx];
+	}
 
 	nflits = (3 * (nsegs - 1)) / 2 + ((nsegs - 1) & 1) + 2;
 	flitp = (__be64 *)(*to);
 	wrap = (__be64 *)(&eq->desc[eq->sidx]);
-	seg = &gl->sg_segs[0];
+	seg = &gl->sg_segs[start];
 	usgl = (void *)flitp;
 
 	/*
