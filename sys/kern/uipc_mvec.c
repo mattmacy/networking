@@ -649,7 +649,12 @@ mchain_to_mvec(struct mbuf *m, int how)
 	}
 	mh = &mnew->me_mh;
 	mh->mh_used = count-1;
-	MPASS(mh->mh_count == mh->mh_used+1);
+#ifdef INVARIANTS
+	if (size)
+		MPASS(mh->mh_count == mh->mh_used+1);
+	else
+		MPASS(mh->mh_count >= mh->mh_used);
+#endif
 	mh->mh_multiref = dupref;
 	/* leave first entry open for encap */
 	bcopy(&m->m_pkthdr, &mnew->me_mbuf.m_pkthdr, sizeof(struct pkthdr));
@@ -704,7 +709,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	mnew->me_mbuf.m_len = mnew->me_ents[1].me_len;
 	mnew->me_mbuf.m_data = (mnew->me_ents[1].me_cl + mnew->me_ents[1].me_off);
 	mh = MBUF2MH(mnew);
-	MPASS(mh->mh_count == mh->mh_start + mh->mh_used);
+	MPASS(mh->mh_count >= mh->mh_start + mh->mh_used);
 	mvec_sanity((void*)mnew);
 	return (mnew);
 }
