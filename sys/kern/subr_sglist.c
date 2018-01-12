@@ -193,6 +193,40 @@ sglist_count(void *buf, size_t len)
 	return (nsegs);
 }
 
+int
+sglist_count_mvec_multi(struct mbuf *m0, uint8_t *lens, uint8_t *offs, int countlen)
+{
+	struct mbuf_ext *mext;
+	struct mvec_header *mh;
+	struct mvec_ent *me;
+	int i, pktsgs, pktsgstotal, pktno, cnt;
+
+	MPASS(m0 != NULL);
+	MPASS(lens != NULL);
+	MPASS(countlen > 0);
+
+	mext = (void*)m0;
+	mh = &mext->me_mh;
+	me = &mext->me_ents[mh->mh_start];
+
+	pktsgstotal = pktno = pktsgs = 0;
+	for (i = 0; i < mh->mh_used; i++, me++) {
+		if (pktsgs == 0)
+			offs[i] = pktsgstotal;
+		cnt = sglist_count(me_data(me), me->me_len);
+		pktsgs += cnt;
+		pktsgstotal += cnt;
+		if (me->me_eop) {
+			lens[pktno] = pktsgs;
+			pktno++;
+			pktsgs = 0;
+			if (__predict_false(pktno == countlen))
+				break;
+		}
+	}
+	return (pktno);
+}
+
 /*
  * Determine the number of scatter/gather list elements needed to
  * describe a buffer backed by an array of VM pages.
