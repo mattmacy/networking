@@ -1190,7 +1190,7 @@ static moduledata_t ether_mod = {
 };
 
 void
-ether_vlan_mtapv(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, int pktno)
+ether_vlan_mtapv(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_int pktno)
 {
 	panic("XXX implmement me");
 }

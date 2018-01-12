@@ -2195,7 +2195,7 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 
 
 void
-bpf_mtapv(struct bpf_if *bp, struct mbuf *m, int pktno)
+bpf_mtapv(struct bpf_if *bp, struct mbuf *m, u_int pktno)
 {
 	panic("XXX implement");
 }
