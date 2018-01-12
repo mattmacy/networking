@@ -812,7 +812,6 @@ vpc_set_listen(struct vpc_softc *vs, struct vpc_listen *vl)
 	}
 	ifr.ifr_index = vs->vs_vxlan_port;
 	rc = ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
-
  fail:
 	RTFREE(rt);
 	return (rc);
@@ -1069,6 +1068,7 @@ vpc_module_deinit(void)
 	erp = DPCPU_ID_GET(0, vpc_epoch_record);
 	free(ecp, M_VPC);
 	free(erp, M_VPC);
+	iflib_config_gtask_deinit(&vpc_ifp_task);
 	iflib_clone_deregister(vpc_pseudo);
 }
 
