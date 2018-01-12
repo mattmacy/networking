@@ -385,6 +385,17 @@ struct ether_vlan_header {
 	}								\
 } while (0)
 
+#define ETHER_BPF_MTAPV(_ifp, _m, _i) do {					\
+	if (bpf_peers_present((_ifp)->if_bpf)) {			\
+		M_ASSERTVALID(_m);					\
+		if (((_m)->m_flags & M_VLANTAG) != 0)			\
+			ether_vlan_mtapv((_ifp)->if_bpf, (_m), NULL, 0, (_i));	\
+		else							\
+			bpf_mtapv((_ifp)->if_bpf, (_m), (_i));	\
+	}								\
+} while (0)
+
+
 #ifdef _KERNEL
 
 struct ifnet;
@@ -405,6 +416,8 @@ extern	int  ether_output_frame(struct ifnet *, struct mbuf *);
 extern	char *ether_sprintf(const u_int8_t *);
 void	ether_vlan_mtap(struct bpf_if *, struct mbuf *,
 	    void *, u_int);
+void	ether_vlan_mtapv(struct bpf_if *, struct mbuf *,
+		void *, u_int, u_int);
 struct mbuf  *ether_vlanencap(struct mbuf *, uint16_t);
 
 #ifdef _SYS_EVENTHANDLER_H_

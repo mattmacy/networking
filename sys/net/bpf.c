@@ -2193,6 +2193,13 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 	    (((d)->bd_direction == BPF_D_IN && (r) != (i)) ||	\
 	    ((d)->bd_direction == BPF_D_OUT && (r) == (i)))
 
+
+void
+bpf_mtapv(struct bpf_if *bp, struct mbuf *m, int pktno)
+{
+	panic("XXX implement");
+}
+
 /*
  * Incoming linkage from device drivers, when packet is in an mbuf chain.
  * Locking model is explained in bpf_tap().
