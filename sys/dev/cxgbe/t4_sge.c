@@ -2404,7 +2404,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	struct fw_eth_tx_pkts_wr *wr;	/* any fw WR struct will do */
 	int i, n, count, segoff;
 
-	count = sglist_count_mvec_multi(m0, txq->pkt_lens, txq->pkt_offs, TXQ_MAX_PKT_LENS);
+	count = sglist_count_mvec_multi(m0, txq->pkt_lens, txq->pkt_offs, TX_MAX_PKT_SEGS);
 	remaining += count;
 	segoff = 0;
 	for (i = 0; i < count; i++, remaining--) {
@@ -3684,9 +3684,9 @@ alloc_txq(struct vi_info *vi, struct sge_txq *txq, int idx,
 
 	TASK_INIT(&txq->tx_reclaim_task, 0, tx_reclaim, eq);
 	txq->ifp = vi->ifp;
-	txq->gl = sglist_alloc(TX_SGL_SEGS, M_WAITOK);
-	txq->pkt_lens = malloc(TXQ_MAX_PKT_LENS, M_CXGBE, M_WAITOK);
-	txq->pkt_offs = malloc(TXQ_MAX_PKT_LENS, M_CXGBE, M_WAITOK);
+	txq->gl = sglist_alloc(TX_MAX_PKT_SEGS, M_WAITOK);
+	txq->pkt_lens = malloc(TX_MAX_PKT_SEGS, M_CXGBE, M_WAITOK);
+	txq->pkt_offs = malloc(TX_MAX_PKT_SEGS, M_CXGBE, M_WAITOK);
 	if (sc->flags & IS_VF)
 		txq->cpl_ctrl0 = htobe32(V_TXPKT_OPCODE(CPL_TX_PKT_XT) |
 		    V_TXPKT_INTF(pi->tx_chan));
@@ -4637,7 +4637,7 @@ write_gl_to_txd(struct sge_txq *txq, struct mbuf *m, caddr_t *to, int checkwrap,
 	start = 0;
 	MPASS(nsegs > 0);
 	if (m_ismvec(m) && MBUF2MH(m)->mh_multipkt) {
-		MPASS(pktidx < TXQ_MAX_PKT_LENS);
+		MPASS(pktidx < TX_MAX_PKT_SEGS);
 		start = txq->pkt_offs[pktidx];
 		nsegs = txq->pkt_lens[pktidx];
 	}
