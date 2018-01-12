@@ -1438,8 +1438,7 @@ cxgbe_probe(device_t dev)
 
 #define T4_CAP (IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_MTU | IFCAP_HWCSUM | \
     IFCAP_VLAN_HWCSUM | IFCAP_TSO | IFCAP_JUMBO_MTU | IFCAP_LRO | \
-    IFCAP_VLAN_HWTSO | IFCAP_LINKSTATE | IFCAP_HWCSUM_IPV6 | IFCAP_HWSTATS | \
-	IFCAP_VXLANDECAP)
+	IFCAP_VLAN_HWTSO | IFCAP_LINKSTATE | IFCAP_HWCSUM_IPV6 | IFCAP_HWSTATS)
 #define T4_CAP_ENABLE (T4_CAP)
 
 static int
@@ -1471,7 +1470,7 @@ cxgbe_vi_attach(device_t dev, struct vi_info *vi)
 	ifp->if_qflush = cxgbe_qflush;
 	ifp->if_get_counter = cxgbe_get_counter;
 
-	ifp->if_capabilities = T4_CAP;
+	ifp->if_capabilities = T4_CAP | IFCAP_VXLANDECAP;
 #ifdef TCP_OFFLOAD
 	if (vi->nofldrxq != 0)
 		ifp->if_capabilities |= IFCAP_TOE;
