@@ -120,7 +120,7 @@ enum {
 	TX_SGL_SEGS_TSO = 38,
 	TX_WR_FLITS = SGE_MAX_WR_LEN / 8,
 
-	TXQ_MAX_PKT_LENS = 128
+	TX_MAX_PKT_SEGS = 128
 };
 
 enum {
