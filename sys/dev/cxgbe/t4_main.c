@@ -1838,6 +1838,7 @@ cxgbe_transmit_txq(struct ifnet *ifp, struct mbuf *m)
 				return (rc);
 			}
 		}
+		mp = mnext;
 	} while (mp != NULL);
 	return (lasterr);
 }
