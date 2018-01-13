@@ -39,9 +39,9 @@
 #endif
 
 void	bpf_buffer_append_bytes(struct bpf_d *d, caddr_t buf, u_int offset,
-	    void *src, u_int len);
+		void *src, u_int len);
 void	bpf_buffer_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset,
-	    void *src, u_int len);
+		void *src, u_int len, u_int pktno);
 void	bpf_buffer_free(struct bpf_d *d);
 void	bpf_buffer_init(struct bpf_d *d);
 int	bpf_buffer_ioctl_sblen(struct bpf_d *d, u_int *i);
