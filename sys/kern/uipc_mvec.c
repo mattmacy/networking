@@ -42,8 +42,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/in_cksum.h>
 
 
-#define MVEC_DEBUG
-
 #ifdef MVEC_DEBUG
 #define  DPRINTF printf
 #else
