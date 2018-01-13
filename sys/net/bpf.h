@@ -429,7 +429,7 @@ int	 bpf_get_bp_params(struct bpf_if *, u_int *, u_int *);
 #endif
 
 void	 bpfilterattach(int);
-u_int	 bpf_filter(const struct bpf_insn *, u_char *, u_int, u_int);
+u_int	 bpf_filter(const struct bpf_insn *, u_char *, u_int, u_int, u_int);
 
 static __inline int
 bpf_peers_present(struct bpf_if *bpf)
