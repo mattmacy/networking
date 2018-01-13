@@ -1261,7 +1261,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	if (dofree) {
 		if (mesrc->me_cl && (mesrc->me_type == MVEC_MBUF) && mesrc->me_len == hdrsize)
 			uma_zfree_arg(zone_mbuf, mesrc->me_cl, (void *)MB_DTOR_SKIP);
-		mnew->me_mbuf.m_ext.ext_count = 1;
+		mnew->me_mbuf.m_ext.ext_count = nheaders;
 		if (!(m->m_ext.ext_flags & EXT_FLAG_EMBREF))
 			mvec_buffer_free(__containerof(refcnt, struct mbuf, m_ext.ext_count));
 		/* XXX we're leaking here */
@@ -1271,7 +1271,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			mnew->me_mbuf.m_ext.ext_cnt = m->m_ext.ext_cnt;
 		else
 			mnew->me_mbuf.m_ext.ext_cnt = &m->m_ext.ext_count;
-		atomic_add_int(mnew->me_mbuf.m_ext.ext_cnt, 1);
+		atomic_add_int(mnew->me_mbuf.m_ext.ext_cnt, nheaders);
 	}
 	return (mnew);
 }
