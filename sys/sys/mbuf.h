@@ -366,6 +366,8 @@ typedef union {
  */
 void *mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int off);
 
+
+void *mvec_seek_pktno(struct mbuf *m, struct mvec_cursor *mc, int off, uint16_t pktno);
 /*
  * Trim (destructively if unshared) `req_len` bytes of `m`.
  * Will trim the front if req_len is positive and the tail
