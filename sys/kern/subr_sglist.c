@@ -212,7 +212,7 @@ sglist_count_mvec_multi(struct mbuf *m0, uint8_t *lens, uint8_t *offs, int count
 	pktsgstotal = pktno = pktsgs = 0;
 	for (i = 0; i < mh->mh_used; i++, me++) {
 		if (pktsgs == 0)
-			offs[i] = pktsgstotal;
+			offs[pktno] = pktsgstotal;
 		cnt = sglist_count(me_data(me), me->me_len);
 		pktsgs += cnt;
 		pktsgstotal += cnt;
