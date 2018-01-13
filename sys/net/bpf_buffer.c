@@ -156,9 +156,9 @@ bpf_buffer_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
 	m = (struct mbuf *)src;
 	dst = (u_char *)buf + offset;
 	if (m_ismvec(m))
-		bpf_mbuf_loop(m, dst, len);
-	else
 		bpf_mvec_loop(m, dst, len);
+	else
+		bpf_mbuf_loop(m, dst, len);
 }
 
 /*
