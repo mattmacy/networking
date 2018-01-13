@@ -108,19 +108,11 @@ bpf_buffer_append_bytes(struct bpf_d *d, caddr_t buf, u_int offset,
 	bcopy(src_bytes, buf + offset, len);
 }
 
-/*
- * Scatter-gather data copy from an mbuf chain to the current kernel buffer.
- */
-void
-bpf_buffer_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
-    u_int len)
+static void
+bpf_mbuf_loop(const struct mbuf *m, caddr_t dst, u_int len)
 {
-	const struct mbuf *m;
-	u_char *dst;
 	u_int count;
 
-	m = (struct mbuf *)src;
-	dst = (u_char *)buf + offset;
 	while (len > 0) {
 		if (m == NULL)
 			panic("bpf_mcopy");
@@ -130,6 +122,43 @@ bpf_buffer_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
 		dst += count;
 		len -= count;
 	}
+}
+
+static void
+bpf_mvec_loop(const struct mbuf *m, caddr_t dst, u_int len)
+{
+	const struct mvec_header *mh;
+	const struct mvec_ent *me;
+	const struct mbuf_ext *mext;
+	int i, count;
+
+	mext = (const struct mbuf_ext *)m;
+	mh = &mext->me_mh;
+	me = &mext->me_ents[mh->mh_start];
+	for (i = 0; i < mh->mh_used && len > 0;
+		 i++, len -= count, dst += count, me++) {
+		count = min(me->me_len, len);
+		bcopy(me_data(me), dst, count);
+	}
+}
+
+/*
+ * Scatter-gather data copy from an mbuf chain to the current kernel buffer.
+ */
+void
+bpf_buffer_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
+   u_int len, u_int pktno)
+{
+	const struct mbuf *m;
+	u_char *dst;
+
+
+	m = (struct mbuf *)src;
+	dst = (u_char *)buf + offset;
+	if (m_ismvec(m))
+		bpf_mbuf_loop(m, dst, len);
+	else
+		bpf_mvec_loop(m, dst, len);
 }
 
 /*

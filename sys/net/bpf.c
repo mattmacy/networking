@@ -181,8 +181,8 @@ static void	bpf_timed_out(void *);
 static __inline void
 		bpf_wakeup(struct bpf_d *);
 static void	catchpacket(struct bpf_d *, u_char *, u_int, u_int,
-		    void (*)(struct bpf_d *, caddr_t, u_int, void *, u_int),
-		    struct bintime *);
+		    void (*)(struct bpf_d *, caddr_t, u_int, void *, u_int, int),
+		    struct bintime *, int);
 static void	reset_d(struct bpf_d *);
 static int	bpf_setf(struct bpf_d *, struct bpf_program *, u_long cmd);
 static int	bpf_getdltlist(struct bpf_d *, struct bpf_dltlist *);
@@ -270,7 +270,7 @@ eventhandler_tag	bpf_ifdetach_cookie = NULL;
  */
 static void
 bpf_append_bytes(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
-    u_int len)
+    u_int len, int pktno __unused)
 {
 
 	BPFD_LOCK_ASSERT(d);
@@ -290,14 +290,14 @@ bpf_append_bytes(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
 
 static void
 bpf_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
-    u_int len)
+    u_int len, int pktno)
 {
 
 	BPFD_LOCK_ASSERT(d);
 
 	switch (d->bd_bufmode) {
 	case BPF_BUFMODE_BUFFER:
-		return (bpf_buffer_append_mbuf(d, buf, offset, src, len));
+		return (bpf_buffer_append_mbuf(d, buf, offset, src, len, pktno));
 
 	case BPF_BUFMODE_ZBUF:
 		counter_u64_add(d->bd_zcopy, 1);
@@ -560,7 +560,7 @@ bpf_movein(struct uio *uio, int linktype, struct ifnet *ifp, struct mbuf **mp,
 	if (error)
 		goto bad;
 
-	slen = bpf_filter(d->bd_wfilter, mtod(m, u_char *), len, len);
+	slen = bpf_filter(d->bd_wfilter, mtod(m, u_char *), len, len, -1);
 	if (slen == 0) {
 		error = EPERM;
 		goto bad;
@@ -2168,7 +2168,7 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 			slen = (*(bf->func))(pkt, pktlen, pktlen);
 		else
 #endif
-		slen = bpf_filter(d->bd_rfilter, pkt, pktlen, pktlen);
+			slen = bpf_filter(d->bd_rfilter, pkt, pktlen, pktlen, -1);
 		if (slen != 0) {
 			/*
 			 * Filter matches. Let's to acquire write lock.
@@ -2182,7 +2182,7 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
 #endif
 				catchpacket(d, pkt, pktlen, slen,
-				    bpf_append_bytes, &bt);
+					bpf_append_bytes, &bt, -1);
 			BPFD_UNLOCK(d);
 		}
 	}
@@ -2194,18 +2194,12 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 	    ((d)->bd_direction == BPF_D_OUT && (r) == (i)))
 
 
-void
-bpf_mtapv(struct bpf_if *bp, struct mbuf *m, u_int pktno)
-{
-	panic("XXX implement");
-}
-
 /*
  * Incoming linkage from device drivers, when packet is in an mbuf chain.
  * Locking model is explained in bpf_tap().
  */
-void
-bpf_mtap(struct bpf_if *bp, struct mbuf *m)
+static void
+bpf_mtap_(struct bpf_if *bp, struct mbuf *m, u_int pktno)
 {
 	struct bintime bt;
 	struct bpf_d *d;
@@ -2237,7 +2231,7 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 			slen = (*(bf->func))(mtod(m, u_char *), pktlen, pktlen);
 		else
 #endif
-		slen = bpf_filter(d->bd_rfilter, (u_char *)m, pktlen, 0);
+			slen = bpf_filter(d->bd_rfilter, (u_char *)m, pktlen, 0, pktno);
 		if (slen != 0) {
 			BPFD_LOCK(d);
 
@@ -2248,11 +2242,23 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
 #endif
 				catchpacket(d, (u_char *)m, pktlen, slen,
-				    bpf_append_mbuf, &bt);
+							bpf_append_mbuf, &bt, pktno);
 			BPFD_UNLOCK(d);
 		}
 	}
 	BPFIF_RUNLOCK(bp);
+}
+
+void
+bpf_mtapv(struct bpf_if *bp, struct mbuf *m, u_int pktno)
+{
+	bpf_mtap_(bp, m, pktno);
+}
+
+void
+bpf_mtap(struct bpf_if *bp, struct mbuf *m)
+{
+	bpf_mtap_(bp, m, -1);
 }
 
 /*
@@ -2293,7 +2299,7 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 		if (BPF_CHECK_DIRECTION(d, m->m_pkthdr.rcvif, bp->bif_ifp))
 			continue;
 		counter_u64_add(d->bd_rcount, 1);
-		slen = bpf_filter(d->bd_rfilter, (u_char *)&mb, pktlen, 0);
+		slen = bpf_filter(d->bd_rfilter, (u_char *)&mb, pktlen, 0, -1);
 		if (slen != 0) {
 			BPFD_LOCK(d);
 
@@ -2304,7 +2310,7 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
 #endif
 				catchpacket(d, (u_char *)&mb, pktlen, slen,
-				    bpf_append_mbuf, &bt);
+							bpf_append_mbuf, &bt, -1);
 			BPFD_UNLOCK(d);
 		}
 	}
@@ -2386,8 +2392,8 @@ bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)
  */
 static void
 catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
-    void (*cpfn)(struct bpf_d *, caddr_t, u_int, void *, u_int),
-    struct bintime *bt)
+	void (*cpfn)(struct bpf_d *, caddr_t, u_int, void *, u_int, int),
+	struct bintime *bt, int pktno)
 {
 	struct bpf_xhdr hdr;
 #ifndef BURN_BRIDGES
@@ -2483,7 +2489,7 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 			hdr32_old.bh_hdrlen = hdrlen;
 			hdr32_old.bh_caplen = caplen;
 			bpf_append_bytes(d, d->bd_sbuf, curlen, &hdr32_old,
-			    sizeof(hdr32_old));
+				 sizeof(hdr32_old), -1);
 			goto copy;
 		}
 #endif
@@ -2496,7 +2502,7 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 		hdr_old.bh_hdrlen = hdrlen;
 		hdr_old.bh_caplen = caplen;
 		bpf_append_bytes(d, d->bd_sbuf, curlen, &hdr_old,
-		    sizeof(hdr_old));
+			 sizeof(hdr_old), -1);
 		goto copy;
 	}
 #endif
@@ -2511,7 +2517,7 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 	hdr.bh_datalen = pktlen;
 	hdr.bh_hdrlen = hdrlen;
 	hdr.bh_caplen = caplen;
-	bpf_append_bytes(d, d->bd_sbuf, curlen, &hdr, sizeof(hdr));
+	bpf_append_bytes(d, d->bd_sbuf, curlen, &hdr, sizeof(hdr), -1);
 
 	/*
 	 * Copy the packet data into the store buffer and update its length.
@@ -2519,7 +2525,7 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 #ifndef BURN_BRIDGES
 copy:
 #endif
-	(*cpfn)(d, d->bd_sbuf, curlen + hdrlen, pkt, caplen);
+	(*cpfn)(d, d->bd_sbuf, curlen + hdrlen, pkt, caplen, pktno);
 	d->bd_slen = curlen + totlen;
 
 	if (do_wakeup)
@@ -3026,7 +3032,7 @@ bpfdetach(struct ifnet *ifp)
 }
 
 u_int
-bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
+bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen, u_int pktno)
 {
 	return -1;	/* "no filter" behaviour */
 }

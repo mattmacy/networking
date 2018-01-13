@@ -74,7 +74,7 @@ __FBSDID("$FreeBSD$");
 #endif
 #include <net/bpf.h>
 #ifdef _KERNEL
-#define MINDEX(m, k) \
+#define MINDEX_(m, k) \
 { \
 	int len = m->m_len; \
  \
@@ -87,25 +87,69 @@ __FBSDID("$FreeBSD$");
 	} \
 }
 
-static u_int16_t	m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err);
-static u_int32_t	m_xword(struct mbuf *m, bpf_u_int32 k, int *err);
+static uint8_t
+MINDEX(struct mbuf *m, u_int k)
+{
+	struct mvec_cursor mc;
+	uint8_t *cp;
+
+	if (m_ismvec(m)) {
+		cp = mvec_seek(m, &mc, k);
+		if (cp)
+			return (*cp);
+	} else {
+		MINDEX_(m, k);
+		return mtod(m, u_char *)[k];
+	}
+	return (0);
+}
+
+
+static u_int16_t	m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno);
+static u_int32_t	m_xword(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno);
 
 static u_int32_t
-m_xword(struct mbuf *m, bpf_u_int32 k, int *err)
+m_xword(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno)
 {
 	size_t len;
 	u_char *cp, *np;
 	struct mbuf *m0;
+	struct mbuf_ext *mext;
+	struct mvec_cursor mc;
+	struct mvec_ent *me;
 
-	len = m->m_len;
-	while (k >= len) {
-		k -= len;
-		m = m->m_next;
-		if (m == NULL)
+	MPASS(m_ismvec(m) || (pktno == -1));
+
+	if (m_ismvec(m)) {
+		mext = (void *)m;
+		if (pktno == -1) {
+			cp = mvec_seek(m, &mc, k);
+		} else {
+			cp = mvec_seek_pktno(m, &mc, k, pktno);
+		}
+		if (cp == NULL)
 			goto bad;
+		me = &mext->me_ents[mext->me_mh.mh_start + mc.mc_idx];
+		len = me->me_len - mc.mc_off;
+		if (len >= 4)
+			return (EXTRACT_LONG(cp));
+		if (mext->me_mh.mh_start + mc.mc_idx == mext->me_mh.mh_count-1)
+			goto bad;
+		if ((me + 1)->me_len < 4 - len)
+			goto bad;
+		np = me_data(me + 1);
+		goto split;
+	} else {
 		len = m->m_len;
+		while (k >= len) {
+			k -= len;
+			m = m->m_next;
+			if (m == NULL)
+				goto bad;
+			len = m->m_len;
+		}
+		cp = mtod(m, u_char *) + k;
 	}
-	cp = mtod(m, u_char *) + k;
 	if (len - k >= 4) {
 		*err = 0;
 		return (EXTRACT_LONG(cp));
@@ -115,6 +159,7 @@ m_xword(struct mbuf *m, bpf_u_int32 k, int *err)
 		goto bad;
 	*err = 0;
 	np = mtod(m0, u_char *);
+ split:
 	switch (len - k) {
 	case 1:
 		return (((u_int32_t)cp[0] << 24) |
@@ -140,12 +185,34 @@ m_xword(struct mbuf *m, bpf_u_int32 k, int *err)
 }
 
 static u_int16_t
-m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err)
+m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno)
 {
 	size_t len;
 	u_char *cp;
 	struct mbuf *m0;
+	struct mbuf_ext *mext;
+	struct mvec_ent *me;
+	struct mvec_cursor mc;
 
+	MPASS(m_ismvec(m) || (pktno == -1));
+
+	if (m_ismvec(m)) {
+		mext = (void *)m;
+		if (pktno == -1) {
+			cp = mvec_seek(m, &mc, k);
+		} else {
+			cp = mvec_seek_pktno(m, &mc, k, pktno);
+		}
+		if (cp == NULL)
+			goto bad;
+		me = &mext->me_ents[mext->me_mh.mh_start + mc.mc_idx];
+		len = me->me_len - mc.mc_off;
+		if (len >= 2)
+			return (EXTRACT_SHORT(cp));
+		if (mext->me_mh.mh_start + mc.mc_idx == mext->me_mh.mh_count-1)
+			goto bad;
+		return ((cp[0] << 8) | *((u_char *)me_data(me + 1)));
+	}
 	len = m->m_len;
 	while (k >= len) {
 		k -= len;
@@ -176,7 +243,7 @@ m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err)
  * buflen is the amount of data present
  */
 u_int
-bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
+bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen, u_int pktno)
 {
 	u_int32_t A = 0, X = 0;
 	bpf_u_int32 k;
@@ -215,7 +282,7 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
 
 				if (buflen != 0)
 					return (0);
-				A = m_xword((struct mbuf *)p, k, &merr);
+				A = m_xword((struct mbuf *)p, k, &merr, pktno);
 				if (merr != 0)
 					return (0);
 				continue;
@@ -239,7 +306,7 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
 
 				if (buflen != 0)
 					return (0);
-				A = m_xhalf((struct mbuf *)p, k, &merr);
+				A = m_xhalf((struct mbuf *)p, k, &merr, pktno);
 				continue;
 #else
 				return (0);
@@ -257,8 +324,7 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
 				if (buflen != 0)
 					return (0);
 				m = (struct mbuf *)p;
-				MINDEX(m, k);
-				A = mtod(m, u_char *)[k];
+				A = MINDEX(m, k);
 				continue;
 #else
 				return (0);
@@ -284,7 +350,7 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
 
 				if (buflen != 0)
 					return (0);
-				A = m_xword((struct mbuf *)p, k, &merr);
+				A = m_xword((struct mbuf *)p, k, &merr, pktno);
 				if (merr != 0)
 					return (0);
 				continue;
@@ -309,7 +375,7 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
 
 				if (buflen != 0)
 					return (0);
-				A = m_xhalf((struct mbuf *)p, k, &merr);
+				A = m_xhalf((struct mbuf *)p, k, &merr, pktno);
 				if (merr != 0)
 					return (0);
 				continue;
@@ -329,8 +395,7 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
 				if (buflen != 0)
 					return (0);
 				m = (struct mbuf *)p;
-				MINDEX(m, k);
-				A = mtod(m, u_char *)[k];
+				A = MINDEX(m, k);
 				continue;
 #else
 				return (0);
@@ -344,12 +409,13 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
 			if (k >= buflen) {
 #ifdef _KERNEL
 				struct mbuf *m;
+				int8_t c;
 
 				if (buflen != 0)
 					return (0);
 				m = (struct mbuf *)p;
-				MINDEX(m, k);
-				X = (mtod(m, u_char *)[k] & 0xf) << 2;
+				c = MINDEX(m, k);
+				X = (c & 0xf) << 2;
 				continue;
 #else
 				return (0);
