@@ -140,7 +140,6 @@ mvec_buffer_free(struct mbuf *m)
 	}
 }
 
-
 static void
 mvec_clfree(struct mvec_ent *me, m_refcnt_t *refcntp, bool dupref)
 {
@@ -1175,9 +1174,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 		dsti++;
 
 		MPASS(pktrem > 0);
-		for (used = 0, segrem = min(segsz, pktrem); segrem > used;
-			 srem -= used, segrem -= used, pktrem -= used, dsti++) {
-
+		for (used = 0, segrem = min(segsz, pktrem); segrem; dsti++) {
 			MPASS(pktrem > 0);
 			MPASS(srci < mprev->me_mh.mh_count);
 			MPASS(dsti < mnew->me_mh.mh_count);
@@ -1215,16 +1212,21 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			medst[dsti].me_cl = mesrc[srci].me_cl;
 			medst[dsti].me_off = mesrc[srci].me_off + soff;
 			used = min(segrem, srem);
-			if (srem > used) {
+			srem -= used;
+			if (srem) {
 				soff += segrem;
 			} else {
 				srci++;
 				soff = 0;
 			}
-			medst[dsti].me_eop = (segrem == used);
+			segrem -= used;
+			pktrem -= used;
+			medst[dsti].me_eop = (segrem == 0);
 			medst[dsti].me_len = used;
 		}
 	}
+	MPASS(dsti == mnew->me_mh.mh_count);
+	MPASS(srci == mprev->me_mh.mh_count);
 	/*
 	 * Special case first header
 	 */
