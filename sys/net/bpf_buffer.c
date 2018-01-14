@@ -125,17 +125,24 @@ bpf_mbuf_loop(const struct mbuf *m, caddr_t dst, u_int len)
 }
 
 static void
-bpf_mvec_loop(const struct mbuf *m, caddr_t dst, u_int len)
+bpf_mvec_loop(const struct mbuf *m, caddr_t dst, u_int len, int pktno)
 {
 	const struct mvec_header *mh;
 	const struct mvec_ent *me;
 	const struct mbuf_ext *mext;
+	struct mvec_cursor mc;
 	int i, count;
 
 	mext = (const struct mbuf_ext *)m;
 	mh = &mext->me_mh;
 	me = &mext->me_ents[mh->mh_start];
-	for (i = 0; i < mh->mh_used && len > 0;
+	mc.mc_idx = 0;
+	if (pktno > 0) {
+		if (__predict_false(mvec_seek_pktno(m, &mc, 0, pktno) == NULL))
+			return;
+		me += mc.mc_idx;
+	}
+	for (i = 0; i < (mh->mh_used - mc.mc_idx) && (len > 0);
 		 i++, len -= count, dst += count, me++) {
 		count = min(me->me_len, len);
 		bcopy(me_data(me), dst, count);
@@ -147,7 +154,7 @@ bpf_mvec_loop(const struct mbuf *m, caddr_t dst, u_int len)
  */
 void
 bpf_buffer_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
-   u_int len, u_int pktno)
+   u_int len, int pktno)
 {
 	const struct mbuf *m;
 	u_char *dst;
@@ -156,7 +163,7 @@ bpf_buffer_append_mbuf(struct bpf_d *d, caddr_t buf, u_int offset, void *src,
 	m = (struct mbuf *)src;
 	dst = (u_char *)buf + offset;
 	if (m_ismvec(m))
-		bpf_mvec_loop(m, dst, len);
+		bpf_mvec_loop(m, dst, len, pktno);
 	else
 		bpf_mbuf_loop(m, dst, len);
 }
