@@ -89,6 +89,7 @@ int	sglist_append(struct sglist *sg, void *buf, size_t len);
 int	sglist_append_bio(struct sglist *sg, struct bio *bp);
 int	sglist_append_mbuf(struct sglist *sg, struct mbuf *m0);
 int	sglist_append_mvec(struct sglist *sg, struct mbuf *m0);
+int	sglist_append_mvec_multi(struct sglist *sg, struct mbuf *m0, uint8_t *lens, uint8_t *offs, uint8_t *pktcnt);
 int	sglist_append_phys(struct sglist *sg, vm_paddr_t paddr,
 	    size_t len);
 int	sglist_append_sglist(struct sglist *sg, struct sglist *source,
