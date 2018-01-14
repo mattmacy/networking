@@ -1060,14 +1060,16 @@ static void
 tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen, int hdrlen)
 {
 	struct ip *ip;
+	struct tcphdr *th;
 
 	MPASS(hdrlen > prehdrlen);
 	ip = (struct ip *)(hdr + prehdrlen + pi->ipi_ehdrlen);
+	th = (struct tcphdr *)(ip + 1);
 	state->ts_pi = pi;
 	state->ts_idx = ntohs(ip->ip_id);
 	state->ts_prehdrlen = prehdrlen;
 	state->ts_hdrlen = hdrlen;
-	state->ts_seq = ntohl(pi->ipi_tcp_seq);
+	state->ts_seq = ntohl(th->th_seq);
 	/* XXX assuming !VLAN */
 }
 
@@ -1220,8 +1222,6 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	mesrc_count = MBUF2REF(m);
 	if (dupref)
 		bzero(medst_count, count*sizeof(void *));
-	medst[0].me_cl = NULL;
-	medst[0].me_len = 0;
 	/*
 	 * Packet segmentation loop
 	 */
@@ -1229,12 +1229,26 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	soff = mc.mc_off;
 	pktrem = m->m_pkthdr.len - hdrsize;
 	sop = true;
+	hdrbuf = ((caddr_t)(newme + count)) + refsize;
+	tso_init(&state, me_data(mesrc), &pi, prehdrlen, hdrsize);
+	/*
+	 * Replicate input header nheaders times
+	 * and update along the way
+	 */
+	for (i = 0; i < nheaders; i++) {
+		MPASS(pktrem > 0);
+		bcopy(me_data(mesrc), hdrbuf + (i*hdrsize), hdrsize);
+		tso_fixup(&state, hdrbuf + (i*hdrsize), min(pktrem, segsz), (pktrem <= segsz));
+		pktrem -= segsz;
+	}
+	pktrem = m->m_pkthdr.len - hdrsize;
 	for (dsti = i = 0; i < nheaders; i++) {
 		int used;
 
-		/* skip header */
-		medst[dsti].me_cl = NULL;
-		medst[dsti].me_len = 0;
+		medst[dsti].me_cl = hdrbuf;
+		medst[dsti].me_len = hdrsize;
+		medst[dsti].me_off = i*hdrsize;
+		medst[dsti].me_type = MVEC_UNMANAGED;
 		dsti++;
 
 		MPASS(pktrem > 0);
@@ -1291,35 +1305,6 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	}
 	MPASS(dsti == mnew->me_mh.mh_count);
 	MPASS(srci == mprev->me_mh.mh_count);
-	/*
-	 * Special case first header
-	 */
-	medst = newme;
-	mesrc = MHMEI(m, MBUF2MH(m), 0);
-	/*
-	 * Header initialization loop
-	 */
-	hdrbuf = ((caddr_t)(newme + count)) + refsize;
-	tso_init(&state, mesrc->me_cl + mesrc->me_off, &pi, prehdrlen, hdrsize);
-	pktrem = m->m_pkthdr.len - hdrsize;
-	for (dsti = i = 0; i < nheaders; i++) {
-		MPASS(pktrem > 0);
-		/* skip ahead to next header slot */
-		while (medst[dsti].me_cl != NULL)
-			dsti++;
-		bcopy(mesrc->me_cl + mesrc->me_off, hdrbuf, hdrsize);
-		tso_fixup(&state, hdrbuf, min(pktrem, segsz), (pktrem <= segsz));
-		pktrem -= segsz;
-		medst[dsti].me_cl = hdrbuf;
-		medst[dsti].me_off = 0;
-		medst[dsti].me_len = hdrsize;
-		medst[dsti].me_type = MVEC_UNMANAGED;
-		medst[dsti].me_ext_flags = 0;
-		medst[dsti].me_ext_type = 0;
-		medst[dsti].me_eop = 0;
-		hdrbuf += hdrsize;
-	}
-
 	mnew->me_mbuf.m_len = mnew->me_ents->me_len;
 	mnew->me_mbuf.m_data = (mnew->me_ents->me_cl + mnew->me_ents->me_off);
 	mnew->me_mbuf.m_pkthdr.len = m->m_pkthdr.len + (nheaders - 1)*hdrsize;
