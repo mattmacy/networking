@@ -364,13 +364,13 @@ typedef union {
 /*
  * Get index and relative offset of `off` in to mvec `m`
  */
-void *mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int off);
+void *mvec_seek(const struct mbuf *m, struct mvec_cursor *mc, int off);
 
 
-void *mvec_seek_pktno(struct mbuf *m, struct mvec_cursor *mc, int off, uint16_t pktno);
+void *mvec_seek_pktno(const struct mbuf *m, struct mvec_cursor *mc, int off, uint16_t pktno);
 
 
-uint32_t mvec_pktlen(struct mbuf *m, struct mvec_cursor *mc, int pktno);
+uint32_t mvec_pktlen(const struct mbuf *m, struct mvec_cursor *mc, int pktno);
 
 /*
  * Trim (destructively if unshared) `req_len` bytes of `m`.

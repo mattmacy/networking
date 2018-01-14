@@ -199,10 +199,11 @@ mvec_ent_free(struct mvec_header *mh, int idx)
 }
 
 void *
-mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
+mvec_seek(const struct mbuf *m, struct mvec_cursor *mc, int offset)
 {
-	struct mvec_ent *me = MBUF2ME(m);
-	struct mvec_header *mh = MBUF2MH(m);
+	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
+	const struct mvec_ent *me = mext->me_ents;
+	const struct mvec_header *mh = &mext->me_mh;
 	int rem;
 
 	mc->mc_idx = mc->mc_off = 0;
@@ -210,7 +211,7 @@ mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
 		return (NULL);
 	rem = offset;
 
-	me = MHMEI(m, mh, 0);
+	me += mh->mh_start;
 	do {
 		if (rem > me->me_len) {
 			rem -= me->me_len;
@@ -230,17 +231,18 @@ mvec_seek(struct mbuf *m, struct mvec_cursor *mc, int offset)
 }
 
 void *
-mvec_seek_pktno(struct mbuf *m, struct mvec_cursor *mc, int offset, uint16_t pktno)
+mvec_seek_pktno(const struct mbuf *m, struct mvec_cursor *mc, int offset, uint16_t pktno)
 {
-	struct mvec_ent *me = MBUF2ME(m);
-	struct mvec_header *mh = MBUF2MH(m);
+	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
+	const struct mvec_ent *me = mext->me_ents;
+	const struct mvec_header *mh = &mext->me_mh;
 	int i, rem, pktcur;
 
 	pktcur = mc->mc_off = 0;
 	MPASS(offset <= m->m_pkthdr.len);
 	rem = offset;
 
-	me = MHMEI(m, mh, 0);
+	me += mh->mh_start;
 	for (i = 0; i < mh->mh_used && pktcur < pktno; i++, me++)
 		if (me->me_eop)
 			pktcur++;
@@ -267,10 +269,11 @@ mvec_seek_pktno(struct mbuf *m, struct mvec_cursor *mc, int offset, uint16_t pkt
 }
 
 uint32_t
-mvec_pktlen(struct mbuf *m, struct mvec_cursor *mc_, int pktno)
+mvec_pktlen(const struct mbuf *m, struct mvec_cursor *mc_, int pktno)
 {
-	struct mvec_header *mh = MBUF2MH(m);
-	struct mvec_ent *me;
+	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
+	const struct mvec_ent *me = mext->me_ents;
+	const struct mvec_header *mh = &mext->me_mh;
 	struct mvec_cursor mc, *mcp;
 	int i, len, maxsegs;
 	void *p;
@@ -282,7 +285,7 @@ mvec_pktlen(struct mbuf *m, struct mvec_cursor *mc_, int pktno)
 		if (__predict_false(p == NULL))
 			return (0);
 	}
-	me = MHMEI(m, mh, mcp->mc_idx);
+	me += (mh->mh_start + mcp->mc_idx);
 	maxsegs = mh->mh_used - mh->mh_start - mcp->mc_idx;
 	for (i = 0; i < maxsegs; i++, me++) {
 		len += me->me_len;
