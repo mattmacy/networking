@@ -247,7 +247,7 @@ mvec_seek_pktno(struct mbuf *m, struct mvec_cursor *mc, int offset, uint16_t pkt
 	if (pktcur < pktno)
 		return (NULL);
 	mc->mc_idx = i;
-	do {
+	while (rem) {
 		if (me->me_eop && rem >= me->me_len)
 			return (NULL);
 		if (rem > me->me_len) {
@@ -262,10 +262,35 @@ mvec_seek_pktno(struct mbuf *m, struct mvec_cursor *mc, int offset, uint16_t pkt
 			mc->mc_idx++;
 			me++;
 		}
-	} while(rem);
+	}
 	return (void *)(me_data(me) + mc->mc_off);
 }
 
+uint32_t
+mvec_pktlen(struct mbuf *m, struct mvec_cursor *mc_, int pktno)
+{
+	struct mvec_header *mh = MBUF2MH(m);
+	struct mvec_ent *me;
+	struct mvec_cursor mc, *mcp;
+	int i, len, maxsegs;
+	void *p;
+
+	mcp = mc_ ? mc_ : &mc;
+	len = mcp->mc_off = mcp->mc_idx = 0;
+	if (pktno >= 0) {
+		p = mvec_seek_pktno(m, mcp, 0, pktno);
+		if (__predict_false(p == NULL))
+			return (0);
+	}
+	me = MHMEI(m, mh, mcp->mc_idx);
+	maxsegs = mh->mh_used - mh->mh_start - mcp->mc_idx;
+	for (i = 0; i < maxsegs; i++, me++) {
+		len += me->me_len;
+		if (me->me_eop)
+			break;
+	}
+	return (len);
+}
 
 static void
 mvec_trim_head(struct mbuf *m, int offset)
