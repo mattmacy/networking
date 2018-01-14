@@ -2393,6 +2393,26 @@ discard_tx(struct sge_eq *eq)
 	return ((eq->flags & (EQ_ENABLED | EQ_QFLUSH)) != EQ_ENABLED);
 }
 
+static inline void
+get_pkt_gl_multi(struct mbuf *m, struct sglist *gl, uint8_t *lens, uint8_t *offs, uint8_t *pktcnt)
+{
+	int rc;
+
+	M_ASSERTPKTHDR(m);
+
+	sglist_reset(gl);
+	rc = sglist_append_mvec_multi(gl, m, lens, offs, pktcnt);
+	if (__predict_false(rc != 0)) {
+		panic("%s: mbuf %p (%d segs) was vetted earlier but now fails "
+			  "with %d.", __func__, m, mbuf_nsegs(m), rc);
+	}
+
+	MPASS(gl->sg_nseg > 0);
+	KASSERT(gl->sg_nseg == mbuf_nsegs(m),
+			("%s: nsegs changed for mbuf %p from %d to %d", __func__, m,
+			 mbuf_nsegs(m), gl->sg_nseg));
+}
+
 static u_int
 eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *available, u_int *dbdiff)
 {
@@ -2402,7 +2422,15 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	struct port_info *pi = vi->pi;
 	struct adapter *sc = pi->adapter;
 	struct fw_eth_tx_pkts_wr *wr;	/* any fw WR struct will do */
-	int i, n, count, segoff;
+	int i, n, segoff;
+	uint8_t count;
+
+	get_pkt_gl_multi(m0, txq->gl, txq->pkt_lens, txq->pkt_offs, &count);
+	MPASS(count);
+#ifdef INVARIANTS
+	for (i = 0; i < count; i++)
+		MPASS(txq->pkt_offs[i] + txq->pkt_lens[i] < txq->gl->sg_maxseg);
+	#endif
 
 	count = sglist_count_mvec_multi(m0, txq->pkt_lens, txq->pkt_offs, TX_MAX_PKT_SEGS);
 	remaining += count;
@@ -4632,15 +4660,16 @@ write_gl_to_txd(struct sge_txq *txq, struct mbuf *m, caddr_t *to, int checkwrap,
 	MPASS((uintptr_t)(*to) >= (uintptr_t)&eq->desc[0]);
 	MPASS((uintptr_t)(*to) < (uintptr_t)&eq->desc[eq->sidx]);
 
-	get_pkt_gl(m, gl);
-	nsegs = gl->sg_nseg;
-	start = 0;
-	MPASS(nsegs > 0);
 	if (m_ismvec(m) && MBUF2MH(m)->mh_multipkt) {
 		MPASS(pktidx < TX_MAX_PKT_SEGS);
 		start = txq->pkt_offs[pktidx];
 		nsegs = txq->pkt_lens[pktidx];
+	} else {
+		get_pkt_gl(m, gl);
+		nsegs = gl->sg_nseg;
+		start = 0;
 	}
+	MPASS(nsegs > 0);
 
 	nflits = (3 * (nsegs - 1)) / 2 + ((nsegs - 1) & 1) + 2;
 	flitp = (__be64 *)(*to);
