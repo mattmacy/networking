@@ -2191,7 +2191,7 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
  * Locking model is explained in bpf_tap().
  */
 static void
-bpf_mtap_(struct bpf_if *bp, struct mbuf *m, u_int pktno)
+bpf_mtap_(struct bpf_if *bp, struct mbuf *m, int pktno)
 {
 	struct bintime bt;
 	struct bpf_d *d;
@@ -2207,7 +2207,10 @@ bpf_mtap_(struct bpf_if *bp, struct mbuf *m, u_int pktno)
 		return;
 	}
 
-	pktlen = m_length(m, NULL);
+	if (m_ismvec(m))
+		pktlen = mvec_pktlen(m, NULL, pktno);
+	else
+		pktlen = m_length(m, NULL);
 	gottime = BPF_TSTAMP_NONE;
 
 	BPFIF_RLOCK(bp);
@@ -2242,7 +2245,7 @@ bpf_mtap_(struct bpf_if *bp, struct mbuf *m, u_int pktno)
 }
 
 void
-bpf_mtapv(struct bpf_if *bp, struct mbuf *m, u_int pktno)
+bpf_mtapv(struct bpf_if *bp, struct mbuf *m, int pktno)
 {
 	bpf_mtap_(bp, m, pktno);
 }

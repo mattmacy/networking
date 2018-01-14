@@ -419,7 +419,7 @@ void	 bpf_bufheld(struct bpf_d *d);
 int	 bpf_validate(const struct bpf_insn *, int);
 void	 bpf_tap(struct bpf_if *, u_char *, u_int);
 void	 bpf_mtap(struct bpf_if *, struct mbuf *);
-void	 bpf_mtapv(struct bpf_if *, struct mbuf *, u_int);
+void	 bpf_mtapv(struct bpf_if *, struct mbuf *, int);
 void	 bpf_mtap2(struct bpf_if *, void *, u_int, struct mbuf *);
 void	 bpfattach(struct ifnet *, u_int, u_int);
 void	 bpfattach2(struct ifnet *, u_int, u_int, struct bpf_if **);
