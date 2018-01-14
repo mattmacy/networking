@@ -253,7 +253,7 @@ static inline u_int txpkt_vm_len16(u_int, u_int);
 static inline u_int txpkts0_len16(u_int);
 static inline u_int txpkts1_len16(void);
 static u_int write_txpkt_wr(struct sge_txq *, struct fw_eth_tx_pkt_wr *,
-    struct mbuf *, u_int, u_int);
+    struct mbuf *, u_int, int);
 static u_int write_txpkt_vm_wr(struct adapter *, struct sge_txq *,
     struct fw_eth_tx_pkt_vm_wr *, struct mbuf *, u_int);
 static int try_txpkts(struct mbuf *, struct mbuf *, struct txpkts *, u_int);
@@ -2394,14 +2394,22 @@ discard_tx(struct sge_eq *eq)
 }
 
 static inline void
-get_pkt_gl_multi(struct mbuf *m, struct sglist *gl, uint8_t *lens, uint8_t *offs, uint8_t *pktcnt)
+get_pkt_gl_multi(struct sge_txq *txq, struct mbuf *m, uint8_t *pktcnt)
 {
+	struct sg_multipkt sm;
+	struct sglist *gl;
 	int rc;
 
 	M_ASSERTPKTHDR(m);
 
+	sm.sm_cnts = txq->pkt_cnts;
+	sm.sm_offs = txq->pkt_offs;
+	sm.sm_lens = txq->pkt_lens;
+	sm.sm_pktcnt = pktcnt;
+	gl = txq->gl;
+
 	sglist_reset(gl);
-	rc = sglist_append_mvec_multi(gl, m, lens, offs, pktcnt);
+	rc = sglist_append_mvec_multi(gl, m, &sm);
 	if (__predict_false(rc != 0)) {
 		panic("%s: mbuf %p (%d segs) was vetted earlier but now fails "
 			  "with %d.", __func__, m, mbuf_nsegs(m), rc);
@@ -2425,19 +2433,18 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	int i, n;
 	uint8_t count;
 
-	get_pkt_gl_multi(m0, txq->gl, txq->pkt_lens, txq->pkt_offs, &count);
+	get_pkt_gl_multi(txq, m0, &count);
 	MPASS(count);
 #ifdef INVARIANTS
 	for (i = 0; i < count; i++)
-		MPASS(txq->pkt_offs[i] + txq->pkt_lens[i] < txq->gl->sg_maxseg);
-	#endif
+		MPASS(txq->pkt_offs[i] + txq->pkt_cnts[i] < txq->gl->sg_maxseg);
+#endif
 
-	count = sglist_count_mvec_multi(m0, txq->pkt_lens, txq->pkt_offs, TX_MAX_PKT_SEGS);
 	remaining += count;
 	for (i = 0; i < count; i++, remaining--) {
 		if (*available < SGE_MAX_WR_NDESC) {
 			*available += reclaim_tx_descs(txq, 64);
-			if (*available < howmany(txq->pkt_lens[i], EQ_ESIZE / 16))
+			if (*available < howmany(txq->pkt_cnts[i], EQ_ESIZE / 16))
 				return (1);	/* out of descriptors */
 		}
 		wr = (void *)&eq->desc[eq->pidx];
@@ -2573,7 +2580,7 @@ eth_tx(struct mp_ring *r, u_int cidx, u_int pidx)
 			total++;
 			remaining--;
 			ETHER_BPF_MTAP(ifp, m0);
-			n = write_txpkt_wr(txq, (void *)wr, m0, available, 0);
+			n = write_txpkt_wr(txq, (void *)wr, m0, available, -1);
 		}
 		MPASS(n >= 1 && n <= available && n <= SGE_MAX_WR_NDESC);
 
@@ -3712,8 +3719,9 @@ alloc_txq(struct vi_info *vi, struct sge_txq *txq, int idx,
 	TASK_INIT(&txq->tx_reclaim_task, 0, tx_reclaim, eq);
 	txq->ifp = vi->ifp;
 	txq->gl = sglist_alloc(TX_MAX_PKT_SEGS, M_WAITOK);
-	txq->pkt_lens = malloc(TX_MAX_PKT_SEGS, M_CXGBE, M_WAITOK);
-	txq->pkt_offs = malloc(TX_MAX_PKT_SEGS, M_CXGBE, M_WAITOK);
+	txq->pkt_lens = malloc(TX_MAX_PKT_SEGS*sizeof(uint16_t), M_CXGBE, M_WAITOK|M_ZERO);
+	txq->pkt_offs = malloc(TX_MAX_PKT_SEGS, M_CXGBE, M_WAITOK|M_ZERO);
+	txq->pkt_cnts = malloc(TX_MAX_PKT_SEGS, M_CXGBE, M_WAITOK|M_ZERO);
 	if (sc->flags & IS_VF)
 		txq->cpl_ctrl0 = htobe32(V_TXPKT_OPCODE(CPL_TX_PKT_XT) |
 		    V_TXPKT_INTF(pi->tx_chan));
@@ -3817,6 +3825,7 @@ free_txq(struct vi_info *vi, struct sge_txq *txq)
 	free(txq->sdesc, M_CXGBE);
 	free(txq->pkt_lens, M_CXGBE);
 	free(txq->pkt_offs, M_CXGBE);
+	free(txq->pkt_cnts, M_CXGBE);
 	mp_ring_free(txq->r);
 
 	bzero(txq, sizeof(*txq));
@@ -4336,7 +4345,7 @@ write_txpkt_vm_wr(struct adapter *sc, struct sge_txq *txq,
  */
 static u_int
 write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
-   struct mbuf *m0, u_int available, u_int pktno)
+   struct mbuf *m0, u_int available, int pktno)
 {
 	struct sge_eq *eq = &txq->eq;
 	struct tx_sdesc *txsd;
@@ -4350,9 +4359,16 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	M_ASSERTPKTHDR(m0);
 	MPASS(available > 0 && available < eq->sidx);
 
-	len16 = mbuf_len16(m0);
-	nsegs = mbuf_nsegs(m0);
-	pktlen = m0->m_pkthdr.len;
+	if (pktno >= 0) {
+		nsegs = txq->pkt_cnts[pktno];
+		len16 = txpkt_len16(nsegs, 0);
+		pktlen = txq->pkt_lens[pktno];
+	} else {
+		len16 = mbuf_len16(m0);
+		nsegs = mbuf_nsegs(m0);
+		pktlen = m0->m_pkthdr.len;
+	}
+
 	ctrl = sizeof(struct cpl_tx_pkt_core);
 	if (needs_tso(m0))
 		ctrl += sizeof(struct cpl_tx_pkt_lso_core);
@@ -4662,7 +4678,7 @@ write_gl_to_txd(struct sge_txq *txq, struct mbuf *m, caddr_t *to, int checkwrap,
 	if (m_ismvec(m) && MBUF2MH(m)->mh_multipkt) {
 		MPASS(pktidx < TX_MAX_PKT_SEGS);
 		start = txq->pkt_offs[pktidx];
-		nsegs = txq->pkt_lens[pktidx];
+		nsegs = txq->pkt_cnts[pktidx];
 	} else {
 		get_pkt_gl(m, gl);
 		nsegs = gl->sg_nseg;

@@ -549,7 +549,8 @@ struct sge_txq {
 	struct mp_ring *r;	/* tx software ring */
 	struct tx_sdesc *sdesc;	/* KVA of software descriptor ring */
 	struct sglist *gl;
-	uint8_t *pkt_lens;
+	uint16_t *pkt_lens;
+	uint8_t *pkt_cnts;
 	uint8_t *pkt_offs;
 	__be32 cpl_ctrl0;	/* for convenience */
 	int tc_idx;		/* traffic class */
