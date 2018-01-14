@@ -39,8 +39,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/smp.h>
 #include <sys/sysctl.h>
 
-#include <machine/in_cksum.h>
-
 
 #ifdef MVEC_DEBUG
 #define  DPRINTF printf
@@ -942,6 +940,8 @@ mvec_to_mchain(struct mbuf *mp, int how)
  * Move the below to net/ once working 
  */
 
+#include "opt_inet.h"
+#include "opt_inet6.h"
 #include <sys/socket.h>
 #include <net/if.h>
 #include <net/if_var.h>
@@ -1029,8 +1029,6 @@ struct tso_state {
 	uint16_t ts_idx;
 	uint16_t ts_prehdrlen;
 	uint16_t ts_hdrlen;
-	uint16_t ts_ip_len_off;
-	uint16_t ts_uh_len_off;
 };
 
 static void
@@ -1045,12 +1043,7 @@ tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen, 
 	state->ts_prehdrlen = prehdrlen;
 	state->ts_hdrlen = hdrlen;
 	state->ts_seq = ntohl(pi->ipi_tcp_seq);
-	state->ts_uh_len_off = state->ts_ip_len_off = 0;
 	/* XXX assuming !VLAN */
-	if (prehdrlen) {
-		state->ts_uh_len_off = ETHER_HDR_LEN + sizeof(*ip) + offsetof(struct udphdr, uh_ulen);
-		state->ts_ip_len_off = ETHER_HDR_LEN + offsetof(struct ip, ip_len);
-	}
 }
 
 static void
@@ -1058,21 +1051,29 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 {
 	if_pkt_info_t pi = state->ts_pi;
 	struct ip *ip;
+	struct udphdr *uh;
 	struct tcphdr *th;
-	uint16_t encap_len, *hdr_lenp;
+	uint16_t encap_len, plen;
 
 	encap_len = len + state->ts_hdrlen - state->ts_prehdrlen - pi->ipi_ehdrlen;
 	if (state->ts_prehdrlen) {
-		hdr_lenp = (uint16_t *)(hdr + state->ts_uh_len_off);
-		*hdr_lenp = htons(len + state->ts_hdrlen - ETHER_HDR_LEN - sizeof(*ip));
-		hdr_lenp = (uint16_t *)(hdr + state->ts_ip_len_off);
-		*hdr_lenp = htons(len + state->ts_hdrlen - ETHER_HDR_LEN);
+		ip = (struct ip *)(hdr + ETHER_HDR_LEN);
+		plen = len + state->ts_hdrlen - ETHER_HDR_LEN;
+		ip->ip_len = htons(plen);
+		ip->ip_sum = 0;
+		ip->ip_sum = in_cksum_hdr(ip);
+		uh = (struct udphdr *)(ip + 1);
+		plen -= sizeof(*ip);
+		uh->uh_ulen = htons(plen);
+		uh->uh_sum = 0;
+		uh->uh_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr, htons(IPPROTO_UDP + plen));
 	}
 	if (pi->ipi_etype == ETHERTYPE_IP) {
 		ip = (struct ip *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen);
 		ip->ip_len = htons(encap_len);
 		ip->ip_id = htons(state->ts_idx);
 		ip->ip_sum = 0;
+		ip->ip_sum = in_cksum_hdr(ip);
 		state->ts_idx++;
 	} else if (pi->ipi_etype == ETHERTYPE_IPV6) {
 		/* XXX notyet */
@@ -1083,8 +1084,9 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 		th = (struct tcphdr *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen + pi->ipi_ip_hlen);
 		th->th_seq = htonl(state->ts_seq);
 		state->ts_seq += len;
+		plen = len - pi->ipi_ehdrlen - pi->ipi_ip_hlen;
 		th->th_sum = 0;
-
+		th->th_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr, htons(IPPROTO_TCP + plen));
 		/* Zero the PSH and FIN TCP flags if this is not the last
 		   segment. */
 		if (!last)
