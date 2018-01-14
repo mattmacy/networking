@@ -87,7 +87,7 @@ sglist_hold(struct sglist *sg)
 struct sg_multipkt {
 	uint8_t *sm_cnts;
 	uint8_t *sm_offs;
-	uint8_t *sm_lens;
+	uint16_t *sm_lens;
 	uint8_t *sm_pktcnt;
 };
 
