@@ -354,7 +354,7 @@ sglist_append_phys(struct sglist *sg, vm_paddr_t paddr, size_t len)
 }
 
 int
-sglist_append_mvec_multi(struct sglist *sg, struct mbuf *m0, uint8_t *lens, uint8_t *offs, uint8_t *pktcnt)
+sglist_append_mvec_multi(struct sglist *sg, struct mbuf *m0, struct sg_multipkt *sm)
 {
 	struct sgsave save;
 	struct mbuf_ext *mext;
@@ -376,8 +376,8 @@ sglist_append_mvec_multi(struct sglist *sg, struct mbuf *m0, uint8_t *lens, uint
 	curlen = pktsegs = error = pktno = ncur = nprev = 0;
 	for (i = 0; i < mh->mh_used; i++, me++) {
 		nprev = sg->sg_nseg;
-		if (offs && pktsegs == 0)
-			offs[pktno] = nprev;
+		if (sm && pktsegs == 0)
+			sm->sm_offs[pktno] = nprev;
 		if (__predict_true(me->me_len))
 			error = sglist_append(sg, me_data(me), me->me_len);
 		if (__predict_false(error)) {
@@ -387,22 +387,22 @@ sglist_append_mvec_multi(struct sglist *sg, struct mbuf *m0, uint8_t *lens, uint
 		ncur = sg->sg_nseg;
 		pktsegs += (ncur - nprev);
 		curlen += me->me_len;
-		if (lens && me->me_eop) {
-			lens[pktno] = pktsegs;
-			MPASS(curlen > 60);
+		if (sm && me->me_eop) {
+			sm->sm_cnts[pktno] = pktsegs;
+			sm->sm_lens[pktno] = curlen;
 			pktno++;
 			curlen = pktsegs = 0;
 		}
 	}
-	if (pktcnt)
-		*pktcnt = pktno;
+	if (sm)
+		*sm->sm_pktcnt = pktno;
 	return (0);
 }
 
 int
 sglist_append_mvec(struct sglist *sg, struct mbuf *m0)
 {
-	return (sglist_append_mvec_multi(sg, m0, NULL, NULL, NULL));
+	return (sglist_append_mvec_multi(sg, m0, NULL));
 }
 
 /*
