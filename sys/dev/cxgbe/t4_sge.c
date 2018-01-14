@@ -2422,7 +2422,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	struct port_info *pi = vi->pi;
 	struct adapter *sc = pi->adapter;
 	struct fw_eth_tx_pkts_wr *wr;	/* any fw WR struct will do */
-	int i, n, segoff;
+	int i, n;
 	uint8_t count;
 
 	get_pkt_gl_multi(m0, txq->gl, txq->pkt_lens, txq->pkt_offs, &count);
@@ -2434,7 +2434,6 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 
 	count = sglist_count_mvec_multi(m0, txq->pkt_lens, txq->pkt_offs, TX_MAX_PKT_SEGS);
 	remaining += count;
-	segoff = 0;
 	for (i = 0; i < count; i++, remaining--) {
 		if (*available < SGE_MAX_WR_NDESC) {
 			*available += reclaim_tx_descs(txq, 64);
@@ -2442,7 +2441,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 				return (1);	/* out of descriptors */
 		}
 		wr = (void *)&eq->desc[eq->pidx];
-		ETHER_BPF_MTAPV(ifp, m0, segoff);
+		ETHER_BPF_MTAPV(ifp, m0, i);
 		n = write_txpkt_wr(txq, (void *)wr, m0, *available, i);
 
 		*dbdiff += n;
