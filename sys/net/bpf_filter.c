@@ -40,6 +40,7 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/lock.h>
 
 #if !defined(_KERNEL)
 #include <strings.h>
