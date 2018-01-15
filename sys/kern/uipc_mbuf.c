@@ -1289,6 +1289,7 @@ m_defrag(struct mbuf *m0, int how)
 	struct mbuf *m_new = NULL, *m_final = NULL;
 	int progress = 0, length;
 
+	MPASS(!m_ismvec(m0));
 	MBUF_CHECKSLEEP(how);
 	if (!(m0->m_flags & M_PKTHDR))
 		return (m0);
@@ -1372,6 +1373,7 @@ m_collapse(struct mbuf *m0, int how, int maxfrags)
 	struct mbuf *m, *n, *n2, **prev;
 	u_int curfrags;
 
+	MPASS(!m_ismvec(m0));
 	/*
 	 * Calculate the current number of frags.
 	 */
