@@ -2172,7 +2172,10 @@ restart:
 	M_ASSERTPKTHDR(m0);
 	MPASS(m0->m_pkthdr.len > 0);
 	nsegs = count_mbuf_nsegs(m0);
-	if (nsegs > (needs_tso(m0) ? TX_SGL_SEGS_TSO : TX_SGL_SEGS)) {
+	if (m_ismvec(m0) && MBUF2MH(m0)->mh_multipkt) {
+		if (nsegs >= TX_MAX_PKT_SEGS)
+			panic("grow max segs -- limit %d exceeded: %d", TX_MAX_PKT_SEGS, nsegs);
+	} else if (nsegs > (needs_tso(m0) ? TX_SGL_SEGS_TSO : TX_SGL_SEGS)) {
 		if (defragged++ > 0 || (m = m_defrag(m0, M_NOWAIT)) == NULL) {
 			rc = EFBIG;
 			goto fail;
