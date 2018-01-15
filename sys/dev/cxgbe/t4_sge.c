@@ -2433,7 +2433,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	struct port_info *pi = vi->pi;
 	struct adapter *sc = pi->adapter;
 	struct fw_eth_tx_pkts_wr *wr;	/* any fw WR struct will do */
-	int i, n;
+	int i, n, pidx_last;
 	uint8_t count;
 
 	get_pkt_gl_multi(txq, m0, &count);
@@ -2456,6 +2456,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 
 		*dbdiff += n;
 		*available -= n;
+		pidx_last = eq->pidx;
 		IDXINCR(eq->pidx, n, eq->sidx);
 		if (total_available_tx_desc(eq) < eq->sidx / 4 &&
 			atomic_cmpset_int(&eq->equiq, 0, 1)) {
@@ -2473,7 +2474,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 			*dbdiff = 0;
 		}
 	}
-
+	txq->sdesc[pidx_last].m = m0;
 	return (0);
 }
 
@@ -4468,9 +4469,9 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	txq->txpkt_wrs++;
 
 	txsd = &txq->sdesc[eq->pidx];
-	txsd->m = m0;
+	if (pktno == -1)
+		txsd->m = m0;
 	txsd->desc_used = ndesc;
-
 	return (ndesc);
 }
 
@@ -4883,6 +4884,7 @@ reclaim_tx_descs(struct sge_txq *txq, u_int n)
 			m->m_nextpkt = NULL;
 			m_freem(m);
 		}
+		txsd->m = NULL;
 		reclaimed += ndesc;
 		can_reclaim -= ndesc;
 		IDXINCR(eq->cidx, ndesc, eq->sidx);
