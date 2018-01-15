@@ -286,7 +286,7 @@ mvec_pktlen(const struct mbuf *m, struct mvec_cursor *mc_, int pktno)
 			return (0);
 	}
 	me += (mh->mh_start + mcp->mc_idx);
-	maxsegs = mh->mh_used - mh->mh_start - mcp->mc_idx;
+	maxsegs = mh->mh_used - mcp->mc_idx;
 	for (i = 0; i < maxsegs; i++, me++) {
 		len += me->me_len;
 		if (me->me_eop)
@@ -807,7 +807,12 @@ pktchain_to_mvec(struct mbuf *m, int mtu, int how)
 	mh = mt = NULL;
 	while (mp) {
 		mnext = mp->m_nextpkt;
-		mnew = mchain_to_mvec(mp, how);
+		if (mp->m_pkthdr.csum_flags & CSUM_TSO) {
+			mnew = mchain_to_mvec(mp, how);
+		} else  {
+			MPASS(mp->m_pkthdr.len <= mtu + 14);
+			mnew = (void*)mp;
+		}
 		if (__predict_false(mnew == NULL)) {
 			m_freem(mp);
 			mp = mnext;
