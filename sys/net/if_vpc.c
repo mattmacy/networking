@@ -524,7 +524,6 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	istso = (m->m_pkthdr.csum_flags & CSUM_TSO);
 	m->m_nextpkt = NULL;
 	/* temporary */
-	MPASS(m_ismvec(m));
 	if (m_ismvec(m)) {
 		mh = mvec_prepend(m, hdrsize);
 	} else {
@@ -579,6 +578,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	vpc_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx);
 	vpc_cache_update(mh, evhvx, ifp->if_index);
 
+	MPASS(mh->m_pkthdr.len == m_length(mh, NULL));
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
