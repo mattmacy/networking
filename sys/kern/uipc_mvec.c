@@ -120,7 +120,7 @@ mvec_sanity(struct mbuf *m)
 }
 #endif
 
-static void
+void
 mvec_buffer_free(struct mbuf *m)
 {
 	struct mvec_header *mh;
@@ -212,21 +212,13 @@ mvec_seek(const struct mbuf *m, struct mvec_cursor *mc, int offset)
 	rem = offset;
 
 	me += mh->mh_start;
-	do {
-		if (rem > me->me_len) {
-			rem -= me->me_len;
-			me++;
-			mc->mc_idx++;
-		} else if (rem < me->me_len) {
-			rem = 0;
-			mc->mc_off = rem;
-		} else {
-			rem = 0;
-			mc->mc_idx++;
-			me++;
-		}
-	} while(rem);
-
+	MPASS(me->me_len);
+	mc->mc_off = offset;
+	while (mc->mc_off >= me->me_len) {
+		mc->mc_off -= me->me_len;
+		mc->mc_idx++;
+		me++;
+	}
 	return (void *)(me_data(me) + mc->mc_off);
 }
 
@@ -249,21 +241,12 @@ mvec_seek_pktno(const struct mbuf *m, struct mvec_cursor *mc, int offset, uint16
 	if (pktcur < pktno)
 		return (NULL);
 	mc->mc_idx = i;
-	while (rem) {
-		if (me->me_eop && rem >= me->me_len)
+	while (mc->mc_off >= me->me_len) {
+		if (me->me_eop)
 			return (NULL);
-		if (rem > me->me_len) {
-			rem -= me->me_len;
-			me++;
-			mc->mc_idx++;
-		} else if (rem < me->me_len) {
-			rem = 0;
-			mc->mc_off = rem;
-		} else {
-			rem = 0;
-			mc->mc_idx++;
-			me++;
-		}
+		mc->mc_off -= me->me_len;
+		mc->mc_idx++;
+		me++;
 	}
 	return (void *)(me_data(me) + mc->mc_off);
 }
