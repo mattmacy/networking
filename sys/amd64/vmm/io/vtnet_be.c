@@ -769,6 +769,8 @@ vb_rx_completion(struct mbuf *m)
 	/* Generate an interrupt if allowed --- 
 	 * XXX defer until full batch is sent off
 	 */
+	if (m_ismvec(m))
+		mvec_buffer_free(m);
 	vb_intr_msix(vs, VB_TXQ_IDX);
 }
 
