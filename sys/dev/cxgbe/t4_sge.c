@@ -2251,7 +2251,7 @@ restart:
 #if defined(INET) || defined(INET6)
 	if (needs_tso(m0)) {
 		if (m_ismvec(m))
-			tcp = mvec_seek(m, &mc, m0->m_pkthdr.l3hlen);
+			tcp = mvec_seek(m, &mc, m0->m_pkthdr.l2hlen + m0->m_pkthdr.l3hlen);
 		else
 			tcp = m_advance(&m, &offset, m0->m_pkthdr.l3hlen);
 		m0->m_pkthdr.l4hlen = tcp->th_off * 4;
@@ -4451,6 +4451,17 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 
 		write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx, pktno);
 		txq->sgl_wrs++;
+	} else if (m_ismvec(m0)) {
+		struct mbuf_ext *m = (void*)m0;
+		struct mvec_ent *me;
+		int i;
+
+		me = &m->me_ents[m->me_mh.mh_start];
+		for (i = 0; i < m->me_mh.mh_used; i++, me++) {
+			copy_to_txd(eq, me_data(me), &dst, me->me_len);
+			pktlen -= me->me_len;
+		}
+		KASSERT(pktlen == 0, ("%s: %d bytes left.", __func__, pktlen));
 	} else {
 		struct mbuf *m;
 
