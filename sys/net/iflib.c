@@ -1939,7 +1939,8 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 		 */
 		bit_ffc_at(fl->ifl_rx_bitmap, frag_idx, fl->ifl_size,  &frag_idx);
 		if ((frag_idx < 0) || (frag_idx >= fl->ifl_size))
-                	bit_ffc(fl->ifl_rx_bitmap, fl->ifl_size, &frag_idx);
+			bit_ffc(fl->ifl_rx_bitmap, fl->ifl_size, &frag_idx);
+
 		if (sd_m[frag_idx] == NULL && (sd_m[frag_idx] = m_gethdr(M_NOWAIT, MT_NOINIT)) == NULL)
 			break;
 		DBG_COUNTER_INC(rx_allocs);
@@ -2412,8 +2413,7 @@ prefetch_pkts(iflib_fl_t fl, int cidx)
 }
 
 static void
-rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd,
-			   bool fetchmbuf)
+rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 {
 	int flid, cidx;
 	bus_dmamap_t map;
@@ -2430,8 +2430,7 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd,
 	sd->ifsd_m = &fl->ifl_sds.ifsd_m[cidx];
 	sd->ifsd_cl = &fl->ifl_sds.ifsd_cl[cidx];
 	MPASS(fl->ifl_credits);
-	if (fetchmbuf &&
-		__predict_false(*sd->ifsd_m == NULL)) {
+	if (__predict_false(*sd->ifsd_m == NULL)) {
 		MPASS(rxq->ifr_ctx->ifc_sctx->isc_flags & IFLIB_SKIP_CLREFILL);
 		fl->ifl_sds.ifsd_m[cidx] = m_gethdr(M_NOWAIT, MT_NOINIT);
 	} else {
@@ -2478,7 +2477,7 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 	i = 0;
 	mh = NULL;
 	do {
-		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd, true);
+		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd);
 
 		MPASS(*sd->ifsd_cl != NULL);
 		MPASS(*sd->ifsd_m != NULL);
@@ -2548,7 +2547,7 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 		return (NULL);
 	padlen = ri->iri_pad;
 	do {
-		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd, false);
+		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd);
 
 		MPASS(*sd->ifsd_cl != NULL);
 		/* Don't include zero-length frags */
@@ -2562,8 +2561,8 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 		padlen = 0;
 		MPASS(mtmp != NULL);
 	} while (++i < ri->iri_nfrags);
-	mvec_sanity(m);
-	return (m);
+	mvec_sanity((struct mbuf*)mv);
+	return ((struct mbuf*)mv);
 }
 
 static void
@@ -2620,7 +2619,7 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	if (ri->iri_nfrags == 1 &&
 	    ri->iri_frags[0].irf_len <= IFLIB_RX_COPY_THRESH &&
 		!(ctx->ifc_sctx->isc_flags & IFLIB_RX_COMPLETION)) {
-		rxd_frag_to_sd(rxq, &ri->iri_frags[0], FALSE, &sd, true);
+		rxd_frag_to_sd(rxq, &ri->iri_frags[0], FALSE, &sd);
 
 		m = *sd.ifsd_m;
 		*sd.ifsd_m = NULL;
