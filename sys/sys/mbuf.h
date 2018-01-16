@@ -390,6 +390,9 @@ struct mbuf *mvec_pullup(struct mbuf *m, int idx, int count);
  */
 void mvec_free(struct mbuf_ext *m);
 
+
+void mvec_buffer_free(struct mbuf *m);
+
 /*
  * Convert mbuf chain `m` to mvec non-destructively. Returns
  * NULL on failure. It is the caller's responsibility to free
