@@ -696,8 +696,8 @@ mb_free_ext(struct mbuf *m)
 				KASSERT(m->m_ext.ext_free != NULL,
 						("%s: ext_free not set", __func__));
 				m->m_ext.ext_free(m);
-			}
-			mvec_free((struct mbuf_ext*)m);
+			} else
+				mvec_free((struct mbuf_ext*)m);
 			return;
 			break;
 		case EXT_SFBUF:
