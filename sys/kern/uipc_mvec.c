@@ -1295,7 +1295,10 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 		}
 	}
 	MPASS(dsti == mnew->me_mh.mh_count);
-	MPASS(srci == mprev->me_mh.mh_count);
+	if (mprev->me_mh.mh_multiref)
+		MPASS(srci == mprev->me_mh.mh_count);
+	else
+		MPASS(srci <= mprev->me_mh.mh_count);
 	mnew->me_mbuf.m_len = mnew->me_ents->me_len;
 	mnew->me_mbuf.m_data = (mnew->me_ents->me_cl + mnew->me_ents->me_off);
 	mnew->me_mbuf.m_pkthdr.len = m->m_pkthdr.len + (nheaders - 1)*hdrsize;
