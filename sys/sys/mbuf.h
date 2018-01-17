@@ -167,7 +167,7 @@ struct pkthdr {
 			uint8_t		 l3hlen;	/* layer 3 hdr len */
 			uint8_t		 l4hlen;	/* layer 4 hdr len */
 			uint8_t		 l5hlen;	/* layer 5 hdr len */
-			uint32_t	 spare:8;
+			uint32_t	 encaplen:8;
 			uint32_t	 vxlanid:24;
 		};
 	};
@@ -677,12 +677,15 @@ static __inline void mvec_sanity(struct mbuf *m __unused) {}
 #define	CSUM_IP_SCTP		0x00000008	/* SCTP checksum offload */
 #define	CSUM_IP_TSO		0x00000010	/* TCP segmentation offload */
 #define	CSUM_IP_ISCSI		0x00000020	/* iSCSI checksum offload */
+#define	CSUM_IP_VX_TSO		0x00000040	/* VXLAN TCP segmentation offload */
 
 #define	CSUM_IP6_UDP		0x00000200	/* UDP checksum offload */
 #define	CSUM_IP6_TCP		0x00000400	/* TCP checksum offload */
 #define	CSUM_IP6_SCTP		0x00000800	/* SCTP checksum offload */
 #define	CSUM_IP6_TSO		0x00001000	/* TCP segmentation offload */
 #define	CSUM_IP6_ISCSI		0x00002000	/* iSCSI checksum offload */
+#define	CSUM_IP6_VX_TSO		0x00004000	/* VXLAN TCP segmentation offload */
+
 
 /* Inbound checksum support where the checksum was verified by hardware. */
 #define	CSUM_L3_CALC		0x01000000	/* calculated layer 3 csum */
@@ -718,6 +721,7 @@ static __inline void mvec_sanity(struct mbuf *m __unused) {}
 #define	CSUM_UDP		CSUM_IP_UDP
 #define	CSUM_SCTP		CSUM_IP_SCTP
 #define	CSUM_TSO		(CSUM_IP_TSO|CSUM_IP6_TSO)
+#define	CSUM_VX_TSO		(CSUM_IP_VX_TSO|CSUM_IP6_VX_TSO)
 #define	CSUM_UDP_IPV6		CSUM_IP6_UDP
 #define	CSUM_TCP_IPV6		CSUM_IP6_TCP
 #define	CSUM_SCTP_IPV6		CSUM_IP6_SCTP
