@@ -798,10 +798,13 @@ vpc_if_input(struct ifnet *ifp, struct mbuf *m)
 	vs = ifp->if_pspare[3];
 	vsifp = iflib_get_ifp(vs->vs_ctx);
 	eh = mtod(m, struct ether_header*);
-	if (ntohs(eh->ether_type) == ETHERTYPE_ARP)
+	if (ntohs(eh->ether_type) == ETHERTYPE_ARP) {
+		m->m_pkthdr.rcvif = ifp;
 		vs->vs_old_if_input(ifp, m);
-	else
+	} else {
+		m->m_pkthdr.rcvif = vsifp;
 		vsifp->if_input(vsifp, m);
+	}
 }
 
 static int
@@ -837,8 +840,10 @@ vpc_set_listen(struct vpc_softc *vs, struct vpc_listen *vl)
 		goto fail;
 	}
 	/* XXX temporary until we have vpcb in place */
-	vs->vs_old_if_input = ifp->if_input;
-	vs->vs_ifparent = ifp;
+	if (vs->vs_ifparent == NULL) {
+		vs->vs_old_if_input = ifp->if_input;
+		vs->vs_ifparent = ifp;
+	}
 	ifp->if_pspare[3] = vs;
 	ifp->if_input = vpc_if_input;
 	ifr.ifr_index = vs->vs_vxlan_port;
