@@ -793,11 +793,15 @@ vpc_if_input(struct ifnet *ifp, struct mbuf *m)
 {
 	struct vpc_softc *vs;
 	struct ifnet *vsifp;
+	struct ether_header *eh;
 
 	vs = ifp->if_pspare[3];
 	vsifp = iflib_get_ifp(vs->vs_ctx);
-
-	vsifp->if_input(vsifp, m);
+	eh = mtod(m, struct ether_header*);
+	if (ntohs(eh->ether_type) == ETHERTYPE_ARP)
+		vs->vs_old_if_input(ifp, m);
+	else
+		vsifp->if_input(vsifp, m);
 }
 
 static int
