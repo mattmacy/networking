@@ -189,6 +189,10 @@ struct vpc_softc {
 	uint16_t vs_max_port;
 	art_tree vs_vxftable; /* vxlanid -> ftable */
 	ck_epoch_record_t vs_record;
+	/* XXX temporary */
+	void	(*vs_old_if_input)		/* input routine (from h/w driver) */
+		(struct ifnet *, struct mbuf *);
+	struct ifnet *vs_ifparent;
 };
 
 static void vpc_fte_print(struct vpc_softc *vs);
@@ -766,6 +770,8 @@ vpc_detach(if_ctx_t ctx)
 	struct vpc_softc *vs = iflib_get_softc(ctx);
 
 	ck_epoch_unregister(&vs->vs_record);
+	vs->vs_ifparent->if_input = vs->vs_old_if_input;
+	vs->vs_ifparent->if_pspare[3] = NULL;
 	art_iter(&vs->vs_vxftable, vpc_vxftable_free_callback, NULL);
 
 	atomic_add_int(&clone_count, -1);
@@ -780,6 +786,18 @@ vpc_init(if_ctx_t ctx)
 static void
 vpc_stop(if_ctx_t ctx)
 {
+}
+
+static void
+vpc_if_input(struct ifnet *ifp, struct mbuf *m)
+{
+	struct vpc_softc *vs;
+	struct ifnet *vsifp;
+
+	vs = ifp->if_pspare[3];
+	vsifp = iflib_get_ifp(vs->vs_ctx);
+
+	vsifp->if_input(vsifp, m);
 }
 
 static int
@@ -814,7 +832,13 @@ vpc_set_listen(struct vpc_softc *vs, struct vpc_listen *vl)
 		rc = EOPNOTSUPP;
 		goto fail;
 	}
+	/* XXX temporary until we have vpcb in place */
+	vs->vs_old_if_input = ifp->if_input;
+	vs->vs_ifparent = ifp;
+	ifp->if_pspare[3] = vs;
+	ifp->if_input = vpc_if_input;
 	ifr.ifr_index = vs->vs_vxlan_port;
+
 	rc = ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
  fail:
 	RTFREE(rt);
