@@ -596,6 +596,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 			m_freem(mh);
 			return (EINVAL);
 		}
+		mh->m_pkthdr.csum_flags &= ~CSUM_VX_TSO;
 		mtmp = mvec_tso((struct mbuf_ext*)mh, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
 			DPRINTF("%s mvec_tso failed\n", __func__);
