@@ -1193,7 +1193,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	mnew = mvec_alloc(count, refsize + (nheaders * hdrsize), M_NOWAIT);
 	if (__predict_false(mnew == NULL))
 		return (NULL);
-	bcopy(&m->m_pkthdr, &mnew->me_mbuf.m_pkthdr, sizeof(struct pkthdr));
+	bcopy(&m->m_pkthdr, &mnew->me_mbuf.m_pkthdr, sizeof(struct pkthdr) + sizeof(struct m_ext));
 	newmh = &mnew->me_mh;
 	newmh->mh_start = 0;
 	newmh->mh_used = count;
