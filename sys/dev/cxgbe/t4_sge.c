@@ -276,7 +276,8 @@ static int handle_fw_msg(struct sge_iq *, const struct rss_header *,
 static int t4_handle_wrerr_rpl(struct adapter *, const __be64 *);
 static void wrq_tx_drain(void *, int);
 static void drain_wrq_wr_list(struct adapter *, struct sge_wrq *);
-
+static void *mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset);
+static void *m_advance(struct mbuf **pm, int *poffset, int len);
 static int sysctl_uint16(SYSCTL_HANDLER_ARGS);
 static int sysctl_bufsizes(SYSCTL_HANDLER_ARGS);
 static int sysctl_tc(SYSCTL_HANDLER_ARGS);
@@ -1518,6 +1519,170 @@ process_iql:
 	return (0);
 }
 
+struct tso_pkt_info {
+	uint8_t tpi_l2_len;
+	uint8_t tpi_l3_len;
+	uint8_t tpi_l4_len;
+	uint8_t tpi_v6:1;
+	uint8_t tpi_proto:7;
+};
+
+static inline int
+parse_encap_pkt(struct mbuf *m0, struct tso_pkt_info *tpi)
+{
+	struct ether_vlan_header *evh;
+	struct tcphdr *th;
+	struct mvec_cursor mc;
+	struct mbuf *m;
+	int eh_type, offset, ipproto;
+	int l2len, l3len;
+	void *l3hdr;
+
+	MPASS(m_ismvec(m0));
+
+	offset = mc.mc_idx = mc.mc_off = 0;
+	m = m0;
+	if (__predict_true(m_ismvec(m)))
+		evh = mvec_advance(m, &mc, m0->m_pkthdr.encaplen);
+	else
+		evh = m_advance(&m, &offset, m0->m_pkthdr.encaplen);
+
+	eh_type = ntohs(evh->evl_encap_proto);
+	if (eh_type == ETHERTYPE_VLAN) {
+		eh_type = ntohs(evh->evl_proto);
+		l2len = sizeof(*evh);
+	} else
+		l2len = ETHER_HDR_LEN;
+
+	if (__predict_true(m_ismvec(m)))
+		l3hdr = mvec_advance(m, &mc, l2len);
+	else
+		l3hdr = m_advance(&m, &offset, l2len);
+
+	switch(eh_type) {
+#ifdef INET6
+	case ETHERTYPE_IPV6:
+	{
+		struct ip6_hdr *ip6 = l3hdr;
+
+		l3len = sizeof(*ip6);
+		ipproto = ip6->ip6_nxt;
+		tpi->tpi_v6 = 1;
+		break;
+	}
+#endif
+#ifdef INET
+	case ETHERTYPE_IP:
+	{
+		struct ip *ip = l3hdr;
+
+		l3len = ip->ip_hl << 2;
+		ipproto = ip->ip_p;
+		tpi->tpi_v6 = 0;
+		break;
+	}
+#endif
+	default:
+		panic("%s: ethertype 0x%04x unknown.  if_cxgbe must be compiled"
+		    " with the same INET/INET6 options as the kernel.",
+		    __func__, eh_type);
+	}
+	tpi->tpi_proto = ipproto;
+	tpi->tpi_l2_len = l2len;
+	tpi->tpi_l3_len = l3len;
+
+	if (ipproto != IPPROTO_TCP)
+		return (0);
+
+	if (__predict_true(m_ismvec(m)))
+		th = mvec_advance(m, &mc, l3len);
+	else
+		th = m_advance(&m, &offset, l3len);
+	tpi->tpi_l4_len = th->th_off << 2;
+	return (1);
+}
+
+static inline uint64_t
+t6_fill_tnl_lso(struct mbuf *m0, struct cpl_tx_tnl_lso *tnl_lso,
+		enum cpl_tx_tnl_lso_type tnl_type)
+{
+	u32 val;
+	int in_eth_xtra_len, eh_type, rc, csum_type, eth_hdr_len, hdr_len;
+	int l3hdr_len = m0->m_pkthdr.l3hlen;
+	int eth_xtra_len = m0->m_pkthdr.l2hlen - ETHER_HDR_LEN;
+	struct ether_vlan_header *evh;
+	struct tso_pkt_info tpi;
+	bool v6;
+
+	/*
+	 * Parse encapped headers
+	 */
+	bzero(&tpi, sizeof(tpi));
+	rc = parse_encap_pkt(m0, &tpi);
+	MPASS(rc);
+
+	evh = mtod(m0, struct ether_vlan_header *);
+	if (eth_xtra_len)
+		eh_type = ntohs(evh->evl_proto);
+	else
+		eh_type = ntohs(evh->evl_encap_proto);
+	v6 = (eh_type == ETHERTYPE_IPV6);
+
+	val = V_CPL_TX_TNL_LSO_OPCODE(CPL_TX_TNL_LSO) |
+	      F_CPL_TX_TNL_LSO_FIRST |
+	      F_CPL_TX_TNL_LSO_LAST |
+	      (v6 ? F_CPL_TX_TNL_LSO_IPV6OUT : 0) |
+	      V_CPL_TX_TNL_LSO_ETHHDRLENOUT(eth_xtra_len / 4) |
+	      V_CPL_TX_TNL_LSO_IPHDRLENOUT(l3hdr_len / 4) |
+	      (v6 ? 0 : F_CPL_TX_TNL_LSO_IPHDRCHKOUT) |
+	      F_CPL_TX_TNL_LSO_IPLENSETOUT |
+	      (v6 ? 0 : F_CPL_TX_TNL_LSO_IPIDINCOUT);
+	tnl_lso->op_to_IpIdSplitOut = htonl(val);
+
+	tnl_lso->IpIdOffsetOut = 0;
+
+	/* Get the tunnel header length */
+	//val = skb_inner_mac_header(skb) - skb_mac_header(skb);
+	val = m0->m_pkthdr.encaplen;
+	in_eth_xtra_len = tpi.tpi_l2_len - ETHER_HDR_LEN;
+
+	switch (tnl_type) {
+	case TX_TNL_TYPE_VXLAN:
+	case TX_TNL_TYPE_GENEVE:
+		tnl_lso->UdpLenSetOut_to_TnlHdrLen =
+			htons(F_CPL_TX_TNL_LSO_UDPCHKCLROUT |
+			F_CPL_TX_TNL_LSO_UDPLENSETOUT);
+		break;
+	case TX_TNL_TYPE_NVGRE:
+	default:
+		tnl_lso->UdpLenSetOut_to_TnlHdrLen = 0;
+		break;
+	}
+
+	tnl_lso->UdpLenSetOut_to_TnlHdrLen |=
+		 htons(V_CPL_TX_TNL_LSO_TNLHDRLEN(val) |
+		       V_CPL_TX_TNL_LSO_TNLTYPE(tnl_type));
+
+	tnl_lso->r1 = 0;
+
+	val = V_CPL_TX_TNL_LSO_ETHHDRLEN(in_eth_xtra_len / 4) |
+	      V_CPL_TX_TNL_LSO_IPV6(tpi.tpi_v6) |
+	      V_CPL_TX_TNL_LSO_IPHDRLEN(tpi.tpi_l3_len/4) |
+		V_CPL_TX_TNL_LSO_TCPHDRLEN(tpi.tpi_l4_len/4);
+	tnl_lso->Flow_to_TcpHdrLen = htonl(val);
+
+	tnl_lso->IpIdOffset = htons(0);
+
+	tnl_lso->IpIdSplit_to_Mss = htons(V_CPL_TX_TNL_LSO_MSS(m0->m_pkthdr.tso_segsz));
+	tnl_lso->TCPSeqOffset = htonl(0);
+	tnl_lso->EthLenOffset_Size = htonl(V_CPL_TX_TNL_LSO_SIZE(m0->m_pkthdr.len));
+
+	csum_type = tpi.tpi_v6 ? TX_CSUM_TCPIP6 : TX_CSUM_TCPIP;
+	eth_hdr_len = tpi.tpi_l2_len - ETHER_HDR_LEN;
+	hdr_len = V_TXPKT_IPHDR_LEN(tpi.tpi_l4_len) | V_T6_TXPKT_ETHHDR_LEN(eth_hdr_len);
+	return (V_TXPKT_CSUM_TYPE(csum_type) | hdr_len);
+}
+
 static inline int
 cl_has_metadata(struct sge_fl *fl, struct cluster_layout *cll)
 {
@@ -2069,6 +2234,31 @@ m_advance(struct mbuf **pm, int *poffset, int len)
 	*pm = m;
 	return ((void *)p);
 }
+
+static void *
+mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
+{
+	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
+	const struct mvec_ent *me = mext->me_ents;
+	const struct mvec_header *mh = &mext->me_mh;
+	int rem;
+
+	if (offset >= m->m_pkthdr.len)
+		return (NULL);
+	rem = offset;
+
+	me += mh->mh_start + mc->mc_idx ;
+	MPASS(me->me_len);
+	MPASS(me->me_cl);
+	mc->mc_off += offset;
+	while (mc->mc_off >= me->me_len) {
+		mc->mc_off -= me->me_len;
+		mc->mc_idx++;
+		me++;
+	}
+	return (void *)(me_data(me) + mc->mc_off);
+}
+
 
 static inline int
 count_mvec_nsegs(struct mbuf *m)
@@ -4340,6 +4530,17 @@ write_txpkt_vm_wr(struct adapter *sc, struct sge_txq *txq,
 	return (ndesc);
 }
 
+static enum cpl_tx_tnl_lso_type
+cxgb_encap_offload_supported(struct mbuf *m)
+{
+	/* XXX totally punt for now */
+	if (m->m_pkthdr.encaplen)
+		return TX_TNL_TYPE_VXLAN;
+	else
+		return TX_TNL_TYPE_OPAQUE;
+}
+
+
 /*
  * Write a txpkt WR for this packet to the hardware descriptors, update the
  * software descriptor, and advance the pidx.  It is guaranteed that enough
@@ -4351,9 +4552,13 @@ static u_int
 write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
    struct mbuf *m0, u_int available, int pktno)
 {
+	struct ifnet *ifp = txq->ifp;
+	struct vi_info *vi = ifp->if_softc;
+	struct adapter *sc = vi->pi->adapter;
 	struct sge_eq *eq = &txq->eq;
 	struct tx_sdesc *txsd;
 	struct cpl_tx_pkt_core *cpl;
+	enum cpl_tx_tnl_lso_type tnl_type = TX_TNL_TYPE_OPAQUE;
 	uint32_t ctrl;	/* used in many unrelated places */
 	uint64_t ctrl1;
 	int len16, ndesc, pktlen, nsegs;
@@ -4372,11 +4577,16 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 		nsegs = mbuf_nsegs(m0);
 		pktlen = m0->m_pkthdr.len;
 	}
-
+	if ((m0->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
+		(chip_id(sc) == CHELSIO_T6))
+		tnl_type = cxgb_encap_offload_supported(m0);
 	ctrl = sizeof(struct cpl_tx_pkt_core);
-	if (needs_tso(m0))
-		ctrl += sizeof(struct cpl_tx_pkt_lso_core);
-	else if (pktlen <= imm_payload(2) && available >= 2) {
+	if (needs_tso(m0)) {
+		if (tnl_type)
+			ctrl += sizeof(struct cpl_tx_pkt_lso_core);
+		else
+			ctrl += sizeof(struct cpl_tx_tnl_lso);
+	} else if (pktlen <= imm_payload(2) && available >= 2) {
 		/* Immediate data.  Recalculate len16 and set nsegs to 0. */
 		ctrl += pktlen;
 		len16 = howmany(sizeof(struct fw_eth_tx_pkt_wr) +
@@ -4394,18 +4604,19 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	ctrl = V_FW_WR_LEN16(len16);
 	wr->equiq_to_len16 = htobe32(ctrl);
 	wr->r3 = 0;
+	ctrl1 = 0;
 
 	if (needs_tso(m0)) {
 		struct cpl_tx_pkt_lso_core *lso = (void *)(wr + 1);
 
 		KASSERT(m0->m_pkthdr.l2hlen > 0 && m0->m_pkthdr.l3hlen > 0 &&
-		    m0->m_pkthdr.l4hlen > 0,
-		    ("%s: mbuf %p needs TSO but missing header lengths",
-			__func__, m0));
+				m0->m_pkthdr.l4hlen > 0,
+				("%s: mbuf %p needs TSO but missing header lengths",
+				 __func__, m0));
 
 		ctrl = V_LSO_OPCODE(CPL_TX_PKT_LSO) | F_LSO_FIRST_SLICE |
-		    F_LSO_LAST_SLICE | V_LSO_IPHDR_LEN(m0->m_pkthdr.l3hlen >> 2)
-		    | V_LSO_TCPHDR_LEN(m0->m_pkthdr.l4hlen >> 2);
+			F_LSO_LAST_SLICE | V_LSO_IPHDR_LEN(m0->m_pkthdr.l3hlen >> 2)
+			| V_LSO_TCPHDR_LEN(m0->m_pkthdr.l4hlen >> 2);
 		if (m0->m_pkthdr.l2hlen == sizeof(struct ether_vlan_header))
 			ctrl |= V_LSO_ETHHDR_LEN(1);
 		if (m0->m_pkthdr.l3hlen == sizeof(struct ip6_hdr))
@@ -4416,23 +4627,46 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 		lso->mss = htobe16(m0->m_pkthdr.tso_segsz);
 		lso->seqno_offset = htobe32(0);
 		lso->len = htobe32(pktlen);
-
 		cpl = (void *)(lso + 1);
-
 		txq->tso_wrs++;
+	} else if (tnl_type) {
+		int eh_type, elen;
+		struct ether_vlan_header *evh;
+		struct ip *ip;
+		struct cpl_tx_tnl_lso *tnl_lso = (void *)(wr + 1);
+
+		cpl = (void *)(tnl_lso + 1);
+		ctrl1 = t6_fill_tnl_lso(m0, tnl_lso, tnl_type);
+		evh = mtod(m0, struct ether_vlan_header *);
+		eh_type = ntohs(evh->evl_encap_proto);
+		elen = ETHER_HDR_LEN;
+		if (eh_type == ETHERTYPE_VLAN) {
+			eh_type = ntohs(evh->evl_proto);
+			elen = sizeof(*evh);
+		}
+		/* Driver is expected to compute partial checksum that
+		 * does not include the IP Total Length.
+		 */
+		if (eh_type == ETHERTYPE_IP) {
+			ip = (struct ip *)(((caddr_t)evh) + elen);
+			ip->ip_sum = 0;
+			ip->ip_len = 0;
+			ip->ip_sum = in_cksum_hdr(ip);
+		}
+		txq->txcsum++;	/* some hardware assistance provided */
 	} else
 		cpl = (void *)(wr + 1);
 
-	/* Checksum offload */
-	ctrl1 = 0;
-	if (needs_l3_csum(m0) == 0)
-		ctrl1 |= F_TXPKT_IPCSUM_DIS;
-	if (needs_l4_csum(m0) == 0)
-		ctrl1 |= F_TXPKT_L4CSUM_DIS;
-	if (m0->m_pkthdr.csum_flags & (CSUM_IP | CSUM_TCP | CSUM_UDP |
-	    CSUM_UDP_IPV6 | CSUM_TCP_IPV6 | CSUM_TSO))
-		txq->txcsum++;	/* some hardware assistance provided */
-
+	if (ctrl1 == 0) {
+		/* Checksum offload */
+		if (needs_l3_csum(m0) == 0)
+			ctrl1 |= F_TXPKT_IPCSUM_DIS;
+		if (needs_l4_csum(m0) == 0)
+			ctrl1 |= F_TXPKT_L4CSUM_DIS;
+		if (m0->m_pkthdr.csum_flags & (CSUM_IP | CSUM_TCP | CSUM_UDP |
+									   CSUM_UDP_IPV6 | CSUM_TCP_IPV6 | CSUM_TSO))
+			txq->txcsum++;	/* some hardware assistance provided */
+	}
 	/* VLAN tag insertion */
 	if (needs_vlan_insertion(m0)) {
 		ctrl1 |= F_TXPKT_VLAN_VLD | V_TXPKT_VLAN(m0->m_pkthdr.ether_vtag);
