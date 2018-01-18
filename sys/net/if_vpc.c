@@ -523,6 +523,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	int rc, hdrsize;
 
 	m = *mp;
+	ETHER_BPF_MTAP(iflib_get_ifp(vs->vs_ctx), m);
 	*mp = NULL;
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
@@ -798,6 +799,7 @@ vpc_if_input(struct ifnet *ifp, struct mbuf *m)
 	vs = ifp->if_pspare[3];
 	vsifp = iflib_get_ifp(vs->vs_ctx);
 	eh = mtod(m, struct ether_header*);
+	ETHER_BPF_MTAP(vsifp, m);
 	if (ntohs(eh->ether_type) == ETHERTYPE_ARP) {
 		m->m_pkthdr.rcvif = ifp;
 		vs->vs_old_if_input(ifp, m);
