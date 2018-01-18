@@ -1614,6 +1614,7 @@ t6_fill_tnl_lso(struct mbuf *m0, struct cpl_tx_tnl_lso *tnl_lso,
 	struct tso_pkt_info tpi;
 	bool v6;
 
+	MPASS(!(m_ismvec(m0) && MBUF2MH(m0)->mh_multipkt));
 	/*
 	 * Parse encapped headers
 	 */
@@ -4533,6 +4534,8 @@ write_txpkt_vm_wr(struct adapter *sc, struct sge_txq *txq,
 static enum cpl_tx_tnl_lso_type
 cxgb_encap_offload_supported(struct mbuf *m)
 {
+	if (m_ismvec(m))
+		MPASS(!MBUF2MH(m)->mh_multipkt);
 	/* XXX totally punt for now */
 	if (m->m_pkthdr.encaplen)
 		return TX_TNL_TYPE_VXLAN;
@@ -4581,11 +4584,11 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 		(chip_id(sc) == CHELSIO_T6))
 		tnl_type = cxgb_encap_offload_supported(m0);
 	ctrl = sizeof(struct cpl_tx_pkt_core);
-	if (needs_tso(m0)) {
-		if (tnl_type)
-			ctrl += sizeof(struct cpl_tx_pkt_lso_core);
-		else
-			ctrl += sizeof(struct cpl_tx_tnl_lso);
+
+	if (tnl_type) {
+		ctrl += sizeof(struct cpl_tx_tnl_lso);
+	} else if (needs_tso(m0)) {
+		ctrl += sizeof(struct cpl_tx_pkt_lso_core);
 	} else if (pktlen <= imm_payload(2) && available >= 2) {
 		/* Immediate data.  Recalculate len16 and set nsegs to 0. */
 		ctrl += pktlen;
