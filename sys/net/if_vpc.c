@@ -524,6 +524,11 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 
 	m = *mp;
 	*mp = NULL;
+	if (!(m->m_flags & M_VXLANTAG)) {
+		m_freem(m);
+		return (EINVAL);
+	}
+	MPASS(m->m_pkthdr.vxlanid);
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
 	oldflags = m->m_pkthdr.csum_flags;
