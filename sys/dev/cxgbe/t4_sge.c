@@ -1955,7 +1955,7 @@ t4_eth_rx(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m0)
 
 #if defined(INET) || defined(INET6)
 	if (vxlan_decap)
-		iflib_vxlan_decap(m0, sc->vxlan_port, false);
+		iflib_vxlan_decap(ifp, m0, sc->vxlan_port, false);
 	if (iq->flags & IQ_LRO_ENABLED) {
 		if (sort_before_lro(lro)) {
 			tcp_lro_queue_mbuf(lro, m0);
