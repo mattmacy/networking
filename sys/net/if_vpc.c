@@ -525,6 +525,11 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	m = *mp;
 	ETHER_BPF_MTAP(iflib_get_ifp(vs->vs_ctx), m);
 	*mp = NULL;
+	if (!(m->m_flags & M_VXLANTAG)) {
+		m_freem(m);
+		return (EINVAL);
+	}
+	MPASS(m->m_pkthdr.vxlanid);
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
 	oldflags = m->m_pkthdr.csum_flags;
@@ -597,6 +602,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 			m_freem(mh);
 			return (EINVAL);
 		}
+		mh->m_pkthdr.csum_flags &= ~CSUM_VX_TSO;
 		mtmp = mvec_tso((struct mbuf_ext*)mh, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
 			DPRINTF("%s mvec_tso failed\n", __func__);
