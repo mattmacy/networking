@@ -1756,7 +1756,7 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 
 	VTNET_RXQ_UNLOCK(rxq);
 	if (vxlan_enabled)
-		iflib_vxlan_decap(m, vxlan_port, soft_csum);
+		iflib_vxlan_decap(ifp, m, vxlan_port, soft_csum);
 	(*ifp->if_input)(ifp, m);
 	VTNET_RXQ_LOCK(rxq);
 }

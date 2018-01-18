@@ -2818,7 +2818,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		rx_pkts++;
 #if defined(INET6) || defined(INET)
 		if (vxlan_enabled)
-			iflib_vxlan_decap(m, ctx->ifc_vxlan_port, soft_csum);
+			iflib_vxlan_decap(ctx->ifc_ifp, m, ctx->ifc_vxlan_port, soft_csum);
 		if (lro_enabled) {
 			if (!lro_possible) {
 				lro_possible = iflib_check_lro_possible(m, v4_forwarding, v6_forwarding);
@@ -7066,7 +7066,7 @@ iflib_clone_deregister(if_pseudo_t ip)
 
 #if defined(INET6) || defined(INET)
 void
-iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
+iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
 {
 	struct ether_vlan_header *eh;
 	struct udphdr *uh;
@@ -7112,6 +7112,7 @@ iflib_vxlan_decap(struct mbuf *m, uint16_t vxlan_port, bool soft_csum __unused)
 
 	if (uh->uh_dport != vxlan_port)
 		return;
+	BPF_MTAP(ifp, m);
 	len += sizeof(*uh) + sizeof(*vh);
 	vh = (struct vxlan_header *)(uh + 1);
 	vxlanid = vh->vxlh_vni;

@@ -520,7 +520,8 @@ ether_input_internal(struct ifnet *ifp, struct mbuf *m)
 	/*
 	 * Give bpf a chance at the packet.
 	 */
-	ETHER_BPF_MTAP(ifp, m);
+	if (!(m->m_flags & M_VXLANTAG))
+		ETHER_BPF_MTAP(ifp, m);
 
 	/*
 	 * If the CRC is still on the packet, trim it off. We do this once
