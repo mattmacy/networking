@@ -464,7 +464,7 @@ static __inline void mvec_sanity(struct mbuf *m __unused) {}
 /*
  * mbuf flags of global significance and layer crossing.
  * Those of only protocol/layer specific significance are to be mapped
- * to M_PROTO[1-12] and cleared at layer handoff boundaries.
+ * to M_PROTO[1-11] and cleared at layer handoff boundaries.
  * NB: Limited to the lower 24 bits.
  */
 #define	M_EXT		0x00000001 /* has associated external storage */
