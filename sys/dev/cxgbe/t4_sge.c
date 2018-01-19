@@ -4597,13 +4597,14 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 {
 	struct ifnet *ifp = txq->ifp;
 	struct vi_info *vi = ifp->if_softc;
-	struct adapter *sc = vi->pi->adapter;
+	struct port_info *pi = vi->pi;
+	struct adapter *sc = pi->adapter;
 	struct sge_eq *eq = &txq->eq;
 	struct tx_sdesc *txsd;
 	struct cpl_tx_pkt_core *cpl;
 	enum cpl_tx_tnl_lso_type tnl_type = TX_TNL_TYPE_OPAQUE;
 	uint32_t ctrl;	/* used in many unrelated places */
-	uint64_t ctrl1;
+	uint64_t ctrl0, ctrl1;
 	int len16, ndesc, pktlen, nsegs;
 	caddr_t dst;
 
@@ -4648,6 +4649,7 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	wr->equiq_to_len16 = htobe32(ctrl);
 	wr->r3 = 0;
 	ctrl1 = 0;
+	ctrl0 = txq->cpl_ctrl0;
 
 	if (needs_tso(m0)) {
 		struct cpl_tx_pkt_lso_core *lso = (void *)(wr + 1);
@@ -4676,6 +4678,10 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 		struct cpl_tx_tnl_lso *tnl_lso = (void *)(wr + 1);
 		int eh_type;
 		struct ether_vlan_header *evh;
+
+		ctrl0 = htobe32(V_TXPKT_OPCODE(CPL_TX_PKT_XT) |
+						V_TXPKT_INTF(pi->tx_chan) |
+						V_TXPKT_PF(sc->pf));
 
 		MPASS(m0->m_pkthdr.l2hlen && m0->m_pkthdr.l3hlen);
 		evh = mtod(m0, struct ether_vlan_header *);
@@ -4720,7 +4726,7 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	}
 
 	/* CPL header */
-	cpl->ctrl0 = txq->cpl_ctrl0;
+	cpl->ctrl0 = ctrl0;
 	cpl->pack = 0;
 	cpl->len = htobe16(pktlen);
 	cpl->ctrl1 = htobe64(ctrl1);
