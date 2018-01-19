@@ -728,7 +728,7 @@ vb_rx_completion(struct mbuf *m)
 	struct vb_rxq *rxq;
 	struct vb_softc *vs;
 	uint16_t vidx;
-	int cidx, idx, mask;
+	int cidx, idx, mask, skip, pktlen;
 
 	if ((m->m_flags & M_PKTHDR) == 0)
 		return;
@@ -744,6 +744,20 @@ vb_rx_completion(struct mbuf *m)
 	MPASS(rxq != NULL);
 	vs = rxq->vr_vs;
 	cidx = (int)m->m_ext.ext_arg2;
+	/*
+	 * Is this just a buffer post-processing?
+	 */
+	skip = (m->m_flags & M_PROTO1);
+	pktlen = m->m_pkthdr.len;
+	/*
+	 * XXX Confirm that we aren't leaking
+	 * an encap mbuf this way on encap
+	 */
+	if (m_ismvec(m))
+		mvec_buffer_free(m);
+	if (skip)
+		return;
+
 	MPASS(cidx & VB_CIDX_VALID);
 	cidx &= ~VB_CIDX_VALID;
 	idx = rxq->vr_used[cidx & 4095];
@@ -754,10 +768,11 @@ vb_rx_completion(struct mbuf *m)
 	vidx = vu->idx;
 	if (cidx != vidx)
 		printf("mismatch cidx: %d vidx: %d\n", cidx, vidx);
-
+	else
+		DPRINTF("cidx: %d vidx: %d\n", cidx, vidx);
 	vue = &vu->ring[vidx++ & mask];
 	vue->id = idx;
-	vue->len = m->m_pkthdr.len;
+	vue->len = pktlen;
 	CTR4(KTR_SPARE3, "%s -- idx: %d vidx: %d len: %d\n",
 		   __func__, idx, vidx, vue->len);
 	/* ensure that all prior vue updates are written first */
@@ -769,8 +784,6 @@ vb_rx_completion(struct mbuf *m)
 	/* Generate an interrupt if allowed --- 
 	 * XXX defer until full batch is sent off
 	 */
-	if (m_ismvec(m))
-		mvec_buffer_free(m);
 	vb_intr_msix(vs, VB_TXQ_IDX);
 }
 
