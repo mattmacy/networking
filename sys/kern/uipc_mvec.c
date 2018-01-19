@@ -1303,6 +1303,8 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	mnew->me_mbuf.m_data = (mnew->me_ents->me_cl + mnew->me_ents->me_off);
 	mnew->me_mbuf.m_pkthdr.len = m->m_pkthdr.len + (nheaders - 1)*hdrsize;
 	mvec_sanity((struct mbuf *)mnew);
+	m->m_flags |= M_PROTO1;
+
 	if (dofree) {
 		if (mesrc->me_cl && (mesrc->me_type == MVEC_MBUF) && mesrc->me_len == hdrsize)
 			uma_zfree_arg(zone_mbuf, mesrc->me_cl, (void *)MB_DTOR_SKIP);
