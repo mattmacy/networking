@@ -708,7 +708,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
 	}
 	mh->m_pkthdr.encaplen = hdrsize;
-	if (oldflags & CSUM_TSO &&
+	if ((oldflags & CSUM_TSO) &&
 		(mh = vpc_header_pullup(mh)) == NULL)
 			return (ENOMEM);
 	mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
@@ -800,6 +800,7 @@ vpc_vxlan_encap_chain(struct vpc_softc *vs, struct mbuf **mp, bool *can_batch)
 			if (__predict_false(ifp != m->m_pkthdr.rcvif))
 				*can_batch = false;
 		}
+		MPASS(m != mnext);
 		m = mnext;
 	} while (m != NULL);
 	if (__predict_false(mnext != NULL)) {
