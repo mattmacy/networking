@@ -1053,7 +1053,7 @@ vb_txflags(struct mbuf *m, struct pinfo *pinfo)
 }
 
 static void
-vb_input_process(struct ifnet *ifp, struct mbuf *m)
+vb_input_process(struct ifnet *ifp, struct mbuf *m, int vni)
 {
 	struct pinfo pinfo;
 	caddr_t hdr;
@@ -1064,6 +1064,10 @@ vb_input_process(struct ifnet *ifp, struct mbuf *m)
 		hdr = mtod(m, caddr_t);
 		vb_pparse(hdr, &pinfo);
 		vb_txflags(m, &pinfo);
+		if (vni) {
+			m->m_flags |= M_VXLANTAG;
+			m->m_pkthdr.vxlanid = vni;
+		}
 		m = m->m_nextpkt;
 	} while (m != NULL);
 }
@@ -1077,12 +1081,10 @@ vb_if_input(struct ifnet *vbifp, struct mbuf *m)
 	if_ctx_t ctx = vbifp->if_softc;
 	struct vb_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *hwifp = vs->vs_ifparent;
+	int vni;
 
-	if (vs->vs_flags & VS_VXLANTAG) {
-		m->m_flags |= M_VXLANTAG;
-		m->m_pkthdr.vxlanid = vs->vs_vni;
-	}
-	vb_input_process(vbifp, m);
+	vni = (vs->vs_flags & VS_VXLANTAG) ? vs->vs_vni : 0;
+	vb_input_process(vbifp, m, vni);
 	/*
 	 * XXX check mbuf_to_qid
 	 */
@@ -1102,7 +1104,7 @@ vb_hw_if_input(struct ifnet *hwifp, struct mbuf *m)
 	vs = hwifp->if_pspare[3];
 	vbifp = iflib_get_ifp(vs->vs_ctx);
 
-	vb_input_process(hwifp, m);
+	vb_input_process(hwifp, m, 0);
 	(void)vbifp->if_transmit(vbifp, m);
 }
 
