@@ -245,11 +245,14 @@ struct vb_softc {
 
 struct vb_rxq {
 	uint16_t vr_cidx;
+	uint16_t vr_pidx;
 	struct vb_softc *vr_vs;
 	caddr_t *vr_sdcl;
 	uint16_t *vr_avail;
 	struct vring_desc *vr_base;
-	uint16_t vr_used[4096];
+	uint8_t *vr_completion;
+	uint16_t *vr_used;
+	uint8_t vr_shift;
 	char vr_pkttmp[VB_HDR_MAX] __aligned(CACHE_LINE_SIZE);
 };
 
@@ -478,12 +481,53 @@ vb_rxd_refill(void *arg __unused, if_rxd_update_t iru __unused)
 	// log refill
 }
 
+#define idx2gen(rxq, idx) ((uint8_t)(!(((idx) >> (rxq)->vr_shift) & 1UL)))
+
 static void
-vb_rxd_flush(void *arg __unused, uint16_t rxqid __unused,
+vb_rxd_reclaim(struct vb_rxq *rxq)
+{
+	struct vb_softc *vs = rxq->vr_vs;
+	volatile struct vring_used *vu;
+	volatile struct vring_used_elem *vue;
+	uint16_t idx, vidx, pidx, nrxd;
+	int mask, mask_used;
+#ifdef INVARIANTS
+	int count = 0;
+#endif
+
+	if (!(vs->vs_flags & VS_READY))
+		return;
+
+	nrxd = vs->shared->isc_nrxd[0];
+	mask_used = (nrxd*4)-1;
+	mask = nrxd-1;
+
+	pidx = rxq->vr_pidx;
+	/* Update the element in the used ring */
+	vu = vs->vs_queues[VB_TXQ_IDX].vq_used;
+	MPASS(vu);
+	vidx = vu->idx;
+	for (pidx = rxq->vr_pidx; rxq->vr_completion[pidx & mask] == idx2gen(rxq, pidx); pidx++) {
+		idx = rxq->vr_used[pidx & mask_used];
+		vue = &vu->ring[vidx++ & mask];
+		vue->id = idx;
+		MPASS(count++ < nrxd);
+	}
+	/* ensure that all prior vue updates are written first */
+	wmb();
+	vu->idx = vidx;
+	rxq->vr_pidx = pidx;
+	vb_intr_msix(vs, VB_TXQ_IDX);
+}
+
+static void
+vb_rxd_flush(void *arg, uint16_t rxqid,
 			 uint8_t flid __unused, qidx_t pidx __unused)
 {
-	// keep private update in rx_notify
-	// txq interrupt?
+	struct vb_softc *vs = arg;
+	struct vb_rxq *rxq = &vs->vs_rx_queues[rxqid];
+
+	vb_rxd_reclaim(rxq);
 }
 
 static caddr_t
@@ -498,14 +542,17 @@ static int
 vb_rxd_available(void *arg, qidx_t rxqid, qidx_t cidx, qidx_t budget)
 {
 	struct vb_softc *vs = arg;
-	uint16_t idx;
+	struct vb_rxq *rxq = &vs->vs_rx_queues[rxqid];
+	uint16_t idx, nrxd = vs->shared->isc_nrxd[0];
 	int cnt;
 
 	idx =  vs->vs_queues[VB_TXQ_IDX].vq_avail->idx;
-	idx &= (vs->shared->isc_nrxd[0]-1);
+	idx &= (nrxd-1);
 	cnt = (int32_t)idx - (int32_t)cidx;
 	if (cnt < 0)
-		cnt += vs->shared->isc_nrxd[0];
+		cnt += nrxd;
+	if (__predict_false(abs(rxq->vr_pidx - rxq->vr_cidx) >= (nrxd >> 2)))
+		vb_rxd_reclaim(rxq);
 	return (cnt);
 }
 
@@ -629,7 +676,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	if_softc_ctx_t scctx = vs->shared;
 	struct vb_rxq *rxq = &vs->vs_rx_queues[ri->iri_qsidx];
 	struct vring_desc *rxd;
-	int i, cidx, vcidx, count, mask;
+	int i, cidx, vcidx, count, mask, used_mask;
 	caddr_t data;
 	bool parse_header;
 
@@ -639,11 +686,12 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	cidx = ri->iri_cidx;
 	vcidx = rxq->vr_avail[cidx];
 	mask = scctx->isc_nrxd[0]-1;
+	used_mask = (4*scctx->isc_nrxd[0])-1;
 	if (cidx != (rxq->vr_cidx & mask))
 		printf("mismatch cidx: %d vr_cidx_masked:%d vr_cidx: %d",
 			   cidx, rxq->vr_cidx & mask, rxq->vr_cidx);
 
-	rxq->vr_used[rxq->vr_cidx & 4095] = vcidx;
+	rxq->vr_used[rxq->vr_cidx & used_mask] = vcidx;
 	/* later passed to ext_free to return used descriptors */
 	ri->iri_cookie1 = (void *)rxq;
 	ri->iri_cookie2 = (rxq->vr_cidx++ | VB_CIDX_VALID);
@@ -723,23 +771,13 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 static void
 vb_rx_completion(struct mbuf *m)
 {
-	volatile struct vring_used *vu;
-	volatile struct vring_used_elem *vue;
-	struct vb_rxq *rxq;
 	struct vb_softc *vs;
-	uint16_t vidx;
-	int cidx, idx, mask, skip, pktlen;
+	struct vb_rxq *rxq;
+	int cidx, mask, skip;
 
 	if ((m->m_flags & M_PKTHDR) == 0)
 		return;
 
-#ifdef GUEST_OVERCOMMIT
-	/*
-	 * Unpin the page now that the host NIC has completed the tx
-	 * and no longer needs it to be resident.
-	 */
-	vm_gpa_release(vb->vb_mb[vidx].cookie);
-#endif
 	rxq = (struct vb_rxq *)m->m_ext.ext_arg1;
 	MPASS(rxq != NULL);
 	vs = rxq->vr_vs;
@@ -748,7 +786,6 @@ vb_rx_completion(struct mbuf *m)
 	 * Is this just a buffer post-processing?
 	 */
 	skip = (m->m_flags & M_PROTO1);
-	pktlen = m->m_pkthdr.len;
 	/*
 	 * XXX Confirm that we aren't leaking
 	 * an encap mbuf this way on encap
@@ -760,31 +797,8 @@ vb_rx_completion(struct mbuf *m)
 
 	MPASS(cidx & VB_CIDX_VALID);
 	cidx &= ~VB_CIDX_VALID;
-	idx = rxq->vr_used[cidx & 4095];
 	mask = vs->shared->isc_nrxd[0]-1;
-
-	/* Update the element in the used ring */
-	vu = vs->vs_queues[VB_TXQ_IDX].vq_used;
-	vidx = vu->idx;
-	if (cidx != vidx)
-		printf("mismatch cidx: %d vidx: %d\n", cidx, vidx);
-	else
-		DPRINTF("cidx: %d vidx: %d\n", cidx, vidx);
-	vue = &vu->ring[vidx++ & mask];
-	vue->id = idx;
-	vue->len = pktlen;
-	CTR4(KTR_SPARE3, "%s -- idx: %d vidx: %d len: %d\n",
-		   __func__, idx, vidx, vue->len);
-	/* ensure that all prior vue updates are written first */
-	wmb();
-	vu->idx = vidx;
-	/* ensure that idx is visible */
-	wmb();
-
-	/* Generate an interrupt if allowed --- 
-	 * XXX defer until full batch is sent off
-	 */
-	vb_intr_msix(vs, VB_TXQ_IDX);
+	rxq->vr_completion[cidx & mask] = idx2gen(rxq, cidx);
 }
 
 static int
@@ -1127,12 +1141,14 @@ vb_dev_kick(struct vb_softc *vs, uint32_t q)
 static void
 vb_vring_munmap(struct vb_softc *vs, int q)
 {
+
 #ifdef GUEST_OVERCOMMIT
 	int i;
 
 	if (vs->vs_queues[q].vq_addr == 0)
 		return;
 
+	vs->vs_flags &= ~VS_READY;
 	pmap_qremove(vs->vs_queues[q].vq_addr, vs->vs_queues[q].vq_pages);
 
 	kva_free(vs->vs_queues[q].vq_addr,
@@ -1143,7 +1159,8 @@ vb_vring_munmap(struct vb_softc *vs, int q)
 		vm_gpa_release(vs->vs_queues[q].vq_m[i]);
 		vs->vs_queues[q].vq_m[i] = NULL;
 	}
-
+#else
+	vs->vs_flags &= ~VS_READY;
 #endif
 	vs->vs_queues[q].vq_lastpfn = 0;
 	vs->vs_queues[q].vq_addr = 0;
@@ -1245,6 +1262,7 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 
 	if_setflagbits(ifp, IFF_UP, 0);
 	ifp->if_init(vs->vs_ctx);
+	vs->vs_flags |= VS_READY;
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
 }
 
@@ -1398,7 +1416,22 @@ static void
 vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq)
 {
 	rxq->vr_vs = vs;
-	rxq->vr_cidx = 0;
+	rxq->vr_pidx = rxq->vr_cidx = 0;
+	/* one bit beyond indicates whether we've wrapped an
+	 * even or odd number of times
+	 */
+	rxq->vr_shift = ffs(vs->shared->isc_nrxd[0])-1;
+	rxq->vr_used = malloc(sizeof(uint16_t)*vs->shared->isc_nrxd[0]*4,
+						  M_VTNETBE, M_WAITOK|M_ZERO);
+	rxq->vr_completion =  malloc(sizeof(uint8_t)*vs->shared->isc_nrxd[0],
+						  M_VTNETBE, M_WAITOK|M_ZERO);
+}
+
+static void
+vb_rxq_deinit(struct vb_softc *vs, struct vb_rxq *rxq)
+{
+	free(rxq->vr_used, M_VTNETBE);
+	free(rxq->vr_completion, M_VTNETBE);
 }
 
 static void
@@ -1538,12 +1571,11 @@ static int
 vb_attach_post(if_ctx_t ctx)
 {
 	struct vb_softc *vs = iflib_get_softc(ctx);
-	if_softc_ctx_t scctx;
+	if_softc_ctx_t scctx = vs->shared;
 	struct ifnet *ifp;
 	char buf[32];
 	int i;
 
-	scctx = vs->shared;
 	MPASS(scctx->isc_nrxqsets);
 	MPASS(scctx->isc_ntxqsets);
 	vs->vs_rx_queues = malloc(sizeof(struct vb_rxq)*scctx->isc_nrxqsets,
@@ -1587,6 +1619,7 @@ static int
 vb_detach(if_ctx_t ctx)
 {
 	struct vb_softc *vs = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = vs->shared;
 	struct vtnet_be *vb = vs->vs_vn;
 	int i;
 
@@ -1603,6 +1636,9 @@ vb_detach(if_ctx_t ctx)
 	for (i = 0; i < vs->vs_nvq; i++) {
 		vb_vring_munmap(vs, i);
 	}
+
+	for (i = 0; i < scctx->isc_nrxqsets; i++)
+		vb_rxq_deinit(vs, &vs->vs_rx_queues[i]);
 	free(vs->vs_rx_queues, M_VTNETBE);
 	free(vs->vs_tx_queues, M_VTNETBE);
 	return (0);
@@ -1624,7 +1660,6 @@ vb_stop(if_ctx_t ctx)
 	MPASS(scctx->isc_nrxd[0]);
 
 	for (i = 0; i < scctx->isc_nrxqsets; i++) {
-		vb_rxq_init(vs, &vs->vs_rx_queues[i]);
 		for (j = 0; j < scctx->isc_nrxd[0]; j++)
 			vs->vs_rx_queues[i].vr_sdcl[j] = NULL;
 	}
