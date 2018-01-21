@@ -1437,7 +1437,7 @@ cxgbe_probe(device_t dev)
 }
 
 #define T4_CAP (IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_MTU | IFCAP_HWCSUM | \
-    IFCAP_VLAN_HWCSUM | IFCAP_TSO | IFCAP_JUMBO_MTU | IFCAP_LRO | IFCAP_VXLANOFLD | \
+    IFCAP_VLAN_HWCSUM | IFCAP_TSO | IFCAP_JUMBO_MTU | IFCAP_LRO | \
 	IFCAP_VLAN_HWTSO | IFCAP_LINKSTATE | IFCAP_HWCSUM_IPV6 | IFCAP_HWSTATS)
 #define T4_CAP_ENABLE (T4_CAP)
 
@@ -1849,7 +1849,6 @@ cxgbe_transmit_txq(struct ifnet *ifp, struct mbuf *m)
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
-
 		rc = cxgbe_transmit(ifp, mp);
 		if (__predict_false(rc)) {
 			lasterr = rc;
