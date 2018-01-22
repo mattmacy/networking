@@ -2673,7 +2673,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	for (i = 0; i < count; i++)
 		MPASS(txq->pkt_offs[i] + txq->pkt_cnts[i] < txq->gl->sg_maxseg);
 #endif
-
+	MPASS(!needs_tso(m0));
 	remaining += count;
 	for (i = 0; i < count; i++, remaining--) {
 		if (*available < SGE_MAX_WR_NDESC) {
@@ -4557,9 +4557,9 @@ write_txpkt_vm_wr(struct adapter *sc, struct sge_txq *txq,
 	 */
 	if (dst == (void *)&eq->desc[eq->sidx]) {
 		dst = (void *)&eq->desc[0];
-		write_gl_to_txd(txq, m0, &dst, 0, 0);
+		write_gl_to_txd(txq, m0, &dst, 0, -1);
 	} else
-		write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx, 0);
+		write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx, -1);
 	txq->sgl_wrs++;
 
 	txq->txpkt_wrs++;
@@ -4736,9 +4736,9 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	if (nsegs > 0) {
 		if (dst == (void *)&eq->desc[eq->sidx]) {
 			dst = (void *)&eq->desc[0];
-			write_gl_to_txd(txq, m0, &dst, 0, 0);
+			write_gl_to_txd(txq, m0, &dst, 0, pktno);
 		} else
-			write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx, 0);
+			write_gl_to_txd(txq, m0, &dst, eq->sidx - ndesc < eq->pidx, pktno);
 
 		txq->sgl_wrs++;
 	} else if (m_ismvec(m0)) {
@@ -4941,8 +4941,7 @@ write_txpkts_wr(struct sge_txq *txq, struct fw_eth_tx_pkts_wr *wr,
 		    (uintptr_t)flitp == (uintptr_t)&eq->desc[eq->sidx])
 			flitp = (void *)&eq->desc[0];
 
-		write_gl_to_txd(txq, m, (caddr_t *)(&flitp), checkwrap, 0);
-
+		write_gl_to_txd(txq, m, (caddr_t *)(&flitp), checkwrap, -1);
 	}
 
 	if (txp->wr_type == 0) {
@@ -4980,7 +4979,7 @@ write_gl_to_txd(struct sge_txq *txq, struct mbuf *m, caddr_t *to, int checkwrap,
 	MPASS((uintptr_t)(*to) >= (uintptr_t)&eq->desc[0]);
 	MPASS((uintptr_t)(*to) < (uintptr_t)&eq->desc[eq->sidx]);
 
-	if (m_ismvec(m) && MBUF2MH(m)->mh_multipkt) {
+	if (pktidx >= 0) {
 		MPASS(pktidx < TX_MAX_PKT_SEGS);
 		start = txq->pkt_offs[pktidx];
 		nsegs = txq->pkt_cnts[pktidx];
