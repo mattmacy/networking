@@ -2436,6 +2436,8 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 	} else {
 		fl->ifl_credits--;
 	}
+	if (__predict_false(fl->ifl_credits < 32))
+		__iflib_fl_refill_lt(rxq->ifr_ctx, fl, 64);
 	sd->ifsd_m = &fl->ifl_sds.ifsd_m[cidx];
 	MPASS(*sd->ifsd_cl != NULL);
 #if MEMORY_LOGGING
