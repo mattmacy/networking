@@ -1041,33 +1041,23 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 	return (0);
 }
 
+enum tso_seg_type {
+	TSO_FIRST,
+	TSO_MIDDLE,
+	TSO_LAST
+};
+
 struct tso_state {
 	if_pkt_info_t ts_pi;
 	tcp_seq ts_seq;
 	uint16_t ts_idx;
 	uint16_t ts_prehdrlen;
 	uint16_t ts_hdrlen;
+	uint16_t ts_segsz;
 };
 
 static void
-tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen, int hdrlen)
-{
-	struct ip *ip;
-	struct tcphdr *th;
-
-	MPASS(hdrlen > prehdrlen);
-	ip = (struct ip *)(hdr + prehdrlen + pi->ipi_ehdrlen);
-	th = (struct tcphdr *)(ip + 1);
-	state->ts_pi = pi;
-	state->ts_idx = ntohs(ip->ip_id);
-	state->ts_prehdrlen = prehdrlen;
-	state->ts_hdrlen = hdrlen;
-	state->ts_seq = ntohl(th->th_seq);
-	/* XXX assuming !VLAN */
-}
-
-static void
-tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
+tso_fixup(struct tso_state *state, caddr_t hdr, int len, enum tso_seg_type type)
 {
 	if_pkt_info_t pi = state->ts_pi;
 	struct ip *ip;
@@ -1076,7 +1066,8 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 	uint16_t encap_len, plen;
 
 	encap_len = len + state->ts_hdrlen - state->ts_prehdrlen - pi->ipi_ehdrlen;
-	if (state->ts_prehdrlen) {
+	if (state->ts_prehdrlen &&
+		((type == TSO_FIRST) || (len != state->ts_segsz))) {
 		ip = (struct ip *)(hdr + ETHER_HDR_LEN);
 		plen = len + state->ts_hdrlen - ETHER_HDR_LEN;
 		ip->ip_len = htons(plen);
@@ -1090,11 +1081,13 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 	}
 	if (pi->ipi_etype == ETHERTYPE_IP) {
 		ip = (struct ip *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen);
-		ip->ip_len = htons(encap_len);
 		ip->ip_id = htons(state->ts_idx);
-		ip->ip_sum = 0;
-		ip->ip_sum = in_cksum_hdr(ip);
 		state->ts_idx++;
+		if ((type == TSO_FIRST) || (len != state->ts_segsz)) {
+			ip->ip_sum = 0;
+			ip->ip_len = htons(encap_len);
+			ip->ip_sum = in_cksum_hdr(ip);
+		}
 	} else if (pi->ipi_etype == ETHERTYPE_IPV6) {
 		/* XXX notyet */
 	} else {
@@ -1106,14 +1099,32 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, bool last)
 		state->ts_seq += len;
 		plen = len - pi->ipi_ehdrlen - pi->ipi_ip_hlen;
 		th->th_sum = 0;
-		th->th_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr, htons(IPPROTO_TCP + plen));
 		/* Zero the PSH and FIN TCP flags if this is not the last
 		   segment. */
-		if (!last)
+		if (type != TSO_LAST)
 			th->th_flags &= ~(0x8 | 0x1);
 	} else {
 		panic("non TCP IPPROTO %d in tso_fixup", pi->ipi_ipproto);
 	}
+}
+
+static void
+tso_init(struct tso_state *state, caddr_t hdr, if_pkt_info_t pi, int prehdrlen, int hdrlen, int segsz)
+{
+	struct ip *ip;
+	struct tcphdr *th;
+
+	MPASS(hdrlen > prehdrlen);
+	ip = (struct ip *)(hdr + prehdrlen + pi->ipi_ehdrlen);
+	th = (struct tcphdr *)(ip + 1);
+	state->ts_pi = pi;
+	state->ts_idx = ntohs(ip->ip_id);
+	state->ts_prehdrlen = prehdrlen;
+	state->ts_hdrlen = hdrlen;
+	state->ts_seq = ntohl(th->th_seq);
+	state->ts_segsz = segsz;
+	/* XXX assuming !VLAN */
+	tso_fixup(state, hdr, segsz, TSO_FIRST);
 }
 
 struct mbuf_ext *
@@ -1223,15 +1234,17 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	pktrem = m->m_pkthdr.len - hdrsize;
 	sop = true;
 	hdrbuf = ((caddr_t)(newme + count)) + refsize;
-	tso_init(&state, me_data(mesrc), &pi, prehdrlen, hdrsize);
 	/*
 	 * Replicate input header nheaders times
 	 * and update along the way
 	 */
-	for (i = 0; i < nheaders; i++) {
+	bcopy(me_data(mesrc), hdrbuf, hdrsize);
+	tso_init(&state, hdrbuf, &pi, prehdrlen, hdrsize, segsz);
+	for (i = 1; i < nheaders; i++) {
 		MPASS(pktrem > 0);
-		bcopy(me_data(mesrc), hdrbuf + (i*hdrsize), hdrsize);
-		tso_fixup(&state, hdrbuf + (i*hdrsize), min(pktrem, segsz), (pktrem <= segsz));
+		bcopy(hdrbuf, hdrbuf + (i*hdrsize), hdrsize);
+		tso_fixup(&state, hdrbuf + (i*hdrsize), min(pktrem, segsz),
+				  (pktrem <= segsz) ? TSO_LAST : TSO_MIDDLE);
 		pktrem -= segsz;
 	}
 	pktrem = m->m_pkthdr.len - hdrsize;
