@@ -96,12 +96,13 @@ __FBSDID("$FreeBSD$");
 #define VB_TSO_SIZE		(65535 + sizeof(struct ether_vlan_header))
 #define VB_TSO_SEG_SIZE		USHRT_MAX
 #define VB_MAX_SCATTER VB_MAX_TX_SEGS
-#define VB_CAPS									\
-	IFCAP_TSO4 | IFCAP_TSO6 | IFCAP_TXCSUM | IFCAP_RXCSUM | IFCAP_VLAN_HWFILTER | IFCAP_WOL_MAGIC | \
-	IFCAP_WOL_MCAST | IFCAP_WOL | IFCAP_VLAN_HWTSO | IFCAP_HWCSUM | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM | \
-	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU
+#define VB_CAPS						  \
+	(IFCAP_TSO | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTSO | IFCAP_HWCSUM | \
+	IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM | IFCAP_VLAN_MTU |			\
+	 IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU)
 
 static MALLOC_DEFINE(M_VTNETBE, "vtnet", "virtio-net backend");
+
 
 #ifdef VB_DEBUG
 
@@ -259,7 +260,7 @@ struct vb_rxq {
 struct vb_txq {
 	struct vb_softc *vt_vs;
 	struct vring_desc *vt_base;
-	int16_t vt_cidx; /* iflib current index */
+	uint16_t vt_cidx; /* iflib current index */
 	qidx_t vt_vpidxs[VB_MAX_TX_SEGS];
 	bus_dma_segment_t vt_segs[VB_MAX_TX_SEGS];
 };
@@ -288,16 +289,6 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	uint16_t vidx;
 
 	pidx = pi->ipi_pidx;
-	ndesc = vs->vs_queues[VB_RXQ_IDX].vq_avail->idx - pidx;
-	if (ndesc < 0)
-		ndesc += scctx->isc_nrxd[0];
-
-	DPRINTF("%s called pidx: %d nsegs: %d %d ndesc avail\n", __func__, pidx, pi->ipi_nsegs, ndesc);
-
-	if (__predict_false(vs->vs_queues[VB_RXQ_IDX].vq_avail->idx == pidx)) {
-		DPRINTF("%s called -- no space\n", __func__);
-		return (ENOBUFS);
-	}
 	segs = pi->ipi_segs;
 	tx_segs = txq->vt_segs;
 
@@ -309,7 +300,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	}
 	MPASS(pi->ipi_len == total);
 #endif
-	ndesc = min(ndesc, VB_MAX_TX_SEGS);
+	ndesc = VB_MAX_TX_SEGS;
 	mask = scctx->isc_nrxd[0] - 1;
 	vpidxs = txq->vt_vpidxs;
 	va = vs->vs_queues[VB_RXQ_IDX].vq_avail;
@@ -336,6 +327,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 		freespc += txd->len;
 		pidx = (pidx + 1) & mask;
 	}
+
 	DPRINTF("\n");
 	if (__predict_false(freespc < pi->ipi_len)) {
 		DPRINTF("freespc=%d < len=%d\n", freespc, pi->ipi_len);
@@ -422,9 +414,12 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 			vue = &vu->ring[vidx++ & mask];
 			vue->id = /* pi->ipi_pidx + didx */ vpidxs[didx]; 
 			vue->len = dlen;
-			DPRINTF("vidx: %d vue->id: %d vue->len: %d vpidxs[%d]: %d\n",
-				   vidx, vue->id, vue->len, didx, vpidxs[didx]);
 			didx++;
+			if ((vidx & 63) == 0)
+				DPRINTF("%s called pidx: %d nsegs: %d %d ndesc avail "
+						"vidx: %d vue->id: %d vue->len: %d vpidxs[%d]: %d\n",
+						__func__, pidx, pi->ipi_nsegs, ndesc,
+						vidx, vue->id, vue->len, didx, vpidxs[didx]);
 		}
 	} while (didx < ndesc);
 
@@ -462,7 +457,7 @@ vb_txd_credits_update(void *arg, uint16_t txqid, bool clear)
 	 * so long as we copy in to the guest the
 	 * mbuf chain can be freed instantly
 	 */
-	delta = vpidx - txq->vt_cidx;
+	delta = (int)vpidx - (int)txq->vt_cidx;
 	if (delta < 0)
 		delta += scctx->isc_ntxd[0];
 	DPRINTF("%s vt_cidx: %d vpidx: %d delta: %d\n",
@@ -524,10 +519,6 @@ static void
 vb_rxd_flush(void *arg, uint16_t rxqid,
 			 uint8_t flid __unused, qidx_t pidx __unused)
 {
-	struct vb_softc *vs = arg;
-	struct vb_rxq *rxq = &vs->vs_rx_queues[rxqid];
-
-	vb_rxd_reclaim(rxq);
 }
 
 static caddr_t
@@ -551,8 +542,9 @@ vb_rxd_available(void *arg, qidx_t rxqid, qidx_t cidx, qidx_t budget)
 	cnt = (int32_t)idx - (int32_t)cidx;
 	if (cnt < 0)
 		cnt += nrxd;
-	if (__predict_false(abs(rxq->vr_pidx - rxq->vr_cidx) >= (nrxd >> 2)))
+	if (__predict_false(abs(rxq->vr_pidx - rxq->vr_cidx) >= (nrxd >> 4)))
 		vb_rxd_reclaim(rxq);
+
 	return (cnt);
 }
 
@@ -791,7 +783,7 @@ vb_rx_completion(struct mbuf *m)
 	 * an encap mbuf this way on encap
 	 */
 	if (m_ismvec(m))
-		mvec_buffer_free(m);
+		mvec_free((void*)m);
 	if (skip)
 		return;
 
