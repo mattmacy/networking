@@ -2524,7 +2524,8 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 static struct mbuf *
 assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 {
-	int i, padlen , cidx, flid;
+	int i, padlen , cidx, flid, cltype;
+	if_shared_ctx_t sctx = rxq->ifr_ctx->ifc_sctx;
 	struct mbuf *m, *mtmp;
 	struct mbuf_ext *mv;
 	iflib_fl_t fl;
@@ -2546,6 +2547,8 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 	if (__predict_false(mv == NULL))
 		return (NULL);
 	padlen = ri->iri_pad;
+	cltype = (sctx->isc_flags & IFLIB_RX_COMPLETION) ? 0 :
+		sd->ifsd_fl->ifl_cltype;
 	do {
 		rxd_frag_to_sd(rxq, &ri->iri_frags[i], TRUE, sd);
 
@@ -2557,7 +2560,7 @@ assemble_segments_mvec(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd)
 		*sd->ifsd_cl = NULL;
 
 		mtmp = mvec_append((void*)mv, cl, padlen, ri->iri_frags[i].irf_len - padlen,
-						   sd->ifsd_fl->ifl_cltype);
+						   cltype);
 		padlen = 0;
 		MPASS(mtmp != NULL);
 	} while (++i < ri->iri_nfrags);
