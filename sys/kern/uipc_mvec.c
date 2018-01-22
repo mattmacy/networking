@@ -491,6 +491,8 @@ mvec_append(struct mbuf *m, caddr_t cl, uint16_t off,
 	me->me_off = off;
 	me->me_len = len;
 	me->me_ext_type = cltype;
+	if (cltype == 0)
+		me->me_type = MVEC_UNMANAGED;
 	me->me_ext_flags = 0;
 	m->m_pkthdr.len += len;
 	if (mh->mh_used == 0) {
