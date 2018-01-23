@@ -2680,8 +2680,12 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	if (__predict_false(total_desc > *available)) {
 		*available += reclaim_tx_descs(txq, 2*total_desc);
 		if (__predict_false(total_desc > *available)) {
-			printf("total_desc: %d available: %d\n", total_desc, *available);
-			return (1);
+			/* give the hardware a chance to drain 12kB */
+			DELAY(1);
+			*available += reclaim_tx_descs(txq, 2*total_desc);
+			if (__predict_false(total_desc > *available))
+				return (1);
+
 		}
 	}
 	remaining += count;
