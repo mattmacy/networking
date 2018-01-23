@@ -3058,7 +3058,6 @@ iflib_parse_header_mbuf(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp)
 				return (ENXIO);
 			th->th_sum = in_pseudo(ip->ip_src.s_addr,
 					       ip->ip_dst.s_addr, htons(IPPROTO_TCP));
-			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
 			if (sctx->isc_flags & IFLIB_TSO_INIT_IP) {
 				ip->ip_sum = 0;
 				ip->ip_len = htons(pi->ipi_ip_hlen + pi->ipi_tcp_hlen + pi->ipi_tso_segsz);
@@ -3103,7 +3102,6 @@ iflib_parse_header_mbuf(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp)
 			 */
 			pi->ipi_csum_flags |= CSUM_TCP_IPV6;
 			th->th_sum = in6_cksum_pseudo(ip6, 0, IPPROTO_TCP, 0);
-			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
 		}
 		break;
 	}
@@ -3211,7 +3209,6 @@ iflib_parse_header_mvec(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp, int
 			pi->ipi_tcp_seq = th->th_seq;
 			th->th_sum = in_pseudo(ip->ip_src.s_addr,
 								   ip->ip_dst.s_addr, htons(IPPROTO_TCP));
-			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
 			if (sctx->isc_flags & IFLIB_TSO_INIT_IP) {
 				ip->ip_sum = 0;
 				ip->ip_len = htons(pi->ipi_ip_hlen + pi->ipi_tcp_hlen + pi->ipi_tso_segsz);
@@ -3269,7 +3266,6 @@ iflib_parse_header_mvec(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp, int
 			 */
 			pi->ipi_csum_flags |= CSUM_TCP_IPV6;
 			th->th_sum = in6_cksum_pseudo(ip6, 0, IPPROTO_TCP, 0);
-			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
 		}
 		break;
 	}
@@ -3757,6 +3753,7 @@ iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struc
 	pi.ipi_qsidx = txq->ift_id;
 	pi.ipi_len = m_head->m_pkthdr.len;
 	pi.ipi_csum_flags = m_head->m_pkthdr.csum_flags;
+	pi.ipi_tso_segsz = m_head->m_pkthdr.tso_segsz;
 	pi.ipi_vtag = (m_head->m_flags & M_VLANTAG) ? m_head->m_pkthdr.ether_vtag : 0;
 
 	/* deliberate bitwise OR to make one condition */
