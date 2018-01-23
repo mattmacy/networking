@@ -2664,7 +2664,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 	struct port_info *pi = vi->pi;
 	struct adapter *sc = pi->adapter;
 	struct fw_eth_tx_pkts_wr *wr;	/* any fw WR struct will do */
-	int i, n, pidx_last;
+	int i, n, pidx_last, total_desc;
 	uint8_t count;
 
 	get_pkt_gl_multi(txq, m0, &count);
@@ -2674,13 +2674,18 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 		MPASS(txq->pkt_offs[i] + txq->pkt_cnts[i] < txq->gl->sg_maxseg);
 #endif
 	MPASS(!needs_tso(m0));
+
+	for (total_desc = i = 0; i < count; i++)
+		total_desc += howmany(txpkt_len16(txq->pkt_cnts[i], false), EQ_ESIZE / 16);
+	if (__predict_false(total_desc > *available)) {
+		*available += reclaim_tx_descs(txq, 2*total_desc);
+		if (__predict_false(total_desc > *available)) {
+			printf("total_desc: %d available: %d\n", total_desc, *available);
+			return (1);
+		}
+	}
 	remaining += count;
 	for (i = 0; i < count; i++, remaining--) {
-		if (*available < SGE_MAX_WR_NDESC) {
-			*available += reclaim_tx_descs(txq, 64);
-			if (*available < howmany(txq->pkt_cnts[i], EQ_ESIZE / 16))
-				return (1);	/* out of descriptors */
-		}
 		wr = (void *)&eq->desc[eq->pidx];
 		ETHER_BPF_MTAPV(ifp, m0, i);
 		n = write_txpkt_wr(txq, (void *)wr, m0, *available, i);
@@ -4638,7 +4643,9 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 		nsegs = 0;
 	}
 	ndesc = howmany(len16, EQ_ESIZE / 16);
-	MPASS(ndesc <= available);
+	if (__predict_false(ndesc > available))
+		panic("%s called with too few descriptors, %d available %d needed\n",
+			  __func__, available, ndesc);
 
 	/* Firmware work request header */
 	MPASS(wr == (void *)&eq->desc[eq->pidx]);
