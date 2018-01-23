@@ -336,6 +336,11 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	vhd = (void *)tx_segs[0].ds_addr;
 	bzero(vhd, sizeof(*vhd));
 	vhd->num_buffers = i;
+	/* ipi_tso_segsz is aliased by lro_nsegs, use that and total data
+	 * to come up with a reasonable estimate of the segment size
+	 */
+	if (pi->ipi_tso_segsz && (pi->ipi_nsegs > 1))
+		vhd->hdr.gso_size = pi->ipi_len / pi->ipi_tso_segsz;
 
 	if (pi->ipi_csum_flags & CSUM_DATA_VALID) {
 		vhd->hdr.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM |
