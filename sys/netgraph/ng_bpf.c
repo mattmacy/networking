@@ -471,9 +471,9 @@ ng_bpf_rcvdata(hook_p hook, item_p item)
 	else
 #endif
 	if (data)
-		len = bpf_filter(hip->prog->bpf_prog, data, totlen, totlen);
+		len = bpf_filter(hip->prog->bpf_prog, data, totlen, totlen, -1);
 	else
-		len = bpf_filter(hip->prog->bpf_prog, (u_char *)m, totlen, 0);
+		len = bpf_filter(hip->prog->bpf_prog, (u_char *)m, totlen, 0, -1);
 	if (needfree)
 		free(data, M_NETGRAPH_BPF);
 ready:
