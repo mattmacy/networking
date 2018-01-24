@@ -2498,7 +2498,7 @@ ipf_scanlist(fin, pass)
 				continue;
 			mc = (u_char *)fin->fin_m;
 			wlen = fin->fin_dlen + fin->fin_hlen;
-			if (!bpf_filter(fr->fr_data, mc, wlen, 0))
+			if (!bpf_filter(fr->fr_data, mc, wlen, 0, -1))
 				continue;
 			break;
 		    }
