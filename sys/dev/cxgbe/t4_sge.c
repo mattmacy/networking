@@ -1608,11 +1608,12 @@ t6_fill_tnl_lso(struct mbuf *m0, struct cpl_tx_tnl_lso *tnl_lso,
 		enum cpl_tx_tnl_lso_type tnl_type)
 {
 	u32 val;
-	int in_eth_xtra_len, eh_type, rc, csum_type, eth_hdr_len, hdr_len;
+	int in_eth_xtra_len, eh_type, rc, csum_type;
 	int l3hdr_len = m0->m_pkthdr.l3hlen;
 	int eth_xtra_len = m0->m_pkthdr.l2hlen;
 	struct ether_vlan_header *evh;
 	struct tso_pkt_info tpi;
+	uint64_t ctrl1;
 	bool v6;
 
 	MPASS(!(m_ismvec(m0) && MBUF2MH(m0)->mh_multipkt));
@@ -1680,33 +1681,10 @@ t6_fill_tnl_lso(struct mbuf *m0, struct cpl_tx_tnl_lso *tnl_lso,
 	tnl_lso->EthLenOffset_Size = htonl(V_CPL_TX_TNL_LSO_SIZE(m0->m_pkthdr.len));
 
 	csum_type = tpi.tpi_v6 ? TX_CSUM_TCPIP6 : TX_CSUM_TCPIP;
-	eth_hdr_len = tpi.tpi_l2_len - ETHER_HDR_LEN;
-	hdr_len = V_TXPKT_IPHDR_LEN(tpi.tpi_l4_len) | V_T6_TXPKT_ETHHDR_LEN(eth_hdr_len);
-	printf("pktlen: %d eth_xtra_len: %d l3hdr_len: %d in_l2_len: %d in_l3_len: %d in_l4_len: %d"
-		   " v6: %d in_v6: %d cntrl: 0x%016lx\n", m0->m_pkthdr.len,
-		   eth_xtra_len, l3hdr_len, tpi.tpi_l2_len, tpi.tpi_l3_len, tpi.tpi_l4_len, v6,
-		   tpi.tpi_v6, (V_TXPKT_CSUM_TYPE(csum_type) | hdr_len));
-	printf("tnl_lso { \n"
-		   "\top_to_IpIdSplitOut: %x\n"
-		   "\tIpIdOffsetOut: %x\n"
-		   "\tUdpLenSetOut_to_TnlHdrLen: %x\n"
-		   "\tr1: %lx\n"
-		   "\tFlow_to_TcpHdrLen:%x\n"
-		   "\tIpIdOffset: %x\n"
-		   "\tIpIdSplit_to_Mss: %x\n"
-		   "\tTCPSeqOffset: %x\n"
-		   "\tEthLenOffset_Size: %x\n}",
-		   ntohl(tnl_lso->op_to_IpIdSplitOut),
-		   ntohs(tnl_lso->IpIdOffsetOut),
-		   ntohs(tnl_lso->UdpLenSetOut_to_TnlHdrLen),
-		   tnl_lso->r1,
-		   ntohl(tnl_lso->Flow_to_TcpHdrLen),
-		   ntohs(tnl_lso->IpIdOffset),
-		   ntohs(tnl_lso->IpIdSplit_to_Mss),
-		   tnl_lso->TCPSeqOffset,
-		   ntohl(tnl_lso->EthLenOffset_Size));
-
-	return (V_TXPKT_CSUM_TYPE(csum_type) | hdr_len);
+	ctrl1 = V_TXPKT_CSUM_TYPE(csum_type);
+	ctrl1 |= V_T6_TXPKT_ETHHDR_LEN(tpi.tpi_l2_len - ETHER_HDR_LEN);
+	ctrl1 |= V_TXPKT_IPHDR_LEN(tpi.tpi_l3_len);
+	return (ctrl1);
 }
 
 static inline int
@@ -4335,6 +4313,20 @@ txpkt_len16(u_int nsegs, u_int tso)
 
 	return (howmany(n, 16));
 }
+static inline u_int
+txpkt_vx_len16(u_int nsegs)
+{
+	u_int n;
+
+	MPASS(nsegs > 0);
+
+	nsegs--; /* first segment is part of ulptx_sgl */
+	n = sizeof(struct fw_eth_tx_pkt_wr) + sizeof(struct cpl_tx_pkt_core) +
+	    sizeof(struct ulptx_sgl) + 8 * ((3 * nsegs) / 2 + (nsegs & 1));
+	n += sizeof(struct cpl_tx_tnl_lso);
+
+	return (howmany(n, 16));
+}
 
 /*
  * len16 for a txpkt_vm WR with a GL.  Includes the firmware work
@@ -4637,6 +4629,7 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 
 	if (tnl_type) {
 		ctrl += sizeof(struct cpl_tx_tnl_lso);
+		len16 = txpkt_vx_len16(nsegs);
 	} else if (needs_tso(m0)) {
 		ctrl += sizeof(struct cpl_tx_pkt_lso_core);
 	} else if (pktlen <= imm_payload(2) && available >= 2) {
