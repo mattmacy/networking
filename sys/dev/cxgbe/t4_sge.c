@@ -1610,7 +1610,7 @@ t6_fill_tnl_lso(struct mbuf *m0, struct cpl_tx_tnl_lso *tnl_lso,
 	u32 val;
 	int in_eth_xtra_len, eh_type, rc, csum_type;
 	int l3hdr_len = m0->m_pkthdr.l3hlen;
-	int eth_xtra_len = m0->m_pkthdr.l2hlen;
+	int eth_xtra_len = m0->m_pkthdr.l2hlen - ETHER_HDR_LEN;
 	struct ether_vlan_header *evh;
 	struct tso_pkt_info tpi;
 	uint64_t ctrl1;
@@ -1625,7 +1625,7 @@ t6_fill_tnl_lso(struct mbuf *m0, struct cpl_tx_tnl_lso *tnl_lso,
 	MPASS(rc);
 
 	evh = mtod(m0, struct ether_vlan_header *);
-	if (eth_xtra_len == sizeof(*evh))
+	if (eth_xtra_len)
 		eh_type = ntohs(evh->evl_proto);
 	else
 		eh_type = ntohs(evh->evl_encap_proto);
@@ -1647,7 +1647,7 @@ t6_fill_tnl_lso(struct mbuf *m0, struct cpl_tx_tnl_lso *tnl_lso,
 	/* Get the tunnel header length */
 	//val = skb_inner_mac_header(skb) - skb_mac_header(skb);
 	val = m0->m_pkthdr.encaplen;
-	in_eth_xtra_len = tpi.tpi_l2_len;
+	in_eth_xtra_len = tpi.tpi_l2_len - ETHER_HDR_LEN;
 
 	switch (tnl_type) {
 	case TX_TNL_TYPE_VXLAN:
