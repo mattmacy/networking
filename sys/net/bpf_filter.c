@@ -106,11 +106,11 @@ MINDEX(struct mbuf *m, u_int k)
 }
 
 
-static u_int16_t	m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno);
-static u_int32_t	m_xword(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno);
+static u_int16_t	m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err, int pktno);
+static u_int32_t	m_xword(struct mbuf *m, bpf_u_int32 k, int *err, int pktno);
 
 static u_int32_t
-m_xword(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno)
+m_xword(struct mbuf *m, bpf_u_int32 k, int *err, int pktno)
 {
 	size_t len;
 	u_char *cp, *np;
@@ -186,7 +186,7 @@ m_xword(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno)
 }
 
 static u_int16_t
-m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno)
+m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err, int pktno)
 {
 	size_t len;
 	u_char *cp;
@@ -244,7 +244,7 @@ m_xhalf(struct mbuf *m, bpf_u_int32 k, int *err, u_int pktno)
  * buflen is the amount of data present
  */
 u_int
-bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen, u_int pktno)
+bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen, int pktno)
 {
 	u_int32_t A = 0, X = 0;
 	bpf_u_int32 k;
