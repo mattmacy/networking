@@ -272,7 +272,6 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 		switch(id) {
 			case KW_INTF:
 				vbs->vbs_hw_intf = tokenval(token);
-				printf("intf=%s\n", vbs->vbs_hw_intf);
 				break;
 			case KW_VMI:
 				vbs->vbs_vm_intf = tokenval(token);
