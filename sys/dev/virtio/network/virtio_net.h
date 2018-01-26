@@ -201,4 +201,19 @@ struct virtio_net_ctrl_mq {
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MIN		1
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX		0x8000
 
+/*
+ * Control network offloads
+ *
+ * Reconfigures the network offloads that Guest can handle.
+ *
+ * Available with the VIRTIO_NET_F_CTRL_GUEST_OFFLOADS feature bit.
+ *
+ * Command data format matches the feature bit mask exactly.
+ *
+ * See VIRTIO_NET_F_GUEST_* for the list of offloads
+ * that can be enabled/disabled.
+ */
+#define VIRTIO_NET_CTRL_GUEST_OFFLOADS   5
+#define VIRTIO_NET_CTRL_GUEST_OFFLOADS_SET        0
+
 #endif /* _VIRTIO_NET_H */
