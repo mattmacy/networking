@@ -1148,6 +1148,10 @@ vb_hw_if_input(struct ifnet *hwifp, struct mbuf *m)
 static void
 vb_dev_kick(struct vb_softc *vs, uint32_t q)
 {
+	if (__predict_false(q == vs->vs_nvqs-1)) {
+		iflib_admin_intr_deferred(vs->vs_ctx);
+		return;
+	}
 	switch (q & 1) {
 		case VB_RXQ_IDX:
 			iflib_tx_intr_deferred(vs->vs_ctx, vq2rxq(q));
@@ -1259,7 +1263,7 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, len, &vs->vs_gpa_hint);
 	MPASS(vaddr);
 	vs->vs_queues[q].vq_avail = (struct vring_avail *)vaddr;
-	if ((q & 1) == VB_RXQ_IDX) {
+	if ((q & 1) == VB_RXQ_IDX && (q < vs->vs_nvqs-1)) {
 		qid = vq2rxq(q);
 		vs->vs_tx_queues[qid].vt_base = (void *)(uintptr_t)vs->vs_queues[q].vq_desc;
 	} else if ((q & 1) == VB_TXQ_IDX) {
@@ -1313,7 +1317,7 @@ vb_dev_pfn(struct vb_softc *vs,  uint32_t pfn)
 static void
 vb_dev_reset(struct vb_softc *vs)
 {
-	int i, txvq, rxvq;
+	int i, txvq, rxvq, ctrlq;
 
 	vs->vs_generation++;
 
@@ -1321,6 +1325,7 @@ vb_dev_reset(struct vb_softc *vs)
 	vs->vs_curq = 0;
 	vs->vs_negotiated_caps = 0;
 
+	ctrlq = vs->vs_nvqs-1;
 	for (i = 0; i < vs->vs_nqs; i++) {
 		rxvq = txq2vq(i);
 		vs->vs_queues[rxvq].vq_qsize = vs->shared->isc_nrxd[0];
@@ -1334,6 +1339,10 @@ vb_dev_reset(struct vb_softc *vs)
 		vs->vs_queues[txvq].vq_pfn = 0;
 		vs->vs_queues[txvq].vq_msix_idx = 0;
 	}
+	vs->vs_queues[ctrlq].vq_qsize = vs->shared->isc_nrxd[0];
+	vs->vs_queues[ctrlq].vq_lastpfn = vs->vs_queues[rxvq].vq_pfn;
+	vs->vs_queues[ctrlq].vq_pfn = 0;
+	vs->vs_queues[ctrlq].vq_msix_idx = 0;
 }
 
 static int
@@ -1503,8 +1512,7 @@ vb_if_attach(struct vb_softc *vs, struct vb_if_attach *via)
 	}
 	vs->vs_ifparent = ifp;
 
-	/* --- breaks attach :-/ */
-	/* vs->vs_hv_caps = VIRTIO_NET_F_CTRL_VQ; */
+	vs->vs_hv_caps |= VIRTIO_NET_F_CTRL_VQ;
 
 	/* Add additional capabilities based on underlying ifnet */
 	if (ifp->if_capabilities & IFCAP_TXCSUM)
@@ -1783,6 +1791,12 @@ vb_if_rxq_intr_enable(if_ctx_t ctx, uint16_t rxqid)
 	return (0);
 }
 
+static void
+vb_update_admin_status(if_ctx_t ctx)
+{
+	/* handle queue requests */
+}
+
 static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_rx_queue_intr_enable, vb_if_rxq_intr_enable),
 	DEVMETHOD(ifdi_tx_queue_intr_enable, vb_if_txq_intr_enable),
@@ -1793,6 +1807,7 @@ static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_stop, vb_stop),
 	DEVMETHOD(ifdi_priv_ioctl, vb_priv_ioctl),
 	DEVMETHOD(ifdi_rx_clset, vb_rx_clset),
+	DEVMETHOD(ifdi_update_admin_status, vb_update_admin_status),
 	DEVMETHOD_END
 };
 
