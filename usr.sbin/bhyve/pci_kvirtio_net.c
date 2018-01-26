@@ -89,6 +89,14 @@ __FBSDID("$FreeBSD$");
 #include <machine/vmm_dev.h>
 #include <vmmapi.h>
 
+#ifndef max
+#define max(a,b) (((a)>(b))?(a):(b))
+#endif
+
+#ifndef min
+#define min(a,b) (((a)<(b))?(a):(b))
+#endif
+
 
 #define VTNET_BE_REGSZ		(20 + 4 + 8)	/* virtio + MSI-x + config */
 #define MAX_VMS				256
@@ -97,6 +105,9 @@ struct vtnet_be_softc {
 	struct pci_devinst *vbs_pi;
 	uint8_t vbs_origmac[6];			/* original MAC address */
 	int vbs_fd;				/* socket descriptor for config */
+	int vbs_nqs;
+	int vbs_nvqs;
+	int vbs_vni;
 	const char *vbs_vm_intf;
 	const char *vbs_hw_intf;
 };
@@ -105,27 +116,28 @@ static void
 vtnet_be_msix(struct vmctx *ctx, int vcpu, struct pci_devinst *pi, int on)
 {
 	struct vtnet_be_softc *vbs;
-	struct vb_msix vmsix;
+	struct vb_msix *vmsix;
 	struct ifreq ifr;
-	int err;
+	int i, err, size, nvqs;
 
 	vbs = pi->pi_arg;
-	vmsix.status = on;
+	nvqs = vbs->vbs_nvqs;
+	size = sizeof(*vmsix) + nvqs*sizeof(struct vb_msix_vector);
 
-	vmsix.va_ioh.vih_magic = VB_MAGIC;
-	vmsix.va_ioh.vih_type = VB_MSIX;
-	ifr.ifr_buffer.length = sizeof(vmsix);
-	ifr.ifr_buffer.buffer = &vmsix;
+	vmsix = malloc(size);
+	vmsix->vm_status = on;
+	vmsix->vm_count = nvqs;
+	vmsix->vm_ioh.vih_magic = VB_MAGIC;
+	vmsix->vm_ioh.vih_type = VB_MSIX;
+	ifr.ifr_buffer.length = size;
+	ifr.ifr_buffer.buffer = vmsix;
 	strncpy(ifr.ifr_name, vbs->vbs_vm_intf, IFNAMSIZ-1);
 	if (on) {
-		vmsix.queue[0].msg  = pi->pi_msix.table[0].msg_data;
-		vmsix.queue[0].addr = pi->pi_msix.table[0].addr;
-		vmsix.queue[1].msg  = pi->pi_msix.table[1].msg_data;
-		vmsix.queue[1].addr = pi->pi_msix.table[1].addr;
-		vmsix.queue[2].msg  = pi->pi_msix.table[2].msg_data;
-		vmsix.queue[2].addr = pi->pi_msix.table[2].addr;
+		for (i = 0; i < nvqs; i++) {
+			vmsix->vm_q[i].msg = pi->pi_msix.table[i].msg_data;
+			vmsix->vm_q[i].addr = pi->pi_msix.table[i].addr;
+		}
 	}
-
 	err = ioctl(vbs->vbs_fd, SIOCGPRIVATE_0, &ifr);
 	assert(err == 0);
 }
@@ -152,18 +164,14 @@ vtnet_be_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 static int
 vtnet_be_macaddr(struct vtnet_be_softc *vbs, char *macaddr)
 {
-	int err;
-
-	err = 0;
+	int err = 0;
 
 	if (macaddr != NULL) {
 		struct ether_addr *ea;
-		char *tmpstr;
 		char zero_addr[ETHER_ADDR_LEN] = { 0, 0, 0, 0, 0, 0 };
 
 		err = 1;
-		tmpstr = strsep(&macaddr, "=");
-		if (macaddr != NULL && !strcmp(tmpstr, "mac")) {
+		if (macaddr != NULL) {
 			ea = ether_aton(macaddr);
 			if (ea == NULL || ETHER_IS_MULTICAST(ea->octet) ||
 			    !memcmp(ea->octet, zero_addr, ETHER_ADDR_LEN)) {
@@ -173,7 +181,6 @@ vtnet_be_macaddr(struct vtnet_be_softc *vbs, char *macaddr)
 				memcpy(vbs->vbs_origmac, ea->octet,
 				    ETHER_ADDR_LEN);
 			}
-
 		}
 	} else if (vbs->vbs_vm_intf == NULL) {
 		MD5_CTX mdctx;
@@ -207,23 +214,85 @@ vtnet_be_macaddr(struct vtnet_be_softc *vbs, char *macaddr)
 	/* else set elsewhere */
 	return (err);
 }
+struct token_value {
+	char *token;
+	int type;
+};
+
+#define KW_INTF 0x1
+#define KW_VMI 0x2
+#define KW_VNI 0x3
+#define KW_MAC 0x4
+#define KW_QUEUES 0x5
+#define KW_MAX KW_QUEUES-1
+
+struct token_value token_map[] = {
+	{"intf", KW_INTF},
+	{"vmi", KW_VMI},
+	{"vni", KW_VNI},
+	{"mac", KW_MAC},
+	{"queues", KW_QUEUES},
+};
+
+static int
+strtype(char *token) {
+	int i;
+
+	for (i = 0; i < KW_MAX; i++) {
+		if (strstr(token, token_map[i].token) != NULL)
+			return (token_map[i].type);
+	}
+	return (-1);
+}
+
+static char *
+tokenval(char *token)
+{
+
+	strsep(&token, "=");
+	return (token);
+}
 
 static int
 vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 {
-	char *intf, *mac;
+	char *mac, *input, *token;
+	int id, nqs;
 
 	if (opts == NULL)
 		return (1);
 
+	mac = NULL;
 	vbs->vbs_vm_intf = vbs->vbs_hw_intf = NULL;
-
-	intf = mac = strdup(opts);
-	(void) strsep(&mac, ",");
-	if (strstr(intf, "vmi") != NULL)
-		vbs->vbs_vm_intf = intf;
-	else
-		vbs->vbs_hw_intf = intf;
+	vbs->vbs_nqs = 1;
+	vbs->vbs_nvqs = 3;
+	input = strdup(opts);
+	while ((token = strsep(&input, ",")) != NULL) {
+		id = strtype(token);
+		switch(id) {
+			case KW_INTF:
+				vbs->vbs_hw_intf = tokenval(token);
+				printf("intf=%s\n", vbs->vbs_hw_intf);
+				break;
+			case KW_VMI:
+				vbs->vbs_vm_intf = tokenval(token);
+				break;
+			case KW_VNI:
+				vbs->vbs_vni = atoi(tokenval(token));
+				break;
+			case KW_MAC:
+				mac = tokenval(token);
+				break;
+			case KW_QUEUES:
+				nqs = atoi(tokenval(token));
+				vbs->vbs_nqs = min(VB_MAX_QUEUES, max(1, nqs));
+				vbs->vbs_nvqs = 2*vbs->vbs_nqs + 1;
+				break;
+		}
+	}
+	if (vbs->vbs_vm_intf == NULL &&
+		vbs->vbs_hw_intf == NULL)
+		return (1);
 	return (vtnet_be_macaddr(vbs, mac));
 }
 
@@ -248,7 +317,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 
 	va.vva_io_start = vbs->vbs_pi->pi_bar[0].addr;
 	va.vva_io_size = VTNET_BE_REGSZ;
-	va.vva_num_queues = 0;	/* accept default */
+	va.vva_num_queues = vbs->vbs_nqs;
 	va.vva_queue_size = 0;	/* accept default */
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
 	/*
@@ -347,7 +416,7 @@ vtnet_be_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 	 * MSI-x BAR at 1.
 	 * 3 IRQs - event queue (not implemented), rx, and tx
 	 */
-	if (pci_emul_add_msixcap(pi, 3 + 1, 1))
+	if (pci_emul_add_msixcap(pi, vbs->vbs_nvqs + 1, 1))
 		return (1);
 
 	/* Attempt to open the char dev for this device */
