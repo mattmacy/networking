@@ -187,6 +187,9 @@ rxq2vq(int rxq)
 /*
  * This is an in-kernel backend for the guest virtio net driver.
  *
+ * For the interface see:
+ * http://docs.oasis-open.org/virtio/virtio/v1.0/cs04/virtio-v1.0-cs04.html#x1-1570001
+ *
  * It uses iflib device cloning for node creation. The path
  * through the driver is an idiosyncratic inverted ifnet.
  *
@@ -585,7 +588,7 @@ vb_cl_map(struct vb_softc *vs, volatile struct vring_desc *desc)
 
 	struct vm *vm = vs->vs_vn->vm;
 
-	return ((void *)vm_gpa_to_kva(vm, desc->addr, 1/*desc->len */, &vs->vs_gpa_hint));
+	return ((void *)vm_gpa_to_kva(vm, desc->addr, desc->len, &vs->vs_gpa_hint));
 }
 
 static int
