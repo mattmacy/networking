@@ -394,7 +394,7 @@ enum {
 #define IFNAMSIZ 16
 #endif
 
-#define VB_MAX_QUEUES 32
+#define VB_QUEUES_MAX 32
 #define VB_MAGIC 0x20171202
 struct vb_ioctl_header {
 	uint64_t vih_magic;
@@ -422,6 +422,7 @@ struct vb_vm_attach {
 	uint8_t		vva_num_queues;
 	uint16_t	vva_queue_size;
 	uint8_t		vva_macaddr[6];
+	uint16_t	vva_mtu;
 };
 
 struct vb_if_attach {
