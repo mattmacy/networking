@@ -2146,7 +2146,7 @@ mbuf_len16(struct mbuf *m)
 
 	M_ASSERTPKTHDR(m);
 	n = m->m_pkthdr.PH_loc.eight[0];
-	if (!(m_ismvec(m) && MBUF2MH(m0)->mh_multipkt))
+	if (!(m_ismvec(m) && MBUF2MH(m)->mh_multipkt))
 		MPASS(n > 0 && n <= SGE_MAX_WR_LEN / 16);
 
 	return (n);
