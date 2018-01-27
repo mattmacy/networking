@@ -224,7 +224,7 @@ struct token_value {
 #define KW_VNI 0x3
 #define KW_MAC 0x4
 #define KW_QUEUES 0x5
-#define KW_MAX KW_QUEUES-1
+#define KW_MAX KW_QUEUES
 
 struct token_value token_map[] = {
 	{"intf", KW_INTF},
