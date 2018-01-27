@@ -688,10 +688,8 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	if (!(m->m_flags & M_VXLANTAG)) {
 		m_freem(m);
 		return (EINVAL);
-
 	}
 
-	parse_encap_pkt(m, &tpi);
 	MPASS(m->m_pkthdr.vxlanid);
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header);
@@ -718,6 +716,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
 	}
 	mh->m_pkthdr.encaplen = hdrsize;
+	parse_encap_pkt(m, &tpi);
 	if ((oldflags & CSUM_TSO) &&
 		(mh = vpc_header_pullup(mh, &tpi)) == NULL)
 			return (ENOMEM);
