@@ -5190,9 +5190,6 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 	taskqgroup_attach(qgroup_if_config_tqg, &ctx->ifc_admin_task, ctx, -1, "admin");
 
 	/* XXX --- can support > 1 -- but keep it simple for now */
-	scctx->isc_vectors = 1;
-	scctx->isc_ntxqsets = 1;
-	scctx->isc_nrxqsets = 1;
 	scctx->isc_intr = IFLIB_INTR_LEGACY;
 
 	/* Get memory for the station queues */
@@ -5214,7 +5211,8 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 		goto fail_detach;
 	}
 	/* XXX handle more than one queue */
-	IFDI_RX_CLSET(ctx, 0, 0, ctx->ifc_rxqs[0].ifr_fl[0].ifl_sds.ifsd_cl);
+	for (i = 0; i < scctx->isc_nrxqsets; i++)
+		IFDI_RX_CLSET(ctx, 0, i, ctx->ifc_rxqs[i].ifr_fl[0].ifl_sds.ifsd_cl);
 
 	*ctxp = ctx;
 
