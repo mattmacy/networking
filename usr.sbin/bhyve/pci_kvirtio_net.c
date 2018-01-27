@@ -108,6 +108,7 @@ struct vtnet_be_softc {
 	int vbs_nqs;
 	int vbs_nvqs;
 	int vbs_vni;
+	int vbs_mtu;
 	const char *vbs_vm_intf;
 	const char *vbs_hw_intf;
 };
@@ -223,7 +224,8 @@ struct token_value {
 #define KW_VMI 0x2
 #define KW_VNI 0x3
 #define KW_MAC 0x4
-#define KW_QUEUES 0x5
+#define KW_MTU 0x5
+#define KW_QUEUES 0x6
 #define KW_MAX KW_QUEUES
 
 struct token_value token_map[] = {
@@ -231,6 +233,7 @@ struct token_value token_map[] = {
 	{"vmi", KW_VMI},
 	{"vni", KW_VNI},
 	{"mac", KW_MAC},
+	{"mtu", KW_MTU},
 	{"queues", KW_QUEUES},
 };
 
@@ -279,12 +282,17 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 			case KW_VNI:
 				vbs->vbs_vni = atoi(tokenval(token));
 				break;
+			case KW_MTU:
+				vbs->vbs_mtu = atoi(tokenval(token));
+				assert(vbs->vbs_mtu > 250 &&
+					   vbs->vbs_mtu < 16*1024);
+				break;
 			case KW_MAC:
 				mac = tokenval(token);
 				break;
 			case KW_QUEUES:
 				nqs = atoi(tokenval(token));
-				vbs->vbs_nqs = min(VB_MAX_QUEUES, max(1, nqs));
+				vbs->vbs_nqs = min(VB_QUEUES_MAX, max(1, nqs));
 				vbs->vbs_nvqs = 2*vbs->vbs_nqs + 1;
 				break;
 		}
@@ -317,6 +325,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	va.vva_io_start = vbs->vbs_pi->pi_bar[0].addr;
 	va.vva_io_size = VTNET_BE_REGSZ;
 	va.vva_num_queues = vbs->vbs_nqs;
+	va.vva_mtu = vbs->vbs_mtu;
 	va.vva_queue_size = 0;	/* accept default */
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
 	/*
