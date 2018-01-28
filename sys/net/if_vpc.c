@@ -433,7 +433,7 @@ vpc_sport_hash(struct vpc_softc *vs, caddr_t data, uint16_t seed)
 
 
 static void
-vpc_ip_init(struct vpc_ftable *vf, struct vxlan_header *vh, struct sockaddr *dstip, int len)
+vpc_ip_init(struct vpc_ftable *vf, struct vxlan_header *vh, struct sockaddr *dstip, int len, int mtu)
 {
 	struct ip *ip;
 	struct sockaddr_in *sin;
@@ -444,7 +444,7 @@ vpc_ip_init(struct vpc_ftable *vf, struct vxlan_header *vh, struct sockaddr *dst
 	ip->ip_tos = 0;
 	ip->ip_len = htons(len - sizeof(struct ether_header));
 	ip->ip_id = 0;
-	ip->ip_off = 0;
+	ip->ip_off = htons(IP_DF);
 	ip->ip_ttl = 255;
 	ip->ip_p = IPPROTO_UDP;
 	ip->ip_sum = 0;
@@ -452,6 +452,8 @@ vpc_ip_init(struct vpc_ftable *vf, struct vxlan_header *vh, struct sockaddr *dst
 	ip->ip_src.s_addr = sin->sin_addr.s_addr;
 	sin = (struct sockaddr_in *)dstip;
 	ip->ip_dst.s_addr = sin->sin_addr.s_addr;
+	if (len <= mtu)
+		ip->ip_sum = in_cksum_hdr(ip);
 }
 
 
@@ -505,8 +507,7 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	/* arp resolve fills in dest */
 	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
 
-	/* check that CSUM_IP works for all hardware */
-	vpc_ip_init(vf, vh, dstip, m->m_pkthdr.len);
+	vpc_ip_init(vf, vh, dstip, m->m_pkthdr.len, ifp->if_mtu);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
 	uh->uh_sport = htons(vpc_sport_hash(vf->vf_vs, hdr, seed));
@@ -522,7 +523,6 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	vhdr->v_i = 1;
 	vhdr->v_vxlanid = htonl(vf->vf_vni) >> 8;
 	if (!(ifp->if_capenable & IFCAP_TXCSUM)) {
-		ip->ip_sum = in_cksum_hdr(ip);
 		uh->uh_sum = vpc_cksum_skip(m, ntohs(ip->ip_len) + sizeof(*eh), sizeof(*ip) + sizeof(*eh));
 	}
 }
@@ -731,7 +731,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 	if ((oldflags & CSUM_TSO) &&
 		(mh = vpc_header_pullup(mh, &tpi)) == NULL)
 			return (ENOMEM);
-	mh->m_pkthdr.csum_flags = CSUM_IP|CSUM_UDP;
+	mh->m_pkthdr.csum_flags = CSUM_UDP;
 	mh->m_pkthdr.csum_flags |= ((oldflags & CSUM_TSO) << 2);
 	mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
 
