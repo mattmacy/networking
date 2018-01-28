@@ -478,7 +478,7 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	struct udphdr *uh;
 	struct vxlanhdr *vhdr;
 	caddr_t smac;
-	int len;
+	int len, offset;
 	uint16_t seed;
 	struct mvec_cursor mc;
 
@@ -486,9 +486,16 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	len = m->m_pkthdr.len;
 	smac = ifp->if_hw_addr;
 	eh = &vh->vh_ehdr;
-	mc.mc_idx = mc.mc_off = 0;
 	if (tpi->tpi_l4_len) {
-		struct tcphdr *th = mvec_advance(m, &mc, m->m_pkthdr.encaplen + tpi->tpi_l2_len + tpi->tpi_l3_len);
+		struct tcphdr *th;
+
+		if (m_ismvec(m)) {
+			mc.mc_idx = mc.mc_off = 0;
+			th = mvec_advance(m, &mc, m->m_pkthdr.encaplen + tpi->tpi_l2_len + tpi->tpi_l3_len);
+		} else {
+			offset = 0;
+			th = m_advance(&m, &offset,  m->m_pkthdr.encaplen + tpi->tpi_l2_len + tpi->tpi_l3_len);
+		}
 		seed = th->th_sport ^ th->th_dport;
 	}
 
@@ -501,6 +508,8 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
 	uh->uh_sport = htons(vpc_sport_hash(vf->vf_vs, hdr, seed));
+	m->m_pkthdr.rsstype = M_HASHTYPE_OPAQUE;
+	m->m_pkthdr.flowid = uh->uh_sport;
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
 	uh->uh_ulen = htons(len - sizeof(*ip) - sizeof(*eh));
 	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
