@@ -24,15 +24,6 @@ BOOTOBJ=	${OBJTOP}/stand
 # BINDIR is where we install
 BINDIR?=	/boot
 
-# NB: The makefiles depend on these being empty when we don't build forth.
-.if ${MK_FORTH} != "no"
-LIBFICL=	${BOOTOBJ}/ficl/libficl.a
-.if ${MACHINE} == "i386"
-LIBFICL32=	${LIBFICL}
-.else
-LIBFICL32=	${BOOTOBJ}/ficl32/libficl.a
-.endif
-.endif
 LIBSA=		${BOOTOBJ}/libsa/libsa.a
 .if ${MACHINE} == "i386"
 LIBSA32=	${LIBSA}
@@ -66,6 +57,13 @@ CFLAGS+=	-I${BOOTSRC}/geli
 LIBGELIBOOT=	${BOOTOBJ}/geli/libgeliboot.a
 .endif # MK_LOADER_GELI
 .endif # HAVE_GELI
+
+# These should be confined to loader.mk, but can't because uboot/lib
+# also uses it. It's part of loader, but isn't a loader so we can't
+# just include loader.mk
+.if ${LOADER_DISK_SUPPORT:Uyes} == "yes"
+CFLAGS+= -DLOADER_DISK_SUPPORT
+.endif
 
 # Machine specific flags for all builds here
 
@@ -169,9 +167,5 @@ ${_ILINKS}:
 	path=`(cd $$path && /bin/pwd)` ; \
 	${ECHO} ${.TARGET:T} "->" $$path ; \
 	ln -fhs $$path ${.TARGET:T}
-
-# For loader implementations, we generate a loader.help file. This can be suppressed by
-# setting HELP_FILES to nothing.
-HELP_FILES=	${LDRSRC}/help.common
 
 .endif # __BOOT_DEFS_MK__

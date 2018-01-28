@@ -18,6 +18,8 @@
         ..
         modules
         ..
+        overlays              tags=package=runtime
+        ..
         zfs
         ..
     ..
@@ -69,8 +71,6 @@
         rc.d
         ..
         security
-        ..
-        skel
         ..
         ssh
         ..

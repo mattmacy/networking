@@ -60,6 +60,8 @@ SUBDIR=	\
 	${_autofs} \
 	${_auxio} \
 	${_bce} \
+	${_bcm283x_clkman} \
+	${_bcm283x_pwm} \
 	bfe \
 	bge \
 	bhnd \
@@ -79,6 +81,7 @@ SUBDIR=	\
 	cas \
 	${_cbb} \
 	cc \
+	${_ccp} \
 	cd9660 \
 	cd9660_iconv \
 	${_ce} \
@@ -115,7 +118,6 @@ SUBDIR=	\
 	dummynet \
 	${_ed} \
 	${_efirt} \
-	${_elink} \
 	${_em} \
 	${_ena} \
 	${_ep} \
@@ -704,6 +706,7 @@ _x86bios=	x86bios
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64"
+_ccp=		ccp
 _efirt=		efirt
 _ioat=		ioat
 _ixl=		ixl
@@ -742,7 +745,6 @@ _coff=		coff
 .if ${MK_SOURCELESS_UCODE} != "no"
 _cp=		cp
 .endif
-_elink=		elink
 _glxiic=	glxiic
 _glxsb=		glxsb
 #_ibcs2=		ibcs2
@@ -804,6 +806,11 @@ _cloudabi32=	cloudabi32
 _cloudabi64=	cloudabi64
 .endif
 
+.endif
+
+.if ${MACHINE_ARCH:Marmv[67]*} != "" || ${MACHINE_CPUARCH} == "aarch64"
+_bcm283x_clkman=  bcm283x_clkman
+_bcm283x_pwm=  bcm283x_pwm
 .endif
 
 .if ${MACHINE_ARCH:Marmv[67]*} != ""

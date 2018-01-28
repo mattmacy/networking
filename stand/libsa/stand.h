@@ -346,6 +346,10 @@ extern int		unsetenv(const char *name);
 extern ev_sethook_t	env_noset;		/* refuse set operation */
 extern ev_unsethook_t	env_nounset;		/* refuse unset operation */
 
+/* stdlib.h routines */
+extern int		abs(int a);
+extern void		abort(void) __dead2;
+
 /* BCD conversions (undocumented) */
 extern u_char const	bcd2bin_data[];
 extern u_char const	bin2bcd_data[];
@@ -354,6 +358,7 @@ extern char const	hex2ascii_data[];
 #define	bcd2bin(bcd)	(bcd2bin_data[bcd])
 #define	bin2bcd(bin)	(bin2bcd_data[bin])
 #define	hex2ascii(hex)	(hex2ascii_data[hex])
+#define	validbcd(bcd)	(bcd == 0 || (bcd > 0 && bcd <= 0x99 && bcd2bin_data[bcd] != 0))
 
 /* min/max (undocumented) */
 static __inline int imax(int a, int b) { return (a > b ? a : b); }
@@ -366,7 +371,6 @@ static __inline quad_t qmax(quad_t a, quad_t b) { return (a > b ? a : b); }
 static __inline quad_t qmin(quad_t a, quad_t b) { return (a < b ? a : b); }
 static __inline u_long ulmax(u_long a, u_long b) { return (a > b ? a : b); }
 static __inline u_long ulmin(u_long a, u_long b) { return (a < b ? a : b); }
-
 
 /* null functions for device/filesystem switches (undocumented) */
 extern int	nodev(void);
@@ -386,13 +390,15 @@ extern int	null_readdir(struct open_file *f, struct dirent *d);
  * Machine dependent functions and data, must be provided or stubbed by 
  * the consumer 
  */
-extern void		exit(int);
+extern void		exit(int) __dead2;
 extern int		getchar(void);
 extern int		ischar(void);
 extern void		putchar(int);
 extern int		devopen(struct open_file *, const char *, const char **);
 extern int		devclose(struct open_file *f);
 extern void		panic(const char *, ...) __dead2 __printflike(1, 2);
+extern void		panic_action(void) __weak_symbol __dead2;
+extern time_t		getsecs(void);
 extern struct fs_ops	*file_system[];
 extern struct fs_ops	*exclusive_file_system;
 extern struct devsw	*devsw[];

@@ -155,7 +155,7 @@ SYSCTL_INT(_machdep, CPU_CACHELINE, cacheline_size,
 	   CTLFLAG_RD, &cacheline_size, 0, "");
 
 uintptr_t	powerpc_init(vm_offset_t, vm_offset_t, vm_offset_t, void *,
-		    vm_offset_t);
+		    uint32_t);
 
 long		Maxmem = 0;
 long		realmem = 0;
@@ -234,7 +234,7 @@ void booke_cpu_init(void);
 
 uintptr_t
 powerpc_init(vm_offset_t fdt, vm_offset_t toc, vm_offset_t ofentry, void *mdp,
-    vm_offset_t mdp_cookie)
+    uint32_t mdp_cookie)
 {
 	struct		pcpu *pc;
 	struct cpuref	bsp;
@@ -259,6 +259,15 @@ powerpc_init(vm_offset_t fdt, vm_offset_t toc, vm_offset_t ofentry, void *mdp,
 	 */
 	if (mdp_cookie != 0xfb5d104d)
 		mdp = NULL;
+
+#if !defined(BOOKE)
+	/*
+	 * On BOOKE the BSS is already cleared and some variables
+	 * initialized.  Do not wipe them out.
+	 */
+	bzero(__sbss_start, __sbss_end - __sbss_start);
+	bzero(__bss_start, _end - __bss_start);
+#endif
 
 #ifdef AIM
 	/*
@@ -293,14 +302,6 @@ powerpc_init(vm_offset_t fdt, vm_offset_t toc, vm_offset_t ofentry, void *mdp,
 #endif
 		}
 	} else {
-#if !defined(BOOKE)
-		/*
-		 * On BOOKE the BSS is already cleared and some variables
-		 * initialized.  Do not wipe them out.
-		 */
-		bzero(__sbss_start, __sbss_end - __sbss_start);
-		bzero(__bss_start, _end - __bss_start);
-#endif
 		init_static_kenv(init_kenv, sizeof(init_kenv));
 		ofw_bootargs = true;
 	}
@@ -368,7 +369,6 @@ powerpc_init(vm_offset_t fdt, vm_offset_t toc, vm_offset_t ofentry, void *mdp,
 	thread0.td_oncpu = bsp.cr_cpuid;
 	pc->pc_cpuid = bsp.cr_cpuid;
 	pc->pc_hwref = bsp.cr_hwref;
-	pc->pc_pir = mfspr(SPR_PIR);
 	__asm __volatile("mtsprg 0, %0" :: "r"(pc));
 
 	/*

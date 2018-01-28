@@ -97,6 +97,8 @@ static int	handle_user_slb_spill(pmap_t pm, vm_offset_t addr);
 extern int	n_slbs;
 #endif
 
+extern vm_offset_t __startkernel;
+
 #ifdef KDB
 int db_trap_glue(struct trapframe *);		/* Called from trap_subr.S */
 #endif
@@ -123,6 +125,7 @@ static struct powerpc_exception powerpc_exceptions[] = {
 	{ EXC_EXI,	"external interrupt" },
 	{ EXC_ALI,	"alignment" },
 	{ EXC_PGM,	"program" },
+	{ EXC_HEA,	"hypervisor emulation assistance" },
 	{ EXC_FPU,	"floating-point unavailable" },
 	{ EXC_APU,	"auxiliary proc unavailable" },
 	{ EXC_DECR,	"decrementer" },
@@ -484,9 +487,11 @@ printtrap(u_int vector, struct trapframe *frame, int isfatal, int user)
 	printf("   esr             = 0x%b\n",
 	    (int)frame->cpu.booke.esr, ESR_BITMASK);
 #endif
-	printf("   srr0            = 0x%" PRIxPTR "\n", frame->srr0);
+	printf("   srr0            = 0x%" PRIxPTR " (0x%" PRIxPTR ")\n",
+	    frame->srr0, frame->srr0 - (register_t)(__startkernel - KERNBASE));
 	printf("   srr1            = 0x%lx\n", (u_long)frame->srr1);
-	printf("   lr              = 0x%" PRIxPTR "\n", frame->lr);
+	printf("   lr              = 0x%" PRIxPTR " (0x%" PRIxPTR ")\n",
+	    frame->lr, frame->lr - (register_t)(__startkernel - KERNBASE));
 	printf("   curthread       = %p\n", curthread);
 	if (curthread != NULL)
 		printf("          pid = %d, comm = %s\n",
@@ -624,8 +629,9 @@ syscall(struct trapframe *frame)
 	 * Speculatively restore last user SLB segment, which we know is
 	 * invalid already, since we are likely to do copyin()/copyout().
 	 */
-	__asm __volatile ("slbmte %0, %1; isync" ::
-            "r"(td->td_pcb->pcb_cpu.aim.usr_vsid), "r"(USER_SLB_SLBE));
+	if (td->td_pcb->pcb_cpu.aim.usr_vsid != 0)
+		__asm __volatile ("slbmte %0, %1; isync" ::
+		    "r"(td->td_pcb->pcb_cpu.aim.usr_vsid), "r"(USER_SLB_SLBE));
 #endif
 
 	error = syscallenter(td);
@@ -685,6 +691,9 @@ handle_user_slb_spill(pmap_t pm, vm_offset_t addr)
 	struct slb *user_entry;
 	uint64_t esid;
 	int i;
+
+	if (pm->pm_slb == NULL)
+		return (-1);
 
 	esid = (uintptr_t)addr >> ADDR_SR_SHFT;
 

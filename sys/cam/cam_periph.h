@@ -202,7 +202,10 @@ int		cam_periph_error(union ccb *ccb, cam_flags camflags,
 static __inline struct mtx *
 cam_periph_mtx(struct cam_periph *periph)
 {
-	return (xpt_path_mtx(periph->path));
+	if (periph != NULL)
+		return (xpt_path_mtx(periph->path));
+	else
+		return (NULL);
 }
 
 #define cam_periph_owned(periph)					\
@@ -256,6 +259,9 @@ cam_periph_acquire_next(struct cam_periph *pperiph)
 	for ((periph) = cam_periph_acquire_first(driver);		\
 	    (periph) != NULL;						\
 	    (periph) = cam_periph_acquire_next(periph))
+
+#define CAM_PERIPH_PRINT(p, msg, args...)				\
+    printf("%s%d:" msg, (periph)->periph_name, (periph)->unit_number, ##args)
 
 #endif /* _KERNEL */
 #endif /* _CAM_CAM_PERIPH_H */

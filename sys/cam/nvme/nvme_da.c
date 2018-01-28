@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2015 Netflix, Inc
  * All rights reserved.
  *
@@ -388,15 +390,12 @@ ndadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 	dp = arg;
 	periph = dp->d_drv1;
 	softc = (struct nda_softc *)periph->softc;
-	cam_periph_lock(periph);
 	secsize = softc->disk->d_sectorsize;
 	lba = offset / secsize;
 	count = length / secsize;
 	
-	if ((periph->flags & CAM_PERIPH_INVALID) != 0) {
-		cam_periph_unlock(periph);
+	if ((periph->flags & CAM_PERIPH_INVALID) != 0)
 		return (ENXIO);
-	}
 
 	/* xpt_get_ccb returns a zero'd allocation for the ccb, mimic that here */
 	memset(&nvmeio, 0, sizeof(nvmeio));
@@ -408,7 +407,6 @@ ndadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 		    0, SF_NO_RECOVERY | SF_NO_RETRY, NULL);
 		if (error != 0)
 			printf("Aborting dump due to I/O error %d.\n", error);
-		cam_periph_unlock(periph);
 
 		return (error);
 	}
@@ -422,7 +420,6 @@ ndadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 	    0, SF_NO_RECOVERY | SF_NO_RETRY, NULL);
 	if (error != 0)
 		xpt_print(periph->path, "flush cmd failed\n");
-	cam_periph_unlock(periph);
 	return (error);
 }
 
@@ -900,7 +897,13 @@ ndastart(struct cam_periph *periph, union ccb *start_ccb)
 			struct nvme_dsm_range *dsm_range;
 
 			dsm_range =
-			    malloc(sizeof(*dsm_range), M_NVMEDA, M_ZERO | M_WAITOK);
+			    malloc(sizeof(*dsm_range), M_NVMEDA, M_ZERO | M_NOWAIT);
+			if (dsm_range == NULL) {
+				biofinish(bp, NULL, ENOMEM);
+				xpt_release_ccb(start_ccb);
+				ndaschedule(periph);
+				return;
+			}
 			dsm_range->length =
 			    bp->bio_bcount / softc->disk->d_sectorsize;
 			dsm_range->starting_lba =
