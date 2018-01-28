@@ -1065,7 +1065,6 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, enum tso_seg_type type)
 	struct tcphdr *th;
 	uint16_t encap_len, plen;
 
-	encap_len = len + state->ts_hdrlen - state->ts_prehdrlen - pi->ipi_ehdrlen;
 	if (state->ts_prehdrlen &&
 		((type == TSO_FIRST) || (len != state->ts_segsz))) {
 		ip = (struct ip *)(hdr + ETHER_HDR_LEN);
@@ -1079,13 +1078,13 @@ tso_fixup(struct tso_state *state, caddr_t hdr, int len, enum tso_seg_type type)
 		uh->uh_sum = 0;
 		uh->uh_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr, htons(IPPROTO_UDP + plen));
 	}
+	encap_len = len + state->ts_hdrlen - state->ts_prehdrlen - pi->ipi_ehdrlen;
 	if (pi->ipi_etype == ETHERTYPE_IP) {
 		ip = (struct ip *)(hdr + state->ts_prehdrlen + pi->ipi_ehdrlen);
-		ip->ip_id = htons(state->ts_idx);
-		state->ts_idx++;
 		if ((type == TSO_FIRST) || (len != state->ts_segsz)) {
-			ip->ip_sum = 0;
+			ip->ip_ttl = 255;
 			ip->ip_len = htons(encap_len);
+			ip->ip_sum = 0;
 			ip->ip_sum = in_cksum_hdr(ip);
 		}
 	} else if (pi->ipi_etype == ETHERTYPE_IPV6) {
