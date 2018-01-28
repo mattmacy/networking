@@ -145,6 +145,7 @@ struct vf_entry {
 };
 
 struct tso_pkt_info {
+	uint16_t tpi_etype;
 	uint8_t tpi_l2_len;
 	uint8_t tpi_l3_len;
 	uint8_t tpi_l4_len;
@@ -279,15 +280,13 @@ parse_encap_pkt(struct mbuf *m0, struct tso_pkt_info *tpi)
 	void *l3hdr;
 
 	MPASS(m_ismvec(m0));
-	MPASS(m0->m_pkthdr.encaplen);
 
 	offset = mc.mc_idx = mc.mc_off = 0;
 	m = m0;
-	if (__predict_true(m_ismvec(m)))
-		evh = mvec_advance(m, &mc, m0->m_pkthdr.encaplen);
-	else
-		evh = m_advance(&m, &offset, m0->m_pkthdr.encaplen);
+	if (m0->m_len < ETHER_HDR_LEN)
+		return (0);
 
+	evh = (void*)m0->m_data;
 	eh_type = ntohs(evh->evl_encap_proto);
 	if (eh_type == ETHERTYPE_VLAN) {
 		eh_type = ntohs(evh->evl_proto);
@@ -323,11 +322,14 @@ parse_encap_pkt(struct mbuf *m0, struct tso_pkt_info *tpi)
 		break;
 	}
 #endif
+	case ETHERTYPE_ARP:
 	default:
-		panic("%s: ethertype 0x%04x unknown.  if_cxgbe must be compiled"
-		    " with the same INET/INET6 options as the kernel.",
-		    __func__, eh_type);
+		l3len = 0;
+		ipproto = 0;
+		tpi->tpi_v6 = 0;
+		break;
 	}
+	tpi->tpi_etype = eh_type;
 	tpi->tpi_proto = ipproto;
 	tpi->tpi_l2_len = l2len;
 	tpi->tpi_l3_len = l3len;
@@ -698,6 +700,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		m_freem(m);
 		return (EINVAL);
 	}
+	parse_encap_pkt(m, &tpi);
 
 	MPASS(m->m_pkthdr.vxlanid);
 	evhvx = (struct ether_vlan_header *)m->m_data;
@@ -725,7 +728,6 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
 	}
 	mh->m_pkthdr.encaplen = hdrsize;
-	parse_encap_pkt(m, &tpi);
 	if ((oldflags & CSUM_TSO) &&
 		(mh = vpc_header_pullup(mh, &tpi)) == NULL)
 			return (ENOMEM);
