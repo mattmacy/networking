@@ -36,6 +36,8 @@
 /* The feature bitmap for virtio net */
 #define VIRTIO_NET_F_CSUM	0x00001 /* Host handles pkts w/ partial csum */
 #define VIRTIO_NET_F_GUEST_CSUM 0x00002 /* Guest handles pkts w/ partial csum*/
+#define VIRTIO_NET_F_GUEST_OFFLOADS 0x00004 /* Dynamic offload configuration. */
+#define VIRTIO_NET_F_MTU	0x00008 /* Initial MTU advice */
 #define VIRTIO_NET_F_MAC	0x00020 /* Host has given MAC address. */
 #define VIRTIO_NET_F_GSO	0x00040 /* Host handles pkts w/ any GSO type */
 #define VIRTIO_NET_F_GUEST_TSO4	0x00080 /* Guest can handle TSOv4 in. */
@@ -68,6 +70,8 @@ struct virtio_net_config {
 	 * Legal values are between 1 and 0x8000.
 	 */
 	uint16_t	max_virtqueue_pairs;
+	/* Default maximum transmit unit advice */
+	uint16_t	mtu;
 } __packed;
 
 /*
@@ -200,5 +204,20 @@ struct virtio_net_ctrl_mq {
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET		0
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MIN		1
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX		0x8000
+
+/*
+ * Control network offloads
+ *
+ * Reconfigures the network offloads that Guest can handle.
+ *
+ * Available with the VIRTIO_NET_F_CTRL_GUEST_OFFLOADS feature bit.
+ *
+ * Command data format matches the feature bit mask exactly.
+ *
+ * See VIRTIO_NET_F_GUEST_* for the list of offloads
+ * that can be enabled/disabled.
+ */
+#define VIRTIO_NET_CTRL_GUEST_OFFLOADS   5
+#define VIRTIO_NET_CTRL_GUEST_OFFLOADS_SET        0
 
 #endif /* _VIRTIO_NET_H */

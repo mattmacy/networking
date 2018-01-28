@@ -89,6 +89,33 @@ __FBSDID("$FreeBSD$");
 #include "vtnet_be.h"
 #include "ifdi_if.h"
 
+const char * pci_cmds[] = {
+   "VIRTIO_PCI_HOST_FEATURES",
+   "BAD1",
+   "BAD2",
+   "BAD3",
+   "VIRTIO_PCI_GUEST_FEATURES",
+   "BAD5",
+   "BAD6",
+   "BAD7",
+   "VIRTIO_PCI_QUEUE_PFN",
+   "BAD9",
+   "BAD10",
+   "BAD11",
+   "VIRTIO_PCI_QUEUE_NUM",
+   "BAD13",
+   "VIRTIO_PCI_QUEUE_SEL",
+   "BAD15",
+   "VIRTIO_PCI_QUEUE_NOTIFY",
+   "BAD17",
+   "VIRTIO_PCI_STATUS",
+   "VIRTIO_PCI_ISR",
+   "VIRTIO_MSI_CONFIG_VECTOR",
+   "BAD21",
+   "VIRTIO_MSI_QUEUE_VECTOR",
+};
+#define VIRTIO_CMD_MAX VIRTIO_MSI_QUEUE_VECTOR
+
 #define VB_MAX_TX_SEGS	64
 #define VB_RXQ_IDX 0
 #define VB_TXQ_IDX 1
@@ -101,7 +128,7 @@ __FBSDID("$FreeBSD$");
 	IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM | IFCAP_VLAN_MTU |			\
 	 IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU)
 
-static MALLOC_DEFINE(M_VTNETBE, "vtnet", "virtio-net backend");
+static MALLOC_DEFINE(M_VTNETBE, "vtnetbe", "virtio-net backend");
 
 
 #ifdef VB_DEBUG
@@ -134,8 +161,34 @@ static void  vb_print_vhdr(struct virtio_net_hdr_mrg_rxbuf *vh __unused) {}
 #define RXDPRINTF(...)
 #endif
 
+static int
+vq2txq(int vq)
+{
+	return (vq - 1) / 2;
+}
+
+static int
+txq2vq(int txq)
+{
+	return txq * 2 + 1;
+}
+static int
+vq2rxq(int vq)
+{
+	return vq / 2;
+}
+
+static int
+rxq2vq(int rxq)
+{
+	return rxq * 2;
+}
+
 /*
  * This is an in-kernel backend for the guest virtio net driver.
+ *
+ * For the interface see:
+ * http://docs.oasis-open.org/virtio/virtio/v1.0/cs04/virtio-v1.0-cs04.html#x1-1570001
  *
  * It uses iflib device cloning for node creation. The path
  * through the driver is an idiosyncratic inverted ifnet.
@@ -181,7 +234,9 @@ struct vb_queue {
 	uint16_t  vq_qsize;
 	uint32_t  vq_lastpfn;
 	uint32_t  vq_pfn;
+	uint16_t  vq_id;
 	uint16_t  vq_msix_idx;
+	uint16_t  vq_avail_idx;
 
 	/* queue mgmt */
 	volatile struct vring_desc  *vq_desc;
@@ -222,24 +277,22 @@ struct vb_softc {
 	uint64_t   vs_generation;
 	uint16_t   vs_io_start;
 	uint16_t   vs_io_size;
+	uint16_t   vs_nqs;
+	uint16_t   vs_nvqs;
+	uint16_t   vs_nqs_max;
+	uint16_t   vs_nvqs_max;
 	uint8_t	   vs_msix_enabled;
 	uint8_t    vs_curq;
-	uint8_t	   vs_nvq;
 	uint8_t    vs_status;
 	uint8_t    vs_origmac[6];
 	uint32_t   vs_vni;
 	uint32_t   vs_hv_caps;
 	uint32_t   vs_negotiated_caps;
-	struct {
-		uint8_t mac[6];
-		uint16_t status;
-	} __packed vs_cfg;
-	struct {
-		uint64_t addr;
-		uint64_t data;
-	} vs_msix[3];
 
-	struct vb_queue vs_queues[2];
+	struct virtio_net_config vs_cfg;
+	struct vb_msix_vector *vs_msix;
+	struct vb_queue *vs_queues;
+	struct vb_queue *vs_cvq;
 };
 
 #define VB_HDR_MAX 18 + 40
@@ -254,6 +307,7 @@ struct vb_rxq {
 	uint8_t *vr_completion;
 	uint16_t *vr_used;
 	uint8_t vr_shift;
+	uint8_t vr_idx;
 	char vr_pkttmp[VB_HDR_MAX] __aligned(CACHE_LINE_SIZE);
 };
 
@@ -261,14 +315,15 @@ struct vb_txq {
 	struct vb_softc *vt_vs;
 	struct vring_desc *vt_base;
 	uint16_t vt_cidx; /* iflib current index */
+	uint8_t vt_idx;
 	qidx_t vt_vpidxs[VB_MAX_TX_SEGS];
 	bus_dma_segment_t vt_segs[VB_MAX_TX_SEGS];
 };
 
 static if_pseudo_t vb_clone_register(void);
 static void vb_intr_msix(struct vb_softc *vs, int q);
-static void vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq);
-static void vb_txq_init(struct vb_softc *vs, struct vb_txq *txq);
+static void vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq, int i);
+static void vb_txq_init(struct vb_softc *vs, struct vb_txq *txq, int i);
 
 static int
 vb_txd_encap(void *arg, if_pkt_info_t pi)
@@ -286,7 +341,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	int i, total, freespc, ndesc, pidx, mask;
 	int soff, doff, sidx, didx;
 	uint16_t *vpidxs;
-	uint16_t vidx;
+	uint16_t vidx, rxvq;
 
 	pidx = pi->ipi_pidx;
 	segs = pi->ipi_segs;
@@ -303,7 +358,8 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	ndesc = VB_MAX_TX_SEGS;
 	mask = scctx->isc_nrxd[0] - 1;
 	vpidxs = txq->vt_vpidxs;
-	va = vs->vs_queues[VB_RXQ_IDX].vq_avail;
+	rxvq = rxq2vq(pi->ipi_qsidx);
+	va = vs->vs_queues[rxvq].vq_avail;
 
 	/*
 	 * Determine how much space the ring has -- the TSO segs check
@@ -369,7 +425,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	ndesc = i;
 	total = pi->ipi_len;
 	soff = didx = sidx = 0;
-	vu = vs->vs_queues[VB_RXQ_IDX].vq_used;
+	vu = vs->vs_queues[rxvq].vq_used;
 	vidx = vu->idx;
 	
 	DPRINTF("vidx:%d vu->idx: %d vu->flags: %x\n",
@@ -432,17 +488,16 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	/* Update used ring to reflect final state */
 	wmb();
 	vu->idx = vidx;
-	wmb();
 	return (0);
 }
 
 static void
-vb_txd_flush(void *arg, uint16_t txqid __unused, qidx_t pidx __unused)
+vb_txd_flush(void *arg, uint16_t txqid, qidx_t pidx __unused)
 {
 	struct vb_softc *vs = arg;
 
 	/* Interrupt the guest */
-	vb_intr_msix(vs, VB_RXQ_IDX);
+	vb_intr_msix(vs, rxq2vq(txqid));
 }
 
 static int
@@ -452,10 +507,11 @@ vb_txd_credits_update(void *arg, uint16_t txqid, bool clear)
 	struct vb_softc *vs = arg;
 	if_softc_ctx_t scctx = vs->shared;
 	struct vb_txq *txq = &vs->vs_tx_queues[txqid];
-	int16_t vpidx;
+	int16_t vpidx, rxvq;
 	int32_t delta;
 
-	vpidx = vs->vs_queues[VB_RXQ_IDX].vq_avail->idx & (scctx->isc_ntxd[0]-1);
+	rxvq = rxq2vq(txqid);
+	vpidx = vs->vs_queues[rxvq].vq_avail->idx & (scctx->isc_ntxd[0]-1);
 
 	/* credits updated should reflect new
 	 * descriptors available in the ring --
@@ -495,7 +551,7 @@ vb_rxd_reclaim(struct vb_rxq *rxq)
 	int count = 0;
 #endif
 
-	if (!(vs->vs_flags & VS_READY))
+	if (__predict_false(!(vs->vs_flags & VS_READY)))
 		return;
 
 	nrxd = vs->shared->isc_nrxd[0];
@@ -504,7 +560,7 @@ vb_rxd_reclaim(struct vb_rxq *rxq)
 
 	pidx = rxq->vr_pidx;
 	/* Update the element in the used ring */
-	vu = vs->vs_queues[VB_TXQ_IDX].vq_used;
+	vu = vs->vs_queues[txq2vq(rxq->vr_idx)].vq_used;
 	MPASS(vu);
 	vidx = vu->idx;
 	for (pidx = rxq->vr_pidx; rxq->vr_completion[pidx & mask] == idx2gen(rxq, pidx); pidx++) {
@@ -517,7 +573,7 @@ vb_rxd_reclaim(struct vb_rxq *rxq)
 	wmb();
 	vu->idx = vidx;
 	rxq->vr_pidx = pidx;
-	vb_intr_msix(vs, VB_TXQ_IDX);
+	vb_intr_msix(vs, txq2vq(rxq->vr_idx));
 }
 
 static void
@@ -526,12 +582,13 @@ vb_rxd_flush(void *arg, uint16_t rxqid,
 {
 }
 
-static caddr_t
-vb_rxcl_map(struct vb_softc *vs, struct vring_desc *rxd)
+static void *
+vb_cl_map(struct vb_softc *vs, volatile struct vring_desc *desc)
 {
+
 	struct vm *vm = vs->vs_vn->vm;
 
-	return ((caddr_t)vm_gpa_to_kva(vm, rxd->addr, rxd->len, &vs->vs_gpa_hint));
+	return ((void *)vm_gpa_to_kva(vm, desc->addr, desc->len, &vs->vs_gpa_hint));
 }
 
 static int
@@ -542,7 +599,7 @@ vb_rxd_available(void *arg, qidx_t rxqid, qidx_t cidx, qidx_t budget)
 	uint16_t idx, nrxd = vs->shared->isc_nrxd[0];
 	int cnt;
 
-	idx =  vs->vs_queues[VB_TXQ_IDX].vq_avail->idx;
+	idx =  vs->vs_queues[txq2vq(rxqid)].vq_avail->idx;
 	idx &= (nrxd-1);
 	cnt = (int32_t)idx - (int32_t)cidx;
 	if (cnt < 0)
@@ -700,7 +757,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		DPRINTF("%s rxd->len short: %d\n", __func__, rxd->len);
 		return (ENXIO);
 	}
-	rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+	rxq->vr_sdcl[vcidx] = vb_cl_map(vs, rxd);
 	vh = (void *)rxq->vr_sdcl[vcidx];
 	if (vh == NULL)
 		return (ENXIO);
@@ -708,7 +765,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		rxq->vr_sdcl[vcidx] = NULL;
 		if (__predict_true(rxd->flags & VRING_DESC_F_NEXT)) {
 			vcidx = rxd->next;
-			rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+			rxq->vr_sdcl[vcidx] = vb_cl_map(vs, rxd);
 			if (__predict_false(rxq->vr_sdcl[vcidx] == NULL))
 				return (ENXIO);
 		} else {
@@ -722,7 +779,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		ri->iri_pad = sizeof(*vh);
 	}
 	rxd = (struct vring_desc *)&rxq->vr_base[vcidx];
-	data = rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+	data = rxq->vr_sdcl[vcidx] = vb_cl_map(vs, rxd);
 	vb_rx_vhdr_process(vh, rxd, data, ri);
 
 	do {
@@ -744,7 +801,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 			RXDPRINTF("indirect not supported!!!!\n");
 			return (ENXIO);
 		}
-		rxq->vr_sdcl[vcidx] = vb_rxcl_map(vs, rxd);
+		rxq->vr_sdcl[vcidx] = vb_cl_map(vs, rxd);
 		if (__predict_false(rxq->vr_sdcl[vcidx] == NULL)) {
 			RXDPRINTF("failed cluster map\n");
 			return (ENXIO);
@@ -783,10 +840,6 @@ vb_rx_completion(struct mbuf *m)
 	 * Is this just a buffer post-processing?
 	 */
 	skip = (m->m_flags & M_PROTO1);
-	/*
-	 * XXX Confirm that we aren't leaking
-	 * an encap mbuf this way on encap
-	 */
 	if (m_ismvec(m))
 		mvec_free((void*)m);
 	if (skip)
@@ -910,14 +963,17 @@ vb_handle_config(struct vb_softc *vs, int offset, bool in, int bytes,
 {
 	uint8_t *ptr;
 
-	ptr = (uint8_t *)&vs->vs_cfg + offset;
+	DPRINTF("%s %s offset: %d len: %d val: %x\n", __func__, in ? "in" : "out",
+		   offset, bytes, *val);
 
+	ptr = (uint8_t *)&vs->vs_cfg + offset;
 	if (in) {
-		memcpy(val, ptr, bytes);
-	} else {
-		if (offset < 6) {
-			memcpy(ptr, val, bytes);
-		}
+		if (bytes + offset <= sizeof(struct virtio_net_config))
+			memcpy(val, ptr, bytes);
+		else
+			memset(val, -1, bytes);
+	} else if (offset + bytes <= ETHER_ADDR_LEN) {
+		memcpy(ptr, val, bytes);
 	}
 
 	return (0);
@@ -928,7 +984,9 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
     uint32_t *val, void *arg)
 {
 	struct vb_softc *vs = arg;
-	int cfgoffset, offset;
+	int cfgoffset;
+	uint16_t offset;
+	const char *cmd;
 
 	offset = port - vs->vs_io_start;
 
@@ -939,9 +997,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 		offset -= cfgoffset;
 		return (vb_handle_config(vs, offset, in, bytes, val));
 	}
-	DPRINTF("%s %s offset: %x val: %x\n", __func__, in ? "in" : "out",
-			offset, *val);
-
+	cmd = offset > VIRTIO_CMD_MAX ? "invalid offset" : pci_cmds[offset];
 	if (in) {
 		switch (offset) {
 		case VIRTIO_PCI_HOST_FEATURES:
@@ -951,13 +1007,13 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 			*val = vs->vs_negotiated_caps;
 			break;
 		case VIRTIO_PCI_QUEUE_PFN:
-			if (vs->vs_curq < vs->vs_nvq)
+			if (vs->vs_curq < vs->vs_nvqs_max)
 				*val = vs->vs_queues[vs->vs_curq].vq_pfn;
 			else
 				*val = 0;
 			break;
 		case VIRTIO_PCI_QUEUE_NUM:
-			if (vs->vs_curq < vs->vs_nvq)
+			if (vs->vs_curq < vs->vs_nvqs_max)
 				*val = vs->vs_queues[vs->vs_curq].vq_qsize;
 			else
 				*val = 0;
@@ -982,7 +1038,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 			*val = 0;
 			break;
 		case VIRTIO_MSI_QUEUE_VECTOR:
-			if (vs->vs_curq < vs->vs_nvq)
+			if (vs->vs_curq < vs->vs_nvqs_max)
 				*val = vs->vs_queues[vs->vs_curq].vq_msix_idx;
 			else
 				*val = VIRTIO_MSI_NO_VECTOR;
@@ -1027,7 +1083,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 			/* ignore */
 			break;
 		case VIRTIO_MSI_QUEUE_VECTOR:
-			if (vs->vs_curq < vs->vs_nvq)
+			if (vs->vs_curq < vs->vs_nvqs_max)
 				vs->vs_queues[vs->vs_curq].vq_msix_idx = *val;
 			break;
 		default:
@@ -1036,6 +1092,8 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 			break;
 		}
 	}
+	DPRINTF("%s %s cmd: %s val: %x\n", __func__, in ? "in" : "out",
+			cmd, *val);
 	return (0);
 }
 
@@ -1049,9 +1107,10 @@ vb_intr_msix(struct vb_softc *vs, int q)
 	    !(vs->vs_queues[q].vq_avail->flags &
 	      VRING_AVAIL_F_NO_INTERRUPT)) {
 		midx = vs->vs_queues[q].vq_msix_idx;
-		KASSERT(midx < 3, ("vtnet_be: msi idx range err"));
+		if (midx > vs->vs_nvqs_max)
+			return;
 		addr = vs->vs_msix[midx].addr;
-		data = vs->vs_msix[midx].data;
+		data = vs->vs_msix[midx].msg;
 		lapic_intr_msi(vs->vs_vn->vm, addr, data);
 	}
 }
@@ -1122,22 +1181,24 @@ vb_hw_if_input(struct ifnet *hwifp, struct mbuf *m)
 static void
 vb_dev_kick(struct vb_softc *vs, uint32_t q)
 {
-
-	switch (q) {
+	if (__predict_false(q == vs->vs_nvqs_max-1)) {
+		iflib_admin_intr_deferred(vs->vs_ctx);
+		return;
+	}
+	switch (q & 1) {
 		case VB_RXQ_IDX:
-			iflib_tx_intr_deferred(vs->vs_ctx, 0 /* XXX single queue */);
+			iflib_tx_intr_deferred(vs->vs_ctx, vq2rxq(q));
 			break;
 		case VB_TXQ_IDX:
-			iflib_rx_intr_deferred(vs->vs_ctx, 0 /* XXX single queue */);
+			iflib_rx_intr_deferred(vs->vs_ctx, vq2txq(q));
 			break;
-	default:
-		panic("vtnet_be: unknown queue %d kick\n", q);
 	}
 }
 
 static void
 vb_vring_munmap(struct vb_softc *vs, int q)
 {
+	int qid;
 
 #ifdef GUEST_OVERCOMMIT
 	int i;
@@ -1164,15 +1225,16 @@ vb_vring_munmap(struct vb_softc *vs, int q)
 	vs->vs_queues[q].vq_avail = NULL;
 	vs->vs_queues[q].vq_used = NULL;
 
-	if (q == VB_RXQ_IDX) {
-		/* XXX multiq fix ... */
-		vs->vs_tx_queues[0].vt_base = NULL;
-	} else if (q == VB_TXQ_IDX) {
-		vs->vs_rx_queues[0].vr_base = NULL;
-		vs->vs_rx_queues[0].vr_avail = NULL;
+	if (q == vs->vs_nvqs-1) {
+		vs->vs_cvq = NULL;
+	} else if ((q & 1) == VB_RXQ_IDX) {
+		qid = vq2rxq(q);
+		vs->vs_tx_queues[qid].vt_base = NULL;
+	} else if ((q & 1) == VB_TXQ_IDX) {
+		qid = vq2txq(q);
+		vs->vs_rx_queues[qid].vr_base = NULL;
+		vs->vs_rx_queues[qid].vr_avail = NULL;
 	}
-
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(25));
 }
 
 static void
@@ -1180,11 +1242,15 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 {
 	vm_offset_t vaddr;
 	uint64_t gpa;
-	int qsz, len;
+	int qsz, len, qid;
 	struct ifnet *ifp;
 
 	gpa = pfn << PAGE_SHIFT;
 
+	if (q >= vs->vs_nvqs_max)
+		return;
+	if (q >= vs->vs_nvqs)
+		vs->vs_nvqs = q+1;
 	/*
 	 * Guest memory is linear and direct-mapped: the translation
 	 * to a host virtual address is a simple base+offset.
@@ -1220,6 +1286,7 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 		    vs->vs_queues[q].vq_pages);
 	
 #endif
+
 	/*
 	 * Set up queue pointers. Same logic as bhyve's vi_vq_init()
 	 */
@@ -1235,11 +1302,15 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	vaddr = vm_gpa_to_kva(vs->vs_vn->vm, gpa, len, &vs->vs_gpa_hint);
 	MPASS(vaddr);
 	vs->vs_queues[q].vq_avail = (struct vring_avail *)vaddr;
-	if (q == VB_RXQ_IDX) {
-		vs->vs_tx_queues[0].vt_base = (void *)(uintptr_t)vs->vs_queues[VB_RXQ_IDX].vq_desc;
-	} else if (q == VB_TXQ_IDX) {
-		vs->vs_rx_queues[0].vr_base = (void *)(uintptr_t)vs->vs_queues[VB_TXQ_IDX].vq_desc;
-		vs->vs_rx_queues[0].vr_avail = (void *)(uintptr_t)vs->vs_queues[VB_TXQ_IDX].vq_avail->ring;
+	if (q == vs->vs_nvqs_max-1) {
+		vs->vs_cvq = (void *)(uintptr_t)&vs->vs_queues[q];
+	} else if ((q & 1) == VB_RXQ_IDX) {
+		qid = vq2rxq(q);
+		vs->vs_tx_queues[qid].vt_base = (void *)(uintptr_t)vs->vs_queues[q].vq_desc;
+	} else if ((q & 1) == VB_TXQ_IDX) {
+		qid = vq2txq(q);
+		vs->vs_rx_queues[qid].vr_base = (void *)(uintptr_t)vs->vs_queues[q].vq_desc;
+		vs->vs_rx_queues[qid].vr_avail = (void *)(uintptr_t)vs->vs_queues[q].vq_avail->ring;
 	}
 	gpa += (2 + qsz + 1) * sizeof(uint16_t); 
 	gpa = roundup2(gpa, PAGE_SIZE);
@@ -1269,7 +1340,7 @@ vb_dev_pfn(struct vb_softc *vs,  uint32_t pfn)
 	int q;
 
 	q = vs->vs_curq;
-	if (q >= vs->vs_nvq)
+	if (q >= vs->vs_nvqs_max)
 		return;
 
 	/* Only map if the pfn has changed */
@@ -1287,40 +1358,49 @@ vb_dev_pfn(struct vb_softc *vs,  uint32_t pfn)
 static void
 vb_dev_reset(struct vb_softc *vs)
 {
+	int i;
+
 	vs->vs_generation++;
 
 	vs->vs_status = 0;
 	vs->vs_curq = 0;
 	vs->vs_negotiated_caps = 0;
+	vs->vs_cvq = NULL;
 
-	vs->vs_queues[VB_RXQ_IDX].vq_qsize = vs->shared->isc_nrxd[0];
-	vs->vs_queues[VB_RXQ_IDX].vq_lastpfn = vs->vs_queues[VB_RXQ_IDX].vq_pfn;
-	vs->vs_queues[VB_RXQ_IDX].vq_pfn = 0;
-	vs->vs_queues[VB_RXQ_IDX].vq_msix_idx = 0;
-
-	vs->vs_queues[VB_TXQ_IDX].vq_qsize = vs->shared->isc_ntxd[0];
-	vs->vs_queues[VB_TXQ_IDX].vq_lastpfn = vs->vs_queues[VB_TXQ_IDX].vq_pfn;
-	vs->vs_queues[VB_TXQ_IDX].vq_pfn = 0;
-	vs->vs_queues[VB_TXQ_IDX].vq_msix_idx = 0;
+	for (i = 0; i < vs->vs_nvqs_max; i++) {
+		vs->vs_queues[i].vq_qsize = vs->shared->isc_nrxd[0];
+		vs->vs_queues[i].vq_lastpfn = vs->vs_queues[i].vq_pfn;
+		vs->vs_queues[i].vq_pfn = 0;
+		vs->vs_queues[i].vq_msix_idx = 0;
+		vs->vs_queues[i].vq_id = i;
+	}
 }
 
 static int
-vb_dev_msix(struct vb_softc *vs, struct vb_msix *vx)
+vb_dev_msix(struct vb_softc *vs, struct vb_msix *vx, int length)
 {
+	int i, size;
+
 	if (vs->vs_proc != curproc)
 		return (EINVAL);
 
-	vs->vs_msix_enabled = vx->status;
-
-	if (vx->status) {
-		vs->vs_msix[0].addr = vx->queue[0].addr;
-		vs->vs_msix[0].data = vx->queue[0].msg;
-		vs->vs_msix[1].addr = vx->queue[1].addr;
-		vs->vs_msix[1].data = vx->queue[1].msg;
-		vs->vs_msix[2].addr = vx->queue[2].addr;
-		vs->vs_msix[2].data = vx->queue[2].msg;
+	size = sizeof(*vx) + vx->vm_count*sizeof(struct vb_msix_vector);
+	if (length != (sizeof(*vx) + vx->vm_count*sizeof(struct vb_msix_vector))) {
+		printf("bad length %d -- expected %d \n", length, size);
+		return (EINVAL);
+	}
+	if (vx->vm_count < 3 || vx->vm_count > (2*VB_QUEUES_MAX) + 1) {
+		printf("bad count %d\n", vx->vm_count);
+		return (EINVAL);
 	}
 
+	vs->vs_msix_enabled = vx->vm_status;
+	if (vx->vm_status) {
+		for (i = 0; i < vx->vm_count; i++) {
+			vs->vs_msix[i].addr = vx->vm_q[i].addr;
+			vs->vs_msix[i].msg = vx->vm_q[i].msg;
+		}
+	}
 	return (0);
 }
 
@@ -1410,10 +1490,11 @@ vmm_vtnet_be_modunload(void)
 }
 
 static void
-vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq)
+vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq, int idx)
 {
 	rxq->vr_vs = vs;
 	rxq->vr_pidx = rxq->vr_cidx = 0;
+	rxq->vr_idx = idx;
 	/* one bit beyond indicates whether we've wrapped an
 	 * even or odd number of times
 	 */
@@ -1432,8 +1513,9 @@ vb_rxq_deinit(struct vb_softc *vs, struct vb_rxq *rxq)
 }
 
 static void
-vb_txq_init(struct vb_softc *vs, struct vb_txq *txq)
+vb_txq_init(struct vb_softc *vs, struct vb_txq *txq, int idx)
 {
+	txq->vt_idx = idx;
 	txq->vt_vs = vs;
 	txq->vt_cidx = 0;
 }
@@ -1456,6 +1538,7 @@ vb_if_attach(struct vb_softc *vs, struct vb_if_attach *via)
 		return (EBUSY);
 	}
 	vs->vs_ifparent = ifp;
+
 	/* Add additional capabilities based on underlying ifnet */
 	if (ifp->if_capabilities & IFCAP_TXCSUM)
 		vs->vs_hv_caps |= VIRTIO_NET_F_CSUM;
@@ -1492,6 +1575,11 @@ vb_vm_attach(struct vb_softc *vs, struct vb_vm_attach *vva)
 		return (ENOENT);
 	}
 	vs->vs_vn = vb;
+	vs->vs_nqs_max = min(VB_QUEUES_MAX, max(1, vva->vva_num_queues));
+	vs->vs_nvqs_max = 2*vs->vs_nqs_max + 1;
+	/* XXX --- this won't work if the guest doesn't know to negotiate the number of queues */
+	vs->vs_nqs = vs->vs_nqs_max;
+	vs->vs_nvqs = vs->vs_nvqs_max;
 
 	vs->vs_proc = curproc;
 	vs->vs_io_start = vva->vva_io_start;
@@ -1499,7 +1587,8 @@ vb_vm_attach(struct vb_softc *vs, struct vb_vm_attach *vva)
 
 	memcpy(vs->vs_cfg.mac, vva->vva_macaddr, 6);
 	vs->vs_cfg.status = VIRTIO_NET_S_LINK_UP;
-	vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO6;
+	vs->vs_cfg.max_virtqueue_pairs = vs->vs_nqs_max;
+	vs->vs_cfg.mtu = vva->vva_mtu;
 	/* Register the memory region with the VM */
 	rc = vm_register_ioport(vs->vs_vn->vm, vb_handle, vs,
 	          vs->vs_io_start, vs->vs_io_size);
@@ -1535,6 +1624,10 @@ vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t par
 			return (rc);
 		}
 		vs->vs_flags |= VS_OWNED;
+	} else {
+		/* XXX --- fix me */
+		vs->vs_nqs_max = 1;
+		vs->vs_nvqs_max = 3;
 	}
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
@@ -1546,7 +1639,8 @@ vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t par
 	scctx->isc_tx_tso_segments_max = scctx->isc_tx_nsegments;
 	scctx->isc_tx_tso_size_max = VB_TSO_SIZE;
 	scctx->isc_tx_tso_segsize_max = VB_TSO_SEG_SIZE;
-	scctx->isc_nrxqsets_max = scctx->isc_ntxqsets_max = 1;
+	scctx->isc_nrxqsets_max = scctx->isc_ntxqsets_max = 
+		scctx->isc_nrxqsets = scctx->isc_ntxqsets = vs->vs_nqs_max;
 	scctx->isc_capenable = VB_CAPS;
 	scctx->isc_txrx = &vb_txrx;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
@@ -1555,12 +1649,12 @@ vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t par
 	scctx->isc_tx_csum_flags |= CSUM_SCTP | CSUM_IP6_SCTP;
 #endif
 
-	vs->vs_nvq = 2;	/* tx and rx, for now */
-
 	/* Set up host capabilities */
 	vs->vs_hv_caps |= VIRTIO_NET_F_MAC | VIRTIO_NET_F_MRG_RXBUF |
-		VIRTIO_NET_F_STATUS | VIRTIO_F_NOTIFY_ON_EMPTY;
-
+		VIRTIO_NET_F_STATUS | VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_CTRL_VQ |	\
+		VIRTIO_NET_F_MQ;
+	if (vs->vs_cfg.mtu)
+		vs->vs_hv_caps |= VIRTIO_NET_F_MTU;
 	return (0);
 }
 
@@ -1571,21 +1665,26 @@ vb_attach_post(if_ctx_t ctx)
 	if_softc_ctx_t scctx = vs->shared;
 	struct ifnet *ifp;
 	char buf[32];
-	int i;
+	int i, nvq;
 
 	MPASS(scctx->isc_nrxqsets);
 	MPASS(scctx->isc_ntxqsets);
+	MPASS(scctx->isc_ntxqsets == scctx->isc_nrxqsets);
+	vs->vs_nqs = scctx->isc_nrxqsets;
+	nvq = vs->vs_nvqs_max;
+	vs->vs_queues = malloc(nvq*sizeof(struct vb_queue), M_VTNETBE, M_WAITOK|M_ZERO);
+	vs->vs_msix = malloc(nvq*sizeof(struct vb_msix), M_VTNETBE, M_WAITOK|M_ZERO);
 	vs->vs_rx_queues = malloc(sizeof(struct vb_rxq)*scctx->isc_nrxqsets,
 							  M_VTNETBE, M_WAITOK|M_ZERO);
 	vs->vs_tx_queues = malloc(sizeof(struct vb_txq)*scctx->isc_ntxqsets,
 							  M_VTNETBE, M_WAITOK|M_ZERO);
 	for (i = 0; i < scctx->isc_nrxqsets; i++) {
-		vb_rxq_init(vs, &vs->vs_rx_queues[i]);
+		vb_rxq_init(vs, &vs->vs_rx_queues[i], i);
 		snprintf(buf, sizeof(buf), "rxq%d", i);
 		iflib_softirq_alloc_generic(ctx, NULL, IFLIB_INTR_RX, i, buf);
 	}
 	for (i = 0; i < scctx->isc_ntxqsets; i++) {
-		vb_txq_init(vs, &vs->vs_tx_queues[i]);
+		vb_txq_init(vs, &vs->vs_tx_queues[i], i);
 		snprintf(buf, sizeof(buf), "txq%d", i);
 		iflib_softirq_alloc_generic(ctx, NULL, IFLIB_INTR_TX, i, buf);
 	}
@@ -1630,14 +1729,18 @@ vb_detach(if_ctx_t ctx)
 		vs->vs_ifparent->if_input = vs->vs_oinput;
 	}
 
-	for (i = 0; i < vs->vs_nvq; i++) {
+	for (i = 0; i < vs->vs_nvqs; i++) {
 		vb_vring_munmap(vs, i);
 	}
+	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(25));
 
 	for (i = 0; i < scctx->isc_nrxqsets; i++)
 		vb_rxq_deinit(vs, &vs->vs_rx_queues[i]);
 	free(vs->vs_rx_queues, M_VTNETBE);
 	free(vs->vs_tx_queues, M_VTNETBE);
+	free(vs->vs_msix, M_VTNETBE);
+	free(vs->vs_queues, M_VTNETBE);
+
 	return (0);
 }
 
@@ -1698,7 +1801,7 @@ vb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 
 	switch (ioh->vih_type) {
 		case VB_MSIX:
-			rc = vb_dev_msix(sc, (struct vb_msix *)iod);
+			rc = vb_dev_msix(sc, (struct vb_msix *)iod, ifbuf->length);
 			break;
 		case VB_VNI:
 			rc = vb_dev_vni(sc, (struct vb_vni *)iod);
@@ -1723,6 +1826,121 @@ vb_if_rxq_intr_enable(if_ctx_t ctx, uint16_t rxqid)
 	return (0);
 }
 
+
+typedef int (*ctrl_cmd_handler_t)(struct vb_softc *vs, int cmd, void *arg, int len);
+static int vb_ctrl_rx(struct vb_softc *vs, int cmd, void *arg, int len) { return (ENOTSUP); }
+static int vb_ctrl_mac(struct vb_softc *vs, int cmd, void *arg, int len) { return (ENOTSUP); }
+static int vb_ctrl_vlan(struct vb_softc *vs, int cmd, void *arg, int len) { return (ENOTSUP); }
+static int vb_ctrl_announce(struct vb_softc *vs, int cmd, void *arg, int len) { return (ENOTSUP); }
+static int vb_ctrl_mq(struct vb_softc *vs, int cmd, void *arg, int len);
+static int vb_ctrl_guest_offloads(struct vb_softc *vs, int cmd, void *arg, int len) { return (ENOTSUP); }
+static ctrl_cmd_handler_t handlers[] = {
+	vb_ctrl_rx,
+	vb_ctrl_mac,
+	vb_ctrl_vlan,
+	vb_ctrl_announce,
+	vb_ctrl_mq,
+	vb_ctrl_guest_offloads
+};
+
+static int
+vb_ctrl_mq(struct vb_softc *vs, int cmd, void *arg, int len)
+{
+	struct virtio_net_ctrl_mq *mq = arg;
+	uint16_t requested;
+
+	if (cmd != VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET) {
+		printf("unexpected command %u in %s\n", cmd, __func__);
+		return (EINVAL);
+	}
+	requested = mq->virtqueue_pairs;
+	if (requested < VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MIN ||
+		requested > vs->vs_cfg.max_virtqueue_pairs) {
+		printf("attempted to set bad value virtqueue_pairs=%d -- limit is 1-%d\n",
+			   requested, vs->vs_cfg.max_virtqueue_pairs);
+		return (EINVAL);
+	}
+	printf("%s cmd: %d requested: %d\n",
+		   __func__, cmd, requested);
+	if (requested != vs->vs_nqs) {
+		vs->vs_nqs = requested;
+		vs->vs_nvqs = 2*requested + 1;
+		vb_dev_reset(vs);
+	}
+	return (0);
+}
+
+static int
+vb_ctrl_cmd_dispatch(struct vb_softc *vs, struct virtio_net_ctrl_hdr *hdr, void *data, int len)
+{
+
+	if (hdr->class > VIRTIO_NET_CTRL_GUEST_OFFLOADS)
+		return (EINVAL);
+	return (handlers[hdr->class])(vs, hdr->cmd, data, len);
+}
+
+static void
+vb_update_admin_status(if_ctx_t ctx)
+{
+	struct vb_softc *vs = iflib_get_softc(ctx);
+	struct vb_queue *cvq = vs->vs_cvq;
+	volatile struct vring_desc *desc;
+	volatile struct vring_used_elem *vue;
+	struct virtio_net_ctrl_hdr *hdr;
+	int aidx, didx, vidx, len, rc, mask;
+	uint8_t *ackp;
+
+	/* We aren't set up yet */
+	if (cvq == NULL) {
+		DPRINTF("%s called - cvq not setup\n", __func__);
+		return;
+	}
+	mask = cvq->vq_qsize-1;
+	vidx = cvq->vq_used->idx;
+	/* handle queue requests */
+	for (aidx = cvq->vq_avail_idx; aidx != cvq->vq_avail->idx; aidx++) {
+		len = 0;
+		didx = cvq->vq_avail->ring[aidx];
+		desc = &cvq->vq_desc[didx];
+		if (desc->len != sizeof(*hdr)) {
+			printf("control fail: desc->len=%d\n", desc->len);
+			goto update_used;
+		}
+		len = desc->len;
+		hdr = vb_cl_map(vs, desc);
+		if (hdr == NULL || !(desc->flags & VRING_DESC_F_NEXT) ||
+			desc->next >= cvq->vq_qsize) {
+			printf("control fail 1) flags=%x next=%d\n", desc->flags, desc->next);
+			goto update_used;
+		}
+		desc = &cvq->vq_desc[desc->next];
+		len += desc->len;
+		rc = vb_ctrl_cmd_dispatch(vs, hdr, vb_cl_map(vs, desc), desc->len);
+		if (rc || !(desc->flags & VRING_DESC_F_NEXT) ||
+			(desc->next >= cvq->vq_qsize)) {
+			printf("control fail 2) flags=%x next=%d\n", desc->flags, desc->next);
+			goto update_used;
+		}
+		desc = &cvq->vq_desc[desc->next];
+		if ((!(desc->flags & VRING_DESC_F_WRITE)) ||
+			desc->len != sizeof(uint8_t)) {
+			goto update_used;
+		}
+		len += desc->len;
+		ackp = vb_cl_map(vs, desc);
+		*ackp = VIRTIO_NET_OK;
+	update_used:
+		vue = &cvq->vq_used->ring[vidx++ & mask];
+		vue->id = didx;
+		vue->len = len;
+	}
+/* Update used ring to reflect final state */
+	wmb();
+	cvq->vq_used->idx = vidx;
+	cvq->vq_avail_idx = aidx;
+	vb_intr_msix(vs, cvq->vq_id);
+}
+
 static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_rx_queue_intr_enable, vb_if_rxq_intr_enable),
 	DEVMETHOD(ifdi_tx_queue_intr_enable, vb_if_txq_intr_enable),
@@ -1733,6 +1951,7 @@ static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_stop, vb_stop),
 	DEVMETHOD(ifdi_priv_ioctl, vb_priv_ioctl),
 	DEVMETHOD(ifdi_rx_clset, vb_rx_clset),
+	DEVMETHOD(ifdi_update_admin_status, vb_update_admin_status),
 	DEVMETHOD_END
 };
 

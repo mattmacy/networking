@@ -378,19 +378,23 @@ enum {
 #define IFNAMSIZ 16
 #endif
 
+#define VB_QUEUES_MAX 32
 #define VB_MAGIC 0x20171202
 struct vb_ioctl_header {
 	uint64_t vih_magic;
 	uint64_t vih_type;
 };
 
+struct vb_msix_vector {
+	uint64_t msg;
+	uint64_t addr;
+};
+
 struct vb_msix {
-	struct vb_ioctl_header va_ioh;
-	struct {
-		uint64_t msg;
-		uint64_t addr;
-	} queue[3];
-	int status;
+	struct vb_ioctl_header vm_ioh;
+	int vm_status;
+	int vm_count;
+	struct vb_msix_vector vm_q[0];
 };
 
 struct vb_vm_attach {
@@ -402,6 +406,7 @@ struct vb_vm_attach {
 	uint8_t		vva_num_queues;
 	uint16_t	vva_queue_size;
 	uint8_t		vva_macaddr[6];
+	uint16_t	vva_mtu;
 };
 
 struct vb_if_attach {
