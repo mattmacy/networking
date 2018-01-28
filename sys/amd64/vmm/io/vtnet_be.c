@@ -392,15 +392,23 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	vhd = (void *)tx_segs[0].ds_addr;
 	bzero(vhd, sizeof(*vhd));
 	vhd->num_buffers = i;
-	/* ipi_tso_segsz is aliased by lro_nsegs, use that and total data
-	 * to come up with a reasonable estimate of the segment size
+	/* ipi_tso_segsz is aliased by lro_nsegs, we should use that
+	 * and total data to come up with a reasonable estimate of
+	 * the segment size
+	 *
+	 * XXX - This will give too small a gso_size for large MTU
 	 */
-	if (pi->ipi_tso_segsz && (pi->ipi_nsegs > 1))
-		vhd->hdr.gso_size = pi->ipi_len / pi->ipi_tso_segsz;
-
-	if (pi->ipi_csum_flags & CSUM_DATA_VALID) {
-		vhd->hdr.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM |
-		    VIRTIO_NET_HDR_F_DATA_VALID;
+	if (pi->ipi_nsegs > 1) {
+		vhd->hdr.gso_size = pi->ipi_len / pi->ipi_nsegs;
+		if (pi->ipi_ipproto == IPPROTO_TCP) {
+			if (pi->ipi_etype == ETHERTYPE_IP)
+				vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
+			else if (pi->ipi_etype == ETHERTYPE_IPV6)
+				vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
+		}
+	}
+	if (__predict_true(pi->ipi_csum_flags & CSUM_DATA_VALID)) {
+		vhd->hdr.flags = VIRTIO_NET_HDR_F_DATA_VALID;
 		vhd->hdr.csum_start = pi->ipi_ehdrlen + pi->ipi_ip_hlen;
 		switch (pi->ipi_ipproto) {
 			case IPPROTO_TCP:
