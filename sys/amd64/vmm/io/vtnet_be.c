@@ -225,6 +225,7 @@ struct pinfo {
 	uint8_t	 ehdrlen;	/* eth header len, includes VLAN tag */
 	uint8_t	 l4type;	/* layer 4 protocol type */
 	uint8_t	 l3size:7;	/* size of l3 header */
+	uint8_t	 l4size;	/* layer 4 protocol type */
 	uint8_t	 l3valid:1;	/* size of l3 header */
 };
 
@@ -392,20 +393,13 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	vhd = (void *)tx_segs[0].ds_addr;
 	bzero(vhd, sizeof(*vhd));
 	vhd->num_buffers = i;
-	/* ipi_tso_segsz is aliased by lro_nsegs, we should use that
-	 * and total data to come up with a reasonable estimate of
-	 * the segment size
-	 *
-	 * XXX - This will give too small a gso_size for large MTU
-	 */
-	if (pi->ipi_nsegs > 1) {
-		vhd->hdr.gso_size = pi->ipi_len / pi->ipi_nsegs;
-		if (pi->ipi_ipproto == IPPROTO_TCP) {
-			if (pi->ipi_etype == ETHERTYPE_IP)
-				vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
-			else if (pi->ipi_etype == ETHERTYPE_IPV6)
-				vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
-		}
+	if ((pi->ipi_len > vs->vs_cfg.mtu) && (pi->ipi_ipproto == IPPROTO_TCP)) {
+		vhd->hdr.gso_size = vs->vs_cfg.mtu - pi->ipi_ehdrlen - pi->ipi_ip_hlen -
+			max(sizeof(struct tcphdr), pi->ipi_tcp_hlen);
+		if (pi->ipi_etype == ETHERTYPE_IP)
+			vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
+		else if (pi->ipi_etype == ETHERTYPE_IPV6)
+			vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
 	}
 	if (__predict_true(pi->ipi_csum_flags & CSUM_DATA_VALID)) {
 		vhd->hdr.flags = VIRTIO_NET_HDR_F_DATA_VALID;
@@ -429,6 +423,8 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 				break;
 		}
 	}
+	if (pi->ipi_nsegs > 1)
+		vb_print_vhdr(vhd);
 	doff = sizeof(*vhd);
 	ndesc = i;
 	total = pi->ipi_len;
@@ -624,6 +620,7 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 	struct ether_vlan_header *eh;
 	struct ip *ip;
 	struct ip6_hdr *ip6;
+	struct tcphdr *th;
 	int ehdrlen;
 	int l3valid, l3size, l4type;
 	uint16_t etype;
@@ -636,7 +633,7 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 		etype = ntohs(eh->evl_encap_proto);
 		ehdrlen = ETHER_HDR_LEN;
 	}
-
+	th = NULL;
 	switch (etype) {
 	case ETHERTYPE_IP:
 		ip = (struct ip *)(data + ehdrlen);
@@ -656,6 +653,10 @@ vb_pparse(caddr_t data, struct pinfo *pinfo)
 		l3size = 0;
 		l4type = 0;
 	}
+	if (l4type == IPPROTO_TCP) {
+		th = (void*)(((caddr_t)ip) + l3size);
+		pinfo->l4size = th->th_off << 2;
+	}
 	pinfo->etype = etype;
 	pinfo->ehdrlen = ehdrlen;
 	pinfo->l3valid = l3valid;
@@ -670,8 +671,6 @@ vb_rx_vhdr_process(struct virtio_net_hdr_mrg_rxbuf *vh,
 {
 	struct pinfo pinfo;
 	int flags;
-
-	vb_print_vhdr(vh);
 
 	switch (vh->hdr.gso_type) {
 		case VIRTIO_NET_HDR_GSO_TCPV4:
@@ -1127,6 +1126,9 @@ static void
 vb_txflags(struct mbuf *m, struct pinfo *pinfo)
 {
 	m->m_pkthdr.tso_segsz = m->m_pkthdr.fibnum;
+	m->m_pkthdr.l2hlen = pinfo->ehdrlen;
+	m->m_pkthdr.l3hlen = pinfo->l3size;
+	m->m_pkthdr.l4hlen = pinfo->l4size;
 	m->m_pkthdr.fibnum = 0;
 }
 
@@ -1596,7 +1598,10 @@ vb_vm_attach(struct vb_softc *vs, struct vb_vm_attach *vva)
 	memcpy(vs->vs_cfg.mac, vva->vva_macaddr, 6);
 	vs->vs_cfg.status = VIRTIO_NET_S_LINK_UP;
 	vs->vs_cfg.max_virtqueue_pairs = vs->vs_nqs_max;
-	vs->vs_cfg.mtu = vva->vva_mtu;
+	if (vva->vva_mtu)
+		vs->vs_cfg.mtu = vva->vva_mtu;
+	else
+		vs->vs_cfg.mtu = ETHERMTU - 50;
 	/* Register the memory region with the VM */
 	rc = vm_register_ioport(vs->vs_vn->vm, vb_handle, vs,
 	          vs->vs_io_start, vs->vs_io_size);
