@@ -2027,7 +2027,7 @@ ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		tx_que->msix = i % adapter->num_rx_queues;
 		iflib_softirq_alloc_generic(ctx,
 		    &adapter->rx_queues[tx_que->msix].que_irq,
-		    IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
+		    IFLIB_INTR_TX, tx_que->txr.me, buf);
 	}
 	rid = vector + 1;
 	error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid,
