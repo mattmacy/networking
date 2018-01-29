@@ -93,7 +93,6 @@ options 	MALLOC_DEBUG_MAXZONES=8	# Separate malloc(9) zones
 
 # Make an SMP-capable kernel by default
 options 	SMP			# Symmetric MultiProcessor Kernel
-options 	DEVICE_NUMA		# I/O Device Affinity
 options 	EARLY_AP_STARTUP
 
 # CPU frequency control
@@ -236,7 +235,7 @@ device		netmap			# netmap(4) support
 device		crypto			# Required by IPSEC
 device		vmx
 
-options         VM_NUMA_ALLOC
+options         NUMA
 
 options		ALT_BREAK_TO_DEBUGGER
 #options KTR
