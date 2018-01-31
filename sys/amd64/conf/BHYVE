@@ -236,6 +236,7 @@ device		crypto			# Required by IPSEC
 device		vmx
 
 options         NUMA
+options		MAXPHYS=(1024*1024)
 
 options		ALT_BREAK_TO_DEBUGGER
 #options KTR
