@@ -34,6 +34,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/bus.h>
+#include <sys/conf.h>
 #include <sys/eventhandler.h>
 #include <sys/sockio.h>
 #include <sys/kernel.h>
@@ -41,6 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/priv.h>
 #include <sys/mutex.h>
 #include <sys/module.h>
+#include <sys/refcount.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
@@ -54,6 +56,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_types.h>
 #include <net/bpf.h>
 #include <net/ethernet.h>
+#include <net/if_arp.h>
 #include <net/if_vlan_var.h>
 #include <net/iflib.h>
 #include <net/if.h>
@@ -74,27 +77,179 @@ static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
  * ifconfig vpcb0 pathcost vmi7 2000000
  */
 
+struct pinfo {
+	uint16_t etype;
+};
 
+static volatile int32_t modrefcnt;
 
 struct vpcb_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
+	struct mbuf *vs_mh;
+	struct cdev *vs_vpcbctldev;
+	struct mtx vs_lock;
+	volatile int32_t vs_refcnt;
 };
 
-#ifdef notyet
-static void
-m_freechain(struct mbuf *m)
-{
-	struct mbuf *mp, *mnext;
 
-	mp = m;
-	do {
-		mnext = mp->m_nextpkt;
-		m_freem(mp);
-		mp = mnext;
-	} while (mp != NULL);
+static d_ioctl_t vpcbctl_ioctl;
+static d_open_t vpcbctl_open;
+static d_close_t vpcbctl_close;
+
+static struct cdevsw vpcbctl_cdevsw = {
+       .d_version =    D_VERSION,
+       .d_flags =      0,
+       .d_open =       vpcbctl_open,
+       .d_close =      vpcbctl_close,
+       .d_ioctl =      vpcbctl_ioctl,
+       .d_name =       "vpcbctl",
+};
+
+static int
+vpcbctl_open(struct cdev *dev, int flags, int fmp, struct thread *td)
+{
+	struct vpcb_softc *vs;
+
+	vs = dev->si_drv1;
+	refcount_acquire(&vs->vs_refcnt);
+	refcount_acquire(&modrefcnt);
+	return (0);
 }
-#endif
+
+static int
+vpcbctl_close(struct cdev *dev, int flags, int fmt, struct thread *td)
+{
+	struct vpcb_softc *vs;
+
+	vs = dev->si_drv1;
+	refcount_release(&vs->vs_refcnt);
+	refcount_release(&modrefcnt);
+	return (0);
+}
+
+static const char *opcode_map[] = {
+	"",
+	"VPCB_REQ_NDv4",
+	"VPCB_REQ_NDv6",
+	"VPCB_REQ_DHCPv4",
+	"VPCB_REQ_DHCPv6",
+};
+
+static int
+parse_pkt(struct mbuf *m, struct pinfo *pinfo)
+{
+	return (0);
+}
+
+static int
+vpcb_poll_dispatch(struct vpcb_softc *vs, struct vpcb_request *vr)
+{
+	struct mbuf *m;
+	struct ether_header *eh;
+	struct pinfo pinfo;
+	int rc;
+
+	if (vr->vrq_header.voh_version == VPCB_VERSION) {
+		printf("version %d doesn't match compiled version: %d\n",
+			   vr->vrq_header.voh_version, VPCB_VERSION);
+		return (ENXIO);
+	}
+
+	bzero(vr, sizeof(*vr));
+	vr->vrq_header.voh_version = VPCB_VERSION;
+	mtx_lock(&vs->vs_lock);
+	while (vs->vs_mh == NULL) {
+		rc = msleep(vs, &vs->vs_lock, PCATCH, "vpcbpoll", 0);
+		if (rc == ERESTART) {
+			mtx_unlock(&vs->vs_lock);
+			return (rc);
+		}
+	}
+	/* dequeue mbuf */
+	m  = vs->vs_mh;
+	vs->vs_mh = m->m_nextpkt;
+	mtx_unlock(&vs->vs_lock);
+
+	if (m->m_flags & M_VXLANTAG)
+		vr->vrq_context.voc_vni = m->m_pkthdr.vxlanid;
+	if (m->m_flags & M_VLANTAG)
+		vr->vrq_context.voc_vlanid = m->m_pkthdr.ether_vtag;
+	parse_pkt(m, &pinfo);
+	eh = (void*)m->m_data;
+	memcpy(vr->vrq_context.voc_smac, eh->ether_shost, ETHER_ADDR_LEN);
+	switch (pinfo.etype) {
+		case ETHERTYPE_ARP: {
+			struct arphdr *ah = (struct arphdr *)(m->m_data + m->m_pkthdr.l2hlen);
+			vr->vrq_header.voh_op = VPCB_REQ_NDv4;
+			memcpy(&vr->vrq_data.vrqd_ndv4.target, ar_tpa(ah), sizeof(struct in_addr));
+			break;
+		}
+		case ETHERTYPE_IP:
+			/* validate DHCP or move on to next packet*/
+			printf("parse DHCP!\n");
+			break;
+		case ETHERTYPE_IPV6:
+			/* validate DHCP/ND or move on to next packet*/
+			printf("parse v6!\n");
+			break;
+	}
+	return (0);
+}
+
+static int 
+vpcb_response_dispatch(struct vpcb_softc *vs, unsigned long cmd, struct vpcb_response *vrs)
+{
+	if (vrs->vrs_header.voh_version != VPCB_VERSION) {
+		printf("invalid version %d\n",
+			   vrs->vrs_header.voh_version);
+		return (EINVAL);
+	}
+	if (vrs->vrs_header.voh_op < 1 ||
+		vrs->vrs_header.voh_op > VPCB_REQ_MAX) {
+		printf("invalid opcode %d\n",
+			   vrs->vrs_header.voh_op);
+		return (EINVAL);
+	}
+	printf("version: %x opcode: %s vni: %d vlanid: %d\n",
+		   vrs->vrs_header.voh_version,
+		   opcode_map[vrs->vrs_header.voh_op],
+		   vrs->vrs_context.voc_vni,
+		   vrs->vrs_context.voc_vlanid);
+	switch (cmd) {
+		case VPCB_RESPONSE_NDv6:
+		case VPCB_RESPONSE_NDv4:
+			printf("data: %6D", vrs->vrs_data.vrsd_ndv4.ether_addr, ":");
+			break;
+		case VPCB_RESPONSE_DHCPv4:
+		case VPCB_RESPONSE_DHCPv6:
+			break;
+	}
+	return (0);
+}
+
+static int
+vpcbctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
+    int fflag, struct thread *td)
+{
+	struct vpcb_softc *vs;
+
+	vs = dev->si_drv1;
+	switch (cmd) {
+		case VPCB_POLL:
+			return (vpcb_poll_dispatch(vs, (struct vpcb_request *)data));
+			break;
+		case VPCB_RESPONSE_NDv4:
+		case VPCB_RESPONSE_NDv6:
+		case VPCB_RESPONSE_DHCPv4:
+		case VPCB_RESPONSE_DHCPv6:
+			return (vpcb_response_dispatch(vs, cmd, (struct vpcb_response *)data));
+			break;
+		default:
+			return (ENOIOCTL);
+	}
+	return (0);
+}
 
 static int
 vpcb_transmit(if_t ifp, struct mbuf *m)
@@ -113,8 +268,18 @@ vpcb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 {
 	struct vpcb_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
+	device_t dev;
+	uint32_t unitno;
 
-
+	dev = iflib_get_dev(ctx);
+	unitno = device_get_unit(dev);
+	vs->vs_vpcbctldev = make_dev(&vpcbctl_cdevsw, unitno,
+								 UID_ROOT, GID_VPC, 0660, "vpcbctl");
+	if (vs->vs_vpcbctldev == NULL)
+		return (ENOMEM);
+	vs->vs_vpcbctldev->si_drv1 = vs;
+	refcount_init(&vs->vs_refcnt, 0);
+	refcount_acquire(&modrefcnt);
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	vs->vs_ctx = ctx;
 	return (0);
@@ -134,6 +299,13 @@ vpcb_attach_post(if_ctx_t ctx)
 static int
 vpcb_detach(if_ctx_t ctx)
 {
+	struct vpcb_softc *vs = iflib_get_softc(ctx);
+
+	if (vs->vs_refcnt != 0)
+		return (EBUSY);
+
+	destroy_dev(vs->vs_vpcbctldev);
+	refcount_release(&modrefcnt);
 	return (0);
 }
 
@@ -147,55 +319,12 @@ vpcb_stop(if_ctx_t ctx)
 {
 }
 
-static int
-vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
-{
-	//struct vpcb_softc *vs = iflib_get_softc(ctx);
-	struct ifreq *ifr = (struct ifreq *)data;
-	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
-	struct vpc_ioctl_header *ioh =
-	    (struct vpc_ioctl_header *)(ifbuf->buffer);
-	int rc = ENOTSUP;
-	struct vpcb_ioctl_data *iod = NULL;
-
-	if (command != SIOCGPRIVATE_0)
-		return (EINVAL);
-
-	if ((rc = priv_check(curthread, PRIV_DRIVER)) != 0)
-		return (rc);
-#ifdef notyet
-	/* need sx lock for iflib context */
-	iod = malloc(ifbuf->length, M_VPCB, M_WAITOK | M_ZERO);
-#endif
-	if (IOCPARM_LEN(ioh->vih_type) != ifbuf->length) {
-		printf("IOCPARM_LEN: %d ifbuf->length: %d\n",
-			   (int)IOCPARM_LEN(ioh->vih_type), (int)ifbuf->length);
-		return (EINVAL);
-	}
-	iod = malloc(ifbuf->length, M_VPCB, M_NOWAIT | M_ZERO);
-	if (iod == NULL)
-		return (ENOMEM);
-	rc = copyin(ioh, iod, ifbuf->length);
-	if (rc) {
-		free(iod, M_VPCB);
-		return (rc);
-	}
-	switch (ioh->vih_type) {
-		default:
-			rc = ENOIOCTL;
-			break;
-	}
-	free(iod, M_VPCB);
-	return (rc);
-}
-
 static device_method_t vpcb_if_methods[] = {
 	DEVMETHOD(ifdi_cloneattach, vpcb_cloneattach),
 	DEVMETHOD(ifdi_attach_post, vpcb_attach_post),
 	DEVMETHOD(ifdi_detach, vpcb_detach),
 	DEVMETHOD(ifdi_init, vpcb_init),
 	DEVMETHOD(ifdi_stop, vpcb_stop),
-	DEVMETHOD(ifdi_priv_ioctl, vpcb_priv_ioctl),
 	DEVMETHOD_END
 };
 
@@ -223,8 +352,15 @@ vpcb_module_init(void)
 {
 	vpcb_pseudo = iflib_clone_register(vpcb_sctx);
 
-	return (vpcb_pseudo != NULL);
+	return (vpcb_pseudo == NULL) ? ENXIO : 0;
 }
+
+static void
+vpcb_module_deinit(void)
+{
+	iflib_clone_deregister(vpcb_pseudo);
+}
+
 
 static int
 vpcb_module_event_handler(module_t mod, int what, void *arg)
@@ -232,14 +368,18 @@ vpcb_module_event_handler(module_t mod, int what, void *arg)
 	int err;
 
 	switch (what) {
-	case MOD_LOAD:
-		if ((err = vpcb_module_init()) != 0)
-			return (err);
-		break;
-	case MOD_UNLOAD:
-		return (EBUSY);
-	default:
-		return (EOPNOTSUPP);
+		case MOD_LOAD:
+			if ((err = vpcb_module_init()) != 0)
+				return (err);
+			break;
+		case MOD_UNLOAD:
+			if (modrefcnt == 0)
+				vpcb_module_deinit();
+			else
+				return (EBUSY);
+			break;
+		default:
+			return (EOPNOTSUPP);
 	}
 
 	return (0);
