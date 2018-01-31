@@ -252,7 +252,7 @@ in_pcbinfo_init(struct inpcbinfo *pcbinfo, const char *name,
 	in_pcbgroup_init(pcbinfo, hashfields, hash_nelements);
 #endif
 	pcbinfo->ipi_zone = uma_zcreate(inpcbzone_name, sizeof(struct inpcb),
-	    NULL, NULL, inpcbzone_init, inpcb_fini, UMA_ALIGN_PTR, 0);
+	    NULL, NULL, inpcbzone_init, inpcb_fini, UMA_ALIGN_CACHE, 0);
 	uma_zone_set_max(pcbinfo->ipi_zone, maxsockets);
 	uma_zone_set_warning(pcbinfo->ipi_zone,
 	    "kern.ipc.maxsockets limit reached");
