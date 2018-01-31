@@ -113,6 +113,7 @@ struct vpcb_port_remove {
 #define VPCB_REQ_NDv6 0x2
 #define VPCB_REQ_DHCPv4 0x3
 #define VPCB_REQ_DHCPv6 0x4
+#define VPCB_REQ_MAX VPCB_REQ_DHCPv6 
 
 #define VPCB_VERSION 0x42
 
@@ -146,10 +147,10 @@ struct vpcb_request {
 union vpcb_response_data {
 	struct {
 		uint8_t ether_addr[ETHER_ADDR_LEN];
-	} vrsd_arp;
+	} vrsd_ndv4;
 	struct {
 		uint8_t ether_addr[ETHER_ADDR_LEN];
-	} vrsd_nd;
+	} vrsd_ndv6;
 	struct {
 		struct in_addr client_addr;
 		struct in_addr gw_addr;
