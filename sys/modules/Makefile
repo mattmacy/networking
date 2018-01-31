@@ -173,6 +173,7 @@ SUBDIR=	\
 	if_vlan \
 	if_vpc \
 	if_vpcb \
+	if_vpcbctl \
 	if_vpci \
 	if_vxlan \
 	${_iir} \

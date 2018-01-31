@@ -23,7 +23,7 @@ ident		BHYVE
 
 makeoptions	DEBUG=-g		# Build kernel with gdb(1) debug symbols
 makeoptions	WITH_CTF=1		# Run ctfconvert(1) for DTrace support
-makeoptions	MODULES_OVERRIDE="hwpmc tmpfs ipmi dtrace zfs opensolaris sem linux linuxkpi linux64 linux_common linsysfs coretemp tmpfs vmm linprocfs if_bridge bridgestp if_tap usb sound nmdm cxgbe ixl iwm iwmfw nullfs i2c if_vpc if_vpcb if_vpci cpuctl"
+makeoptions	MODULES_OVERRIDE="hwpmc tmpfs ipmi dtrace zfs opensolaris sem linux linuxkpi linux64 linux_common linsysfs coretemp tmpfs vmm linprocfs if_bridge bridgestp if_tap usb sound nmdm cxgbe ixl iwm iwmfw nullfs i2c if_vpc if_vpcb if_vpci cpuctl if_vpcbctl"
 
 options 	SCHED_ULE		# ULE scheduler
 options 	PREEMPTION		# Enable kernel thread preemption
