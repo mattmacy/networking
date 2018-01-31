@@ -104,24 +104,36 @@ vpcbctl_close(struct cdev *dev, int flags, int fmt, struct thread *td)
 	return (0);
 }
 
+static const char *opcode_map[] = {
+	"",
+	"VPCB_REQ_NDv4",
+	"VPCB_REQ_NDv6",
+	"VPCB_REQ_DHCPv4",
+	"VPCB_REQ_DHCPv6",
+};
 
 static int
 vpcb_poll_dispatch(struct vpcb_request *vr)
 {
-	uint32_t randval, opcode;
 	static int calls = 0;
+	uint32_t randval, opcode;
+	int rc;
 	uint8_t *eth;
 
 	randval = arc4random();
-	
-	if (calls++ & 1)
-		tsleep(&calls, PCATCH, "vpcb_poll", (randval % 30)*hz);
+	rc = 0;
 
+	if (calls++ & 1) {
+		printf("blocking for %d seconds\n", randval % 30);
+		tsleep(&calls, PCATCH, "vpcb_poll", (randval % 30)*hz);
+	}
 	opcode = (randval % 3) + 1;
 	vr->vrq_header.voh_version = VPCB_VERSION;
 	vr->vrq_header.voh_op = opcode;
 	vr->vrq_context.voc_vni = 150;
 	vr->vrq_context.voc_vlanid = 0; 
+	printf("version: %x opcode: %s vni: %d vlanid: %d\n",
+		   VPCB_VERSION, opcode_map[opcode], 150, 0);
 	eth = vr->vrq_context.voc_smac;
 	eth[0] = 0x58;
 	eth[1] = 0x9C;
@@ -130,25 +142,49 @@ vpcb_poll_dispatch(struct vpcb_request *vr)
 	eth[4] = 0x2;
 	eth[5] = 0x3;
 	switch (opcode) {
-		case VPCB_REQ_NDv4:
-			return (inet_pton(AF_INET, "192.168.1.10",
-							  &vr->vrq_data.vrqd_ndv4.target));
+		case VPCB_RESPONSE_NDv4:
+			 rc = inet_pton(AF_INET, "192.168.1.10",
+							&vr->vrq_data.vrqd_ndv4.target);
+			 break;
+		case VPCB_RESPONSE_NDv6:
+			rc = inet_pton(AF_INET6, "fe80::2bd:44ff:fede:7e09%zt97bteb5hu3748",
+						   &vr->vrq_data.vrqd_ndv6.target);
+
+		case VPCB_RESPONSE_DHCPv4:
+		case VPCB_RESPONSE_DHCPv6:
 			break;
-		case VPCB_REQ_NDv6:
-			return (inet_pton(AF_INET6, "fe80::2bd:44ff:fede:7e09%zt97bteb5hu3748",
-							  &vr->vrq_data.vrqd_ndv6.target));
-			break;
-		case VPCB_REQ_DHCPv4:
-		case VPCB_REQ_DHCPv6:
-			/* just use smac */
-			break;
-	};
-	return (0);
+	}
+	return (rc);
 }
 
 static int 
 vpcb_response_dispatch(unsigned long cmd, struct vpcb_response *vrs)
 {
+	if (vrs->vrs_header.voh_op < 1 ||
+		vrs->vrs_header.voh_op > VPCB_REQ_MAX) {
+		printf("invalid opcode %d\n",
+			   vrs->vrs_header.voh_op);
+		return (EINVAL);
+	}
+	if (vrs->vrs_header.voh_version != VPCB_VERSION) {
+		printf("invalid version %d\n",
+			   vrs->vrs_header.voh_version);
+		return (EINVAL);
+	}
+	printf("version: %x opcode: %s vni: %d vlanid: %d\n",
+		   vrs->vrs_header.voh_version,
+		   opcode_map[vrs->vrs_header.voh_op],
+		   vrs->vrs_context.voc_vni,
+		   vrs->vrs_context.voc_vlanid);
+	switch (cmd) {
+		case VPCB_RESPONSE_NDv6:
+		case VPCB_RESPONSE_NDv4:
+			printf("data: %6D", vrs->vrs_data.vrsd_ndv4.ether_addr, ":");
+			break;
+		case VPCB_RESPONSE_DHCPv4:
+		case VPCB_RESPONSE_DHCPv6:
+			break;
+	}
 	return (0);
 }
 
@@ -156,8 +192,6 @@ static int
 vpcbctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
     int fflag, struct thread *td)
 {
-	if (priv_check(td, PRIV_DRIVER))
-		return (EPERM);
 
 	switch (cmd) {
 		case VPCB_POLL:
