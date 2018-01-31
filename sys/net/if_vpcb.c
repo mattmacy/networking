@@ -86,10 +86,13 @@ static volatile int32_t modrefcnt;
 struct vpcb_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
-	struct mbuf *vs_mh;
 	struct cdev *vs_vpcbctldev;
 	struct mtx vs_lock;
 	volatile int32_t vs_refcnt;
+
+	int vs_mcount;
+	struct mbuf *vs_mh;
+	struct mbuf *vs_mt;
 };
 
 
@@ -169,6 +172,8 @@ vpcb_poll_dispatch(struct vpcb_softc *vs, struct vpcb_request *vr)
 	/* dequeue mbuf */
 	m  = vs->vs_mh;
 	vs->vs_mh = m->m_nextpkt;
+	if (vs->vs_mh == NULL)
+		vs->vs_mt = NULL;
 	mtx_unlock(&vs->vs_lock);
 
 	if (m->m_flags & M_VXLANTAG)
@@ -254,6 +259,49 @@ vpcbctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
 static int
 vpcb_transmit(if_t ifp, struct mbuf *m)
 {
+	if_ctx_t ctx = ifp->if_softc;
+	struct vpcb_softc *vs = iflib_get_softc(ctx);
+	struct ether_header *eh;
+	struct mbuf *mp;
+
+	eh = (void*)m->m_data;
+	if (ETHER_IS_MULTICAST(eh->ether_dhost)) {
+		if (m->m_flags & M_EXT) {
+			if (__predict_false(m->m_next != NULL || m->m_pkthdr.len > MCLBYTES)) {
+				m_freem(m);
+				return (0);
+			}
+			if (__predict_false(m->m_pkthdr.len > MHLEN)) {
+				mp = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
+			} else {
+				mp = m_gethdr(M_NOWAIT, MT_DATA);
+			}
+			if (mp != NULL) {
+				memcpy(&mp->m_pkthdr, &m->m_pkthdr, sizeof(struct pkthdr));
+				memcpy(mp->m_data, m->m_data, m->m_pkthdr.len);
+			}
+			m_freem(m);
+			m = mp;
+			if (__predict_false(m == NULL))
+				return (ENOBUFS);
+		}
+		mtx_lock(&vs->vs_lock);
+		if (vs->vs_mt)
+			vs->vs_mt->m_nextpkt = m;
+		else
+			vs->vs_mh = vs->vs_mt = m;
+		vs->vs_mcount++;
+		if (vs->vs_mcount > 128) {
+			m = vs->vs_mh;
+			vs->vs_mh = m->m_nextpkt;
+			m->m_nextpkt = NULL;
+			m_freem(m);
+			vs->vs_mcount--;
+		}
+		wakeup(vs);
+		mtx_unlock(&vs->vs_lock);
+		return (0);
+	}
 	/*
 	 * - If ARP + VXLANTAG put in ck_ring and kick grouptask
 	 * - If MAC address resolves to internal interface call interface transmit
