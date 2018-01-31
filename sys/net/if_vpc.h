@@ -30,6 +30,9 @@
 #ifndef __IF_VPC_H_
 #define __IF_VPC_H_
 
+#include <netinet/in.h>
+
+
 #define VPC_VERS 0x20171228
 struct vpc_ioctl_header {
 	uint64_t vih_magic;
@@ -87,7 +90,7 @@ struct vpci_vni {
 #define VPCI_VNI_GET							\
 	_IOWR('k', 5, struct vpci_vni)
 
-
+#if 0
 struct vpcb_resolver {
 };
 
@@ -104,5 +107,78 @@ struct vpcb_port_remove {
 #define VPCB_PORT_REMOVE									\
 	_IOW('k', 1, struct vpcb_port_remove)
 
+#endif
+
+#define VPCB_REQ_NDv4 0x1
+#define VPCB_REQ_NDv6 0x2
+#define VPCB_REQ_DHCPv4 0x3
+#define VPCB_REQ_DHCPv6 0x4
+
+#define VPCB_VERSION 0x42
+
+
+struct vpcb_op_header {
+	uint32_t voh_version;
+	uint32_t voh_op;
+};
+
+struct vpcb_op_context {
+	uint32_t voc_vni;
+	uint16_t voc_vlanid;
+	uint8_t voc_smac[ETHER_ADDR_LEN];
+};
+
+union vpcb_request_data {
+	struct {
+		struct in_addr target;
+	} vrqd_ndv4;
+	struct {
+		struct in6_addr target;
+	} vrqd_ndv6;
+};
+
+struct vpcb_request {
+	struct vpcb_op_header vrq_header;
+	struct vpcb_op_context vrq_context;
+	union vpcb_request_data vrq_data;
+};
+
+union vpcb_response_data {
+	struct {
+		uint8_t ether_addr[ETHER_ADDR_LEN];
+	} vrsd_arp;
+	struct {
+		uint8_t ether_addr[ETHER_ADDR_LEN];
+	} vrsd_nd;
+	struct {
+		struct in_addr client_addr;
+		struct in_addr gw_addr;
+		struct in_addr dns_addr;
+		uint8_t prefixlen;
+	} vrsd_dhcpv4;
+	struct {
+		struct in6_addr client_addr;
+		struct in6_addr gw_addr;
+		struct in6_addr dns_addr;
+		uint8_t prefixlen;
+	} vrsd_dhcpv6;
+};
+
+struct vpcb_response {
+	struct vpcb_op_header vrs_header;
+	struct vpcb_op_context vrs_context;
+	union vpcb_response_data vrs_data;
+};
+
+#define VPCB_POLL									\
+	_IOWR('k', 1, struct vpcb_request)
+#define VPCB_RESPONSE_NDv4		   					\
+	_IOW('k', 2, struct vpcb_response)
+#define VPCB_RESPONSE_NDv6		   					\
+	_IOW('k', 3, struct vpcb_response)
+#define VPCB_RESPONSE_DHCPv4		  				\
+	_IOW('k', 4, struct vpcb_response)
+#define VPCB_RESPONSE_DHCPv6		   	  			\
+	_IOW('k', 5, struct vpcb_response)
 
 #endif

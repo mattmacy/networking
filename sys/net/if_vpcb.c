@@ -74,6 +74,8 @@ static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
  * ifconfig vpcb0 pathcost vmi7 2000000
  */
 
+
+
 struct vpcb_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
@@ -146,20 +148,9 @@ vpcb_stop(if_ctx_t ctx)
 }
 
 static int
-vpcb_set_resolver(struct vpcb_softc *vs, struct vpcb_resolver *vr)
-{
-	/*
-	 * Resolve IP -> interface
-	 * allocate ck_ring and grouptask
-	 */
-
-	return (ENOTSUP);
-}
-
-static int
 vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 {
-	struct vpcb_softc *vs = iflib_get_softc(ctx);
+	//struct vpcb_softc *vs = iflib_get_softc(ctx);
 	struct ifreq *ifr = (struct ifreq *)data;
 	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
 	struct vpc_ioctl_header *ioh =
@@ -190,9 +181,6 @@ vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 		return (rc);
 	}
 	switch (ioh->vih_type) {
-		case VPCB_RESOLVER:
-			rc = vpcb_set_resolver(vs, (struct vpcb_resolver *)iod);
-			break;
 		default:
 			rc = ENOIOCTL;
 			break;
