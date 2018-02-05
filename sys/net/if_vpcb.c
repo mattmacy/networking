@@ -62,15 +62,15 @@ __FBSDID("$FreeBSD$");
 #include <net/iflib.h>
 #include <net/if.h>
 #include <net/if_clone.h>
+#include <net/route.h>
+#include <net/art.h>
 
+#include <ck_epoch.h>
 #include <net/if_vpc.h>
 
 #include "ifdi_if.h"
 
 static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
-
-extern struct ifp_cache *vpc_ic;
-extern struct grouptask vpc_ifp_task;
 
 #define VCE_TRUSTED 0x0
 #define VCE_IPSEC 0x1
@@ -114,6 +114,12 @@ struct vpcb_if {
 	uint16_t vi_vlanid;
 };
 
+struct vpcb_mcast_queue {
+	int vmq_mcount;
+	struct mbuf *vmq_mh;
+	struct mbuf *vmq_mt;
+};
+
 struct vpcb_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
@@ -121,10 +127,8 @@ struct vpcb_softc {
 	volatile int32_t vs_refcnt;
 	struct mtx vs_lock;
 
-	int vs_mcount;
-	struct mbuf *vs_mh;
-	struct mbuf *vs_mt;
-
+	struct vpcb_mcast_queue vs_vmq;
+	art_tree vs_ftable;
 	LIST_HEAD(, vpcb_if) vs_if_list;
 };
 
@@ -181,8 +185,9 @@ parse_pkt(struct mbuf *m, struct pinfo *pinfo)
 static int
 vpcb_poll_dispatch(struct vpcb_softc *vs, struct vpcb_request *vr)
 {
-	struct mbuf *m;
+	struct vpcb_mcast_queue *vmq;
 	struct ether_header *eh;
+	struct mbuf *m;
 	struct pinfo pinfo;
 	int rc;
 
@@ -194,8 +199,9 @@ vpcb_poll_dispatch(struct vpcb_softc *vs, struct vpcb_request *vr)
 
 	bzero(vr, sizeof(*vr));
 	vr->vrq_header.voh_version = VPCB_VERSION;
+	vmq = &vs->vs_vmq;
 	mtx_lock(&vs->vs_lock);
-	while (vs->vs_mh == NULL) {
+	while (vmq->vmq_mh == NULL) {
 		rc = msleep(vs, &vs->vs_lock, PCATCH, "vpcbpoll", 0);
 		if (rc == ERESTART) {
 			mtx_unlock(&vs->vs_lock);
@@ -203,10 +209,10 @@ vpcb_poll_dispatch(struct vpcb_softc *vs, struct vpcb_request *vr)
 		}
 	}
 	/* dequeue mbuf */
-	m  = vs->vs_mh;
-	vs->vs_mh = m->m_nextpkt;
-	if (vs->vs_mh == NULL)
-		vs->vs_mt = NULL;
+	m  = vmq->vmq_mh;
+	vmq->vmq_mh = m->m_nextpkt;
+	if (vmq->vmq_mh == NULL)
+		vmq->vmq_mt = NULL;
 	mtx_unlock(&vs->vs_lock);
 
 	if (m->m_flags & M_VXLANTAG)
@@ -314,6 +320,11 @@ vpcb_cache_lookup(struct mbuf *m)
 
 	eh = (void*)m->m_data;
 	mac = (uint16_t *)eh->ether_dhost;
+	vsrc.vs_svlanid = m->m_pkthdr.ether_vtag;
+	vsrc.vs_svni = m->m_pkthdr.vxlanid;
+	vsrc.vs_dmac[0] = mac[0];
+	vsrc.vs_dmac[1] = mac[1];
+	vsrc.vs_dmac[2] = mac[2];
 	_critical_enter();
 	vcep = DPCPU_GET(hdr_cache);
 	if (__predict_false(vcep->vce_ticks == 0))
@@ -333,11 +344,6 @@ vpcb_cache_lookup(struct mbuf *m)
 	/*
 	 * dmac & vxlanid match
 	 */
-	vsrc.vs_svlanid = m->m_pkthdr.ether_vtag;
-	vsrc.vs_svni = m->m_pkthdr.vxlanid;
-	vsrc.vs_dmac[0] = mac[0];
-	vsrc.vs_dmac[1] = mac[1];
-	vsrc.vs_dmac[2] = mac[2];
 	if (hdrcmp(&vcep->vce_src, &vsrc) == 0) {
 		/* cache hit */
 		m->m_pkthdr.ether_vtag = vcep->vce_dvlanid;
@@ -384,8 +390,10 @@ vpcb_cache_update(struct mbuf *m, uint32_t dvni, uint16_t dvlanid, uint8_t polic
 static int
 vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
 {
+	struct vpcb_mcast_queue *vmq;
 	struct mbuf *m, *mp;
 
+	vmq = &vs->vs_vmq;
 	m = *msrc;
 	*msrc = NULL;
 	if (m->m_flags & M_VXLANTAG) {
@@ -409,17 +417,17 @@ vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
 				return (ENOBUFS);
 		}
 		mtx_lock(&vs->vs_lock);
-		if (vs->vs_mt)
-			vs->vs_mt->m_nextpkt = m;
+		if (vmq->vmq_mt)
+			vmq->vmq_mt->m_nextpkt = m;
 		else
-			vs->vs_mh = vs->vs_mt = m;
-		vs->vs_mcount++;
-		if (vs->vs_mcount > 128) {
-			m = vs->vs_mh;
-			vs->vs_mh = m->m_nextpkt;
+			vmq->vmq_mh = vmq->vmq_mt = m;
+		vmq->vmq_mcount++;
+		if (vmq->vmq_mcount > 128) {
+			m = vmq->vmq_mh;
+			vmq->vmq_mh = m->m_nextpkt;
 			m->m_nextpkt = NULL;
 			m_freem(m);
-			vs->vs_mcount--;
+			vmq->vmq_mcount--;
 		}
 		wakeup(vs);
 		mtx_unlock(&vs->vs_lock);
