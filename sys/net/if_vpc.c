@@ -74,15 +74,12 @@ __FBSDID("$FreeBSD$");
 #include <netinet/ip6.h>
 #include <netinet6/nd6.h>
 
-#include <net/if_vpc.h>
-
 #include <ck_epoch.h>
+#include <net/if_vpc.h>
 
 #include "ifdi_if.h"
 
 #include <machine/in_cksum.h>
-
-static ck_epoch_t vpc_epoch;
 
 #define VPC_DEBUG
 
@@ -160,6 +157,8 @@ static struct sx vpc_lock;
 
 struct grouptask vpc_ifp_task;
 struct ifp_cache *vpc_ic;
+ck_epoch_t vpc_epoch;
+
 
 SX_SYSINIT(vpc, &vpc_lock, "VPC global");
 

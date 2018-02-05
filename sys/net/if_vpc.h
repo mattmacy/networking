@@ -32,7 +32,6 @@
 
 #include <netinet/in.h>
 
-
 #define VPC_VERS 0x20171228
 struct vpc_ioctl_header {
 	uint64_t vih_magic;
@@ -73,6 +72,7 @@ struct vpc_fte_list {
 struct vpci_attach {
 	struct vpc_ioctl_header va_vih;
 	char va_ifname[IFNAMSIZ];
+
 };
 struct vpci_vni {
 	struct vpc_ioctl_header vv_vih;
@@ -189,5 +189,10 @@ struct ifp_cache {
 	uint32_t ic_pad;
 	struct ifnet *ic_ifps[0];
 };
+
+struct ck_epoch;
+extern struct ck_epoch vpc_epoch;
+extern struct ifp_cache *vpc_ic;
+extern struct grouptask vpc_ifp_task;
 
 #endif
