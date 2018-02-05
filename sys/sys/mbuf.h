@@ -686,6 +686,7 @@ static __inline void mvec_sanity(struct mbuf *m __unused) {}
 #define	CSUM_IP6_ISCSI		0x00002000	/* iSCSI checksum offload */
 #define	CSUM_IP6_VX_TSO		0x00004000	/* VXLAN TCP segmentation offload */
 
+#define	CSUM_IPSEC	   	0x00008000	/* IPSEC needs to be done on packet */
 
 /* Inbound checksum support where the checksum was verified by hardware. */
 #define	CSUM_L3_CALC		0x01000000	/* calculated layer 3 csum */
