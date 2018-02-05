@@ -42,6 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/priv.h>
 #include <sys/mutex.h>
 #include <sys/module.h>
+#include <sys/proc.h>
 #include <sys/refcount.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -68,6 +69,12 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
 
+extern struct ifp_cache *vpc_ic;
+extern struct grouptask vpc_ifp_task;
+
+#define VCE_TRUSTED 0x0
+#define VCE_IPSEC 0x1
+
 /*
  * ifconfig vpcb0 create
  * ifconfig vpcb0 addm vpc0
@@ -77,22 +84,48 @@ static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
  * ifconfig vpcb0 pathcost vmi7 2000000
  */
 
+struct vpcb_source {
+	uint16_t vs_dmac[3]; /* destination mac address */
+	uint16_t vs_svlanid; /* source vlanid */
+	uint32_t vs_svni;	/* source vni */
+};
+
+struct vpcb_cache_ent {
+	struct vpcb_source vce_src;
+	uint32_t vce_dvni;	/* destination vni */
+	uint16_t vce_dvlanid:12; /* destination vlanid */
+	uint16_t vce_policy:4; /* policy: trusted, IPSEC, etc */
+	uint16_t vce_ifindex;	/* interface index */
+	int vce_ticks;		/* time when entry was created */
+};
+
+DPCPU_DEFINE(struct vpcb_cache_ent *, hdr_cache);
+
 struct pinfo {
 	uint16_t etype;
 };
 
 static volatile int32_t modrefcnt;
 
+struct vpcb_if {
+	LIST_ENTRY(vpcb_if) vi_entry;
+	struct ifnet *vi_if;
+	uint32_t vi_vni;
+	uint16_t vi_vlanid;
+};
+
 struct vpcb_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	struct cdev *vs_vpcbctldev;
-	struct mtx vs_lock;
 	volatile int32_t vs_refcnt;
+	struct mtx vs_lock;
 
 	int vs_mcount;
 	struct mbuf *vs_mh;
 	struct mbuf *vs_mt;
+
+	LIST_HEAD(, vpcb_if) vs_if_list;
 };
 
 
@@ -255,17 +288,107 @@ vpcbctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
 	}
 	return (0);
 }
+static __inline int
+hdrcmp(struct vpcb_source *vlhs, struct vpcb_source *vrhs)
+{
+	uint16_t *lhs, *rhs;
+
+	lhs = (uint16_t *)vlhs;
+	rhs = (uint16_t *)vrhs;
+	return ((lhs[0] ^ rhs[0]) |
+			(lhs[1] ^ rhs[1]) |
+			(lhs[2] ^ rhs[2]) |
+			(lhs[3] ^ rhs[3]) |
+			(lhs[4] ^ rhs[4]) |
+			(lhs[5] ^ rhs[5]));
+}
 
 static int
-vpcb_transmit(if_t ifp, struct mbuf *m)
+vpcb_cache_lookup(struct mbuf *m)
 {
-	if_ctx_t ctx = ifp->if_softc;
-	struct vpcb_softc *vs = iflib_get_softc(ctx);
+	struct vpcb_cache_ent *vcep;
+	struct vpcb_source vsrc;
 	struct ether_header *eh;
-	struct mbuf *mp;
+	struct ifnet *ifp;
+	uint16_t *mac;
 
 	eh = (void*)m->m_data;
-	if (ETHER_IS_MULTICAST(eh->ether_dhost)) {
+	mac = (uint16_t *)eh->ether_dhost;
+	_critical_enter();
+	vcep = DPCPU_GET(hdr_cache);
+	if (__predict_false(vcep->vce_ticks == 0))
+		goto skip;
+	ifp = vpc_ic->ic_ifps[vcep->vce_ifindex];
+	if (ifp == NULL)
+		goto skip;
+	/*
+	 * Is still in caching window
+	 */
+	if (__predict_false(ticks - vcep->vce_ticks < hz/4))
+		goto skip;
+	if (ifp->if_flags & IFF_DYING) {
+		GROUPTASK_ENQUEUE(&vpc_ifp_task);
+		goto skip;
+	}
+	/*
+	 * dmac & vxlanid match
+	 */
+	vsrc.vs_svlanid = m->m_pkthdr.ether_vtag;
+	vsrc.vs_svni = m->m_pkthdr.vxlanid;
+	vsrc.vs_dmac[0] = mac[0];
+	vsrc.vs_dmac[1] = mac[1];
+	vsrc.vs_dmac[2] = mac[2];
+	if (hdrcmp(&vcep->vce_src, &vsrc) == 0) {
+		/* cache hit */
+		m->m_pkthdr.ether_vtag = vcep->vce_dvlanid;
+		m->m_pkthdr.vxlanid = vcep->vce_dvni;
+		if (vcep->vce_policy == VCE_IPSEC)
+			m->m_pkthdr.csum_flags |= CSUM_IPSEC;
+		_critical_exit();
+		m->m_pkthdr.rcvif = ifp;
+		return (1);
+	}
+	skip:
+	vcep->vce_ticks = 0;
+	_critical_exit();
+	return (0);
+}
+
+static void
+vpcb_cache_update(struct mbuf *m, uint32_t dvni, uint16_t dvlanid, uint8_t policy)
+{
+	struct vpcb_cache_ent *vcep;
+	struct vpcb_source *vsrc;
+	struct ether_header *eh;
+	uint16_t *mac;
+
+	eh = (void*)m->m_data;
+	mac = (uint16_t *)eh->ether_dhost;
+	_critical_enter();
+	vcep = DPCPU_GET(hdr_cache);
+	vsrc = &vcep->vce_src;
+	vsrc->vs_svlanid = m->m_pkthdr.ether_vtag;
+	vsrc->vs_svni = m->m_pkthdr.vxlanid;
+	vsrc->vs_dmac[0] = mac[0];
+	vsrc->vs_dmac[1] = mac[1];
+	vsrc->vs_dmac[2] = mac[2];
+	vcep->vce_dvni = dvni;
+	vcep->vce_dvlanid = dvlanid;
+	vcep->vce_policy = policy;
+	vcep->vce_ifindex = m->m_pkthdr.rcvif->if_index;
+	vcep->vce_ticks = ticks;
+	_critical_exit();
+}
+
+
+static int
+vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
+{
+	struct mbuf *m, *mp;
+
+	m = *msrc;
+	*msrc = NULL;
+	if (m->m_flags & M_VXLANTAG) {
 		if (m->m_flags & M_EXT) {
 			if (__predict_false(m->m_next != NULL || m->m_pkthdr.len > MCLBYTES)) {
 				m_freem(m);
@@ -300,15 +423,97 @@ vpcb_transmit(if_t ifp, struct mbuf *m)
 		}
 		wakeup(vs);
 		mtx_unlock(&vs->vs_lock);
-		return (0);
-	}
-	/*
-	 * - If ARP + VXLANTAG put in ck_ring and kick grouptask
-	 * - If MAC address resolves to internal interface call interface transmit
-	 * - If unknown pass packet out lowest cost interface
-	 */
+		*msrc = NULL;
+	} else {
+		struct vpcb_if *vi;
 
+		/* broadcast to all other interfaces */
+		LIST_FOREACH(vi, &vs->vs_if_list, vi_entry) {
+			if (vi->vi_vni | vi->vi_vlanid)
+				continue;
+			vi->vi_if->if_transmit_txq(vi->vi_if, m);
+		}
+	}
+	return (0);
+}
+
+static int
+vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp)
+{
+	struct ether_header *eh;
+	struct mbuf *m;
+	//int rc;
+
+	m = *mp;
+	eh = (void*)m->m_data;
+	if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost))) {
+		return (vpcb_process_mcast(vs, mp));
+	}
+	if (vpcb_cache_lookup(m))
+		return (0);
+	/*
+	 * Do proper lookup and translation 
+	 * 
+	 *
+	 */
 	return (ENXIO);
+}
+
+static int
+vpcb_transmit(if_t ifp, struct mbuf *m)
+{
+	if_ctx_t ctx = ifp->if_softc;
+	struct vpcb_softc *vs = iflib_get_softc(ctx);
+	struct ifnet *ifnext;
+	struct mbuf *mh, *mt, *mnext;
+	bool can_batch = true;
+	int rc, lasterr;
+
+	mh = mt = NULL;
+	do {
+		mnext = m->m_nextpkt;
+		m->m_nextpkt = NULL;
+		rc = vpcb_process_one(vs, &m);
+		if (m == NULL) {
+			m = mnext;
+			continue;
+		}
+		if (__predict_false(rc))
+			break;
+		if (mh == NULL) {
+			mh = mt = m;
+			ifp = m->m_pkthdr.rcvif;
+		} else {
+			mt->m_nextpkt = m;
+			mt = m;
+			if (__predict_false(ifp != m->m_pkthdr.rcvif))
+				can_batch = false;
+		}
+		MPASS(m != mnext);
+		m = mnext;
+	} while (m != NULL);
+	if (__predict_false(mnext != NULL)) {
+		m_freechain(mnext);
+	}
+	if (mh == NULL)
+		return (rc);
+	ifnext = mh->m_pkthdr.rcvif;
+	if (can_batch)
+		return (ifnext->if_transmit_txq(ifnext, mh));
+	lasterr = 0;
+	m = mh;
+	do {
+		mnext = m->m_nextpkt;
+		m->m_nextpkt = NULL;
+		ifnext = m->m_pkthdr.rcvif;
+		m->m_pkthdr.rcvif = NULL;
+		rc = ifp->if_transmit_txq(ifp, m);
+		if (rc)
+			lasterr = rc;
+		m = mnext;
+	} while (m != NULL);
+
+	return (lasterr);
 }
 
 static int
@@ -441,4 +646,5 @@ static moduledata_t vpcb_moduledata = {
 
 DECLARE_MODULE(vpcb, vpcb_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
 MODULE_VERSION(vpcb, 1);
+MODULE_DEPEND(vpcb, vpc, 1, 1, 1);
 MODULE_DEPEND(vpcb, iflib, 1, 1, 1);

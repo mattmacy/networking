@@ -182,4 +182,12 @@ struct vpcb_response {
 #define VPCB_RESPONSE_DHCPv6		   	  			\
 	_IOW('k', 5, struct vpcb_response)
 
+
+struct ifp_cache {
+	uint16_t ic_ifindex_max;
+	uint16_t ic_size;
+	uint32_t ic_pad;
+	struct ifnet *ic_ifps[0];
+};
+
 #endif

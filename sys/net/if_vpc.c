@@ -156,9 +156,11 @@ struct tso_pkt_info {
 extern int mp_ncpus;
 static int vpc_ifindex_target;
 static bool exiting = false;
-static struct ifp_cache *vpc_ic;
-static struct grouptask vpc_ifp_task;
 static struct sx vpc_lock;
+
+struct grouptask vpc_ifp_task;
+struct ifp_cache *vpc_ic;
+
 SX_SYSINIT(vpc, &vpc_lock, "VPC global");
 
 #define VPC_LOCK() sx_xlock(&vpc_lock)
@@ -183,13 +185,6 @@ ck_epoch_record_t vpc_global_record;
 
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 
-struct ifp_cache {
-	uint16_t ic_ifindex_max;
-	uint16_t ic_size;
-	uint32_t ic_pad;
-	struct ifnet *ic_ifps[0];
-};
-
 struct vpc_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
@@ -210,7 +205,7 @@ static void vpc_fte_print(struct vpc_softc *vs);
 
 static int clone_count;
 
-static int
+static __inline int
 hdrcmp(uint16_t *lhs, uint16_t *rhs)
 {
 	return ((lhs[0] ^ rhs[0]) |
@@ -540,7 +535,7 @@ vpc_cache_lookup(struct vpc_softc *vs, struct mbuf *m, struct ether_vlan_header 
 	/*
 	 * Is still in caching window
 	 */
-	if (__predict_false(ticks - ecp->ec_ticks < hz/5)) {
+	if (__predict_false(ticks - ecp->ec_ticks < hz/4)) {
 		ecp->ec_ticks = 0;
 		goto skip;
 	}
