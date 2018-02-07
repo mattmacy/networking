@@ -129,7 +129,6 @@ struct vpcb_softc {
 	LIST_HEAD(, vpcb_if) vs_if_list;
 };
 
-
 static d_ioctl_t vpcbctl_ioctl;
 static d_open_t vpcbctl_open;
 static d_close_t vpcbctl_close;
@@ -441,6 +440,8 @@ vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp)
 {
 	struct ether_header *eh;
 	struct mbuf *m;
+	struct vpcb_if *vi;
+	int vxlanid;
 	//int rc;
 
 	m = *mp;
@@ -450,12 +451,27 @@ vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp)
 	}
 	if (vpcb_cache_lookup(m))
 		return (0);
-	/*
-	 * Do proper lookup and translation 
-	 * 
-	 *
-	 */
-	return (ENXIO);
+#ifdef notyet
+	vxlanid = (m->m_flags & M_VXLANTAG) ? m->m_pkthdr.vxlanid : 0;
+	ftable = vpc_vxlanid_lookup(vs, &vxlanid);
+	if (ftable == NULL) {
+		m_freem(m);
+		*mp = NULL;
+		return (ENOENT);
+	}
+	vi = art_search(ftable, (const unsigned char *)eh->ether_dhost);
+
+	if (vi != NULL) {
+		m->m_pkthdr.rcvif = vi->vi_if;
+		vpcb_cache_update(m, vi->vi_vni, vi->vi_vlanid);
+		m->m_pkthdr.vxlanid = vi->vi_vni;
+		m->m_pkthdr.ether_vtag = vi->vi_vlanid;
+	} else {
+		m->m_pkthdr.rcvif = vs->vs_ifdefault;
+		vpcb_cache_update(m, 0, 0);
+	}
+#endif 	
+	return (0);
 }
 
 static int
