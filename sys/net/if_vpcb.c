@@ -545,11 +545,15 @@ vpcb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 								 UID_ROOT, GID_VPC, 0660, "vpcbctl");
 	if (vs->vs_vpcbctldev == NULL)
 		return (ENOMEM);
-	vs->vs_vpcbctldev->si_drv1 = vs;
-	refcount_init(&vs->vs_refcnt, 0);
 	refcount_acquire(&modrefcnt);
+
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	vs->vs_ctx = ctx;
+	refcount_init(&vs->vs_refcnt, 0);
+	vs->vs_vpcbctldev->si_drv1 = vs;
+	mtx_init(&vs->vs_lock, "vpcb softc", NULL, MTX_DEF);
+	LIST_INIT(&vs->vs_if_list);
+	art_tree_init(&vs->vs_ftable, ETHER_ADDR_LEN);
 	return (0);
 }
 
