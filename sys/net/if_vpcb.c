@@ -86,15 +86,12 @@ static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
 
 struct vpcb_source {
 	uint16_t vs_dmac[3]; /* destination mac address */
-	uint16_t vs_svlanid; /* source vlanid */
-	uint32_t vs_svni;	/* source vni */
+	uint16_t vs_vlanid; /* source vlanid */
+	uint32_t vs_vni;	/* source vni */
 };
 
 struct vpcb_cache_ent {
 	struct vpcb_source vce_src;
-	uint32_t vce_dvni;	/* destination vni */
-	uint16_t vce_dvlanid:12; /* destination vlanid */
-	uint16_t vce_policy:4; /* policy: trusted, IPSEC, etc */
 	uint16_t vce_ifindex;	/* interface index */
 	int vce_ticks;		/* time when entry was created */
 };
@@ -294,6 +291,7 @@ vpcbctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
 	}
 	return (0);
 }
+
 static __inline int
 hdrcmp(struct vpcb_source *vlhs, struct vpcb_source *vrhs)
 {
@@ -320,8 +318,8 @@ vpcb_cache_lookup(struct mbuf *m)
 
 	eh = (void*)m->m_data;
 	mac = (uint16_t *)eh->ether_dhost;
-	vsrc.vs_svlanid = m->m_pkthdr.ether_vtag;
-	vsrc.vs_svni = m->m_pkthdr.vxlanid;
+	vsrc.vs_vlanid = m->m_pkthdr.ether_vtag;
+	vsrc.vs_vni = m->m_pkthdr.vxlanid;
 	vsrc.vs_dmac[0] = mac[0];
 	vsrc.vs_dmac[1] = mac[1];
 	vsrc.vs_dmac[2] = mac[2];
@@ -346,10 +344,6 @@ vpcb_cache_lookup(struct mbuf *m)
 	 */
 	if (hdrcmp(&vcep->vce_src, &vsrc) == 0) {
 		/* cache hit */
-		m->m_pkthdr.ether_vtag = vcep->vce_dvlanid;
-		m->m_pkthdr.vxlanid = vcep->vce_dvni;
-		if (vcep->vce_policy == VCE_IPSEC)
-			m->m_pkthdr.csum_flags |= CSUM_IPSEC;
 		_critical_exit();
 		m->m_pkthdr.rcvif = ifp;
 		return (1);
@@ -361,7 +355,7 @@ vpcb_cache_lookup(struct mbuf *m)
 }
 
 static void
-vpcb_cache_update(struct mbuf *m, uint32_t dvni, uint16_t dvlanid, uint8_t policy)
+vpcb_cache_update(struct mbuf *m)
 {
 	struct vpcb_cache_ent *vcep;
 	struct vpcb_source *vsrc;
@@ -373,14 +367,11 @@ vpcb_cache_update(struct mbuf *m, uint32_t dvni, uint16_t dvlanid, uint8_t polic
 	_critical_enter();
 	vcep = DPCPU_GET(hdr_cache);
 	vsrc = &vcep->vce_src;
-	vsrc->vs_svlanid = m->m_pkthdr.ether_vtag;
-	vsrc->vs_svni = m->m_pkthdr.vxlanid;
+	vsrc->vs_vlanid = m->m_pkthdr.ether_vtag;
+	vsrc->vs_vni = m->m_pkthdr.vxlanid;
 	vsrc->vs_dmac[0] = mac[0];
 	vsrc->vs_dmac[1] = mac[1];
 	vsrc->vs_dmac[2] = mac[2];
-	vcep->vce_dvni = dvni;
-	vcep->vce_dvlanid = dvlanid;
-	vcep->vce_policy = policy;
 	vcep->vce_ifindex = m->m_pkthdr.rcvif->if_index;
 	vcep->vce_ticks = ticks;
 	_critical_exit();
