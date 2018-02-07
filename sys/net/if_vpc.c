@@ -263,6 +263,7 @@ parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
 	int eh_type, offset, ipproto;
 	int l2len, l3len;
 	void *l3hdr;
+	void *l4hdr;
 
 	offset = mc.mc_idx = mc.mc_off = 0;
 	m = m0;
@@ -314,16 +315,21 @@ parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
 	}
 	tpi->vpi_etype = eh_type;
 	tpi->vpi_proto = ipproto;
-	tpi->vpi_l2_len = l2len;
-	tpi->vpi_l3_len = l3len;
-
-	if (ipproto != IPPROTO_TCP)
-		return (0);
+	m->m_pkthdr.l2hlen = tpi->vpi_l2_len = l2len;
+	m->m_pkthdr.l3hlen = tpi->vpi_l3_len = l3len;
 	if (mvec)
-		th = mvec_advance(m, &mc, l3len);
+		l4hdr = mvec_advance(m, &mc, l3len);
 	else
-		th = m_advance(&m, &offset, l3len);
-	tpi->vpi_l4_len = th->th_off << 2;
+		l4hdr = m_advance(&m, &offset, l3len);
+
+	if (ipproto == IPPROTO_TCP) {
+		th = l4hdr;
+		m->m_pkthdr.l4hlen = tpi->vpi_l4_len = th->th_off << 2;
+	} else if (ipproto == IPPROTO_UDP) {
+		m->m_pkthdr.l4hlen = tpi->vpi_l4_len = sizeof(struct udphdr);
+	} else {
+		return (0);
+	}
 	MPASS(l2len && l3len && tpi->vpi_l4_len);
 	return (1);
 }
