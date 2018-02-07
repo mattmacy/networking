@@ -68,12 +68,16 @@ __FBSDID("$FreeBSD$");
 #include <ck_epoch.h>
 #include <net/if_vpc.h>
 
+#include <netinet/udp.h>
+
 #include "ifdi_if.h"
 
 static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
 
 #define VCE_TRUSTED 0x0
 #define VCE_IPSEC 0x1
+#define DHCP_SPORT	68
+#define DHCP_DPORT	67
 
 /*
  * ifconfig vpcb0 create
@@ -173,26 +177,21 @@ static const char *opcode_map[] = {
 };
 
 static int
-parse_pkt(struct mbuf *m, struct pinfo *pinfo)
-{
-	return (0);
-}
-
-static int
 vpcb_poll_dispatch(struct vpcb_softc *vs, struct vpcb_request *vr)
 {
 	struct vpcb_mcast_queue *vmq;
 	struct ether_header *eh;
 	struct mbuf *m;
-	struct pinfo pinfo;
+	struct vpc_pkt_info pinfo;
 	int rc;
+	bool valid;
 
 	if (vr->vrq_header.voh_version == VPCB_VERSION) {
 		printf("version %d doesn't match compiled version: %d\n",
 			   vr->vrq_header.voh_version, VPCB_VERSION);
 		return (ENXIO);
 	}
-
+ restart:
 	bzero(vr, sizeof(*vr));
 	vr->vrq_header.voh_version = VPCB_VERSION;
 	vmq = &vs->vs_vmq;
@@ -215,25 +214,37 @@ vpcb_poll_dispatch(struct vpcb_softc *vs, struct vpcb_request *vr)
 		vr->vrq_context.voc_vni = m->m_pkthdr.vxlanid;
 	if (m->m_flags & M_VLANTAG)
 		vr->vrq_context.voc_vlanid = m->m_pkthdr.ether_vtag;
-	parse_pkt(m, &pinfo);
+	parse_pkt(m, &pinfo, m_ismvec(m));
 	eh = (void*)m->m_data;
 	memcpy(vr->vrq_context.voc_smac, eh->ether_shost, ETHER_ADDR_LEN);
-	switch (pinfo.etype) {
+	switch (pinfo.vpi_etype) {
 		case ETHERTYPE_ARP: {
 			struct arphdr *ah = (struct arphdr *)(m->m_data + m->m_pkthdr.l2hlen);
 			vr->vrq_header.voh_op = VPCB_REQ_NDv4;
 			memcpy(&vr->vrq_data.vrqd_ndv4.target, ar_tpa(ah), sizeof(struct in_addr));
+			valid = true;
 			break;
 		}
-		case ETHERTYPE_IP:
+		case ETHERTYPE_IP: {
+			struct udphdr *uh = (struct udphdr *)(m->m_data + m->m_pkthdr.l2hlen + m->m_pkthdr.l3hlen);
+
 			/* validate DHCP or move on to next packet*/
-			printf("parse DHCP!\n");
+			if (pinfo.vpi_proto != IPPROTO_UDP)
+				break;
+			if (uh->uh_sport != DHCP_SPORT || uh->uh_dport != DHCP_DPORT)
+				break;
+			vr->vrq_header.voh_op = VPCB_REQ_DHCPv4;
+			valid = true;
 			break;
+		}
 		case ETHERTYPE_IPV6:
 			/* validate DHCP/ND or move on to next packet*/
 			printf("parse v6!\n");
 			break;
 	}
+	m_freem(m);
+	if (!valid)
+		goto restart;
 	return (0);
 }
 
