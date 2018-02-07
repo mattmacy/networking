@@ -190,9 +190,21 @@ struct ifp_cache {
 	struct ifnet *ic_ifps[0];
 };
 
+struct vpc_pkt_info {
+	uint16_t vpi_etype;
+	uint8_t vpi_l2_len;
+	uint8_t vpi_l3_len;
+	uint8_t vpi_l4_len;
+	uint8_t vpi_v6:1;
+	uint8_t vpi_proto:7;
+};
+
 struct ck_epoch;
 extern struct ck_epoch vpc_epoch;
 extern struct ifp_cache *vpc_ic;
 extern struct grouptask vpc_ifp_task;
+
+
+int parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec);
 
 #endif
