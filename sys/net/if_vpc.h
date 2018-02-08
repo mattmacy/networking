@@ -90,24 +90,17 @@ struct vpci_vni {
 #define VPCI_VNI_GET							\
 	_IOWR('k', 5, struct vpci_vni)
 
-#if 0
-struct vpcb_resolver {
+
+struct vpcb_port {
+	struct vpc_ioctl_header vp_ioh;
+	char vp_if[IFNAMSIZ];
 };
 
-struct vpcb_port_add {
-};
+#define VPCB_PORT_ADD							\
+	_IOW('k', 2, struct vpcb_port)
+#define VPCB_PORT_DEL						\
+	_IOW('k', 3, struct vpcb_port)
 
-struct vpcb_port_remove {
-};
-
-#define VPCB_RESOLVER									\
-	_IOW('k', 1, struct vpcb_resolver)
-#define VPCB_PORT_ADD									\
-	_IOW('k', 1, struct vpcb_port_add)
-#define VPCB_PORT_REMOVE									\
-	_IOW('k', 1, struct vpcb_port_remove)
-
-#endif
 
 #define VPCB_REQ_NDv4 0x1
 #define VPCB_REQ_NDv6 0x2
@@ -183,6 +176,12 @@ struct vpcb_response {
 	_IOW('k', 5, struct vpcb_response)
 
 
+#ifdef _KERNEL
+#include <sys/proc.h>
+#include <sys/sched.h>
+#include <net/art.h>
+#include <ck_epoch.h>
+
 struct ifp_cache {
 	uint16_t ic_ifindex_max;
 	uint16_t ic_size;
@@ -199,12 +198,37 @@ struct vpc_pkt_info {
 	uint8_t vpi_proto:7;
 };
 
-struct ck_epoch;
-extern struct ck_epoch vpc_epoch;
+struct ck_epoch_record;
+extern struct ck_epoch_record vpc_global_record;
+DPCPU_DECLARE(struct ck_epoch_record *, vpc_epoch_record);
 extern struct ifp_cache *vpc_ic;
 extern struct grouptask vpc_ifp_task;
 
 
 int parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec);
+int vpc_art_tree_clone(art_tree *src, art_tree **dst, struct malloc_type *type);
+void vpc_art_free(art_tree *tree, struct malloc_type *type);
+
+static inline void
+vpc_epoch_begin(void)
+{
+	_critical_enter();
+	sched_pin();
+	ck_epoch_begin(DPCPU_GET(vpc_epoch_record), NULL);
+	_critical_exit();
+}
+
+static inline void
+vpc_epoch_end(void)
+{
+	_critical_enter();
+	sched_unpin();
+	ck_epoch_end(DPCPU_GET(vpc_epoch_record), NULL);
+	_critical_exit();
+}
+
+int vpc_ifp_cache(struct ifnet *ifp);
+
+#endif
 
 #endif
