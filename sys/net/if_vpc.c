@@ -74,6 +74,16 @@ __FBSDID("$FreeBSD$");
 #include <netinet/ip6.h>
 #include <netinet6/nd6.h>
 
+#include <vm/vm.h>
+#include <vm/pmap.h>
+#include <vm/vm_pageout.h>
+#include <vm/vm_param.h>
+#include <vm/vm_kern.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_map.h>
+#include <vm/vm_page.h>
+#include <vm/uma_int.h>
+
 #include <ck_epoch.h>
 #include <net/if_vpc.h>
 
@@ -172,6 +182,82 @@ ck_epoch_record_t vpc_global_record;
  * ifconfig vpcb0 addm vpc0
  *
  */
+
+static __inline int
+alloc_size(void *addr)
+{
+	uma_slab_t slab;
+	int size;
+
+	MPASS(addr);
+	slab = vtoslab((vm_offset_t)addr & (~UMA_SLAB_MASK));
+	if (__predict_false(slab == NULL))
+		panic("free_domain: address %p(%p) has not been allocated.\n",
+		    addr, (void *)((u_long)addr & (~UMA_SLAB_MASK)));
+
+	if (!(slab->us_flags & UMA_SLAB_MALLOC)) {
+		size = slab->us_keg->uk_size;
+	} else {
+		size = slab->us_size;
+	}
+	return (size);
+}
+
+struct art_tree_info {
+	art_tree *tree;
+	struct malloc_type *type;
+};
+
+static int
+art_copy_one(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct art_tree_info *info = data;
+	art_tree *dst = info->tree;
+	void *newvalue;
+	int size;
+
+	size = alloc_size(value);
+	newvalue = malloc(size, info->type, M_WAITOK);
+	memcpy(newvalue, value, size);
+
+	art_insert(dst, key, newvalue);
+	return (0);
+}
+
+static int
+art_free_one(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct malloc_type *type = data;
+
+	free(value, type);
+	return (0);
+}
+
+void
+vpc_art_free(art_tree *tree, struct malloc_type *type)
+{
+	art_iter(tree, art_free_one, type);
+	art_tree_destroy(tree);
+	free(tree, type);
+}
+
+int
+vpc_art_tree_clone(art_tree *src, art_tree **dstp, struct malloc_type *type)
+{
+	art_tree *dst;
+	struct art_tree_info info;
+	int rc;
+
+	info.type = type;
+	info.tree = dst = malloc(sizeof(art_tree), type, M_WAITOK);
+	art_tree_init(dst, src->key_len);
+	rc = art_iter(src, art_copy_one, &info);
+	if (rc) {
+		vpc_art_free(dst, type);
+	} else
+		*dstp = dst;
+	return (rc);
+}
 
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud");
 
@@ -584,8 +670,8 @@ vpc_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex
 	_critical_exit();
 }
 
-static int
-vpc_ifp_cache(struct vpc_softc *vs, struct ifnet *ifp)
+int
+vpc_ifp_cache(struct ifnet *ifp)
 {
 	if (__predict_false(vpc_ic->ic_size -1 < ifp->if_index)) {
 #ifndef INVARIANTS
@@ -632,7 +718,7 @@ vpc_nd_lookup(struct vpc_softc *vs, if_t *ifpp, struct sockaddr *dst, uint8_t *e
 		return (ENETUNREACH);
 		}
 		ifp = rt->rt_ifp;
-		rc = vpc_ifp_cache(vs, ifp);
+		rc = vpc_ifp_cache(ifp);
 		RTFREE_LOCKED(rt);
 
 		if (__predict_false(rc)) {
@@ -847,10 +933,7 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 		m_freechain(m);
 		return (EINVAL);
 	}
-	_critical_enter();
-	sched_pin();
-	ck_epoch_begin(DPCPU_GET(vpc_epoch_record), NULL);
-	_critical_exit();
+	vpc_epoch_begin();
 
 	lasterr = vpc_vxlan_encap_chain(vs, &m, &can_batch);
 	if (__predict_false(lasterr))
@@ -875,10 +958,7 @@ vpc_transmit(if_t ifp, struct mbuf *m)
 		mp = mnext;
 	} while (mp != NULL);
  done:
-	_critical_enter();
-	ck_epoch_end(DPCPU_GET(vpc_epoch_record), NULL);
-	sched_unpin();
-	_critical_exit();
+	vpc_epoch_end();
 	return (lasterr);
 }
 
@@ -1090,6 +1170,7 @@ vpc_vxftable_count_callback(void *data, const unsigned char *key, uint32_t key_l
 	art_iter(&ftable->vf_ftable, vpc_ftable_count_callback, data);
 	return (0);
 }
+
 static int
 vpc_fte_count(struct vpc_softc *vs)
 {
