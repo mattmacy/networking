@@ -79,6 +79,8 @@ static MALLOC_DEFINE(M_VPCB, "vpcb", "virtual private cloud bridge");
 #define DHCP_SPORT	68
 #define DHCP_DPORT	67
 
+#define M_TRUNK M_PROTO1
+
 /*
  * ifconfig vpcb0 create
  * ifconfig vpcb0 addm vpc0
@@ -312,7 +314,7 @@ hdrcmp(struct vpcb_source *vlhs, struct vpcb_source *vrhs)
 }
 
 static int
-vpcb_cache_lookup(struct mbuf *m, int tx)
+vpcb_cache_lookup(struct mbuf *m)
 {
 	struct vpcb_cache_ent *vcep;
 	struct vpcb_source vsrc;
@@ -381,20 +383,14 @@ vpcb_cache_update(struct mbuf *m)
 	_critical_exit();
 }
 
-struct broadcast_info {
-	struct mbuf *m;
-	uint8_t tx;
-};
-
 static int
 vpc_broadcast_one(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
 	struct ifnet *ifp;
-	struct broadcast_info *bi = data;
 	uint16_t *ifindexp = value;
 	struct mbuf *m;
 
-	m = m_dup((struct mbuf *)bi->m, M_NOWAIT);
+	m = m_dup((struct mbuf *)data, M_NOWAIT);
 	if (__predict_false(m == NULL))
 		return (ENOMEM);
 	ifp = vpc_ic->ic_ifps[*ifindexp];
@@ -404,15 +400,13 @@ vpc_broadcast_one(void *data, const unsigned char *key, uint32_t key_len, void *
 		GROUPTASK_ENQUEUE(&vpc_ifp_task);
 		return (0);
 	}
-	if (bi->tx)
-		ifp->if_transmit_txq(ifp, m);
-	else
-		ifp->if_input(ifp, m);
+	m->m_pkthdr.rcvif = ifp;
+	ifp->if_input(ifp, m);
 	return (0);
 }
 
 static int
-vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc, int tx)
+vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
 {
 	struct vpcb_mcast_queue *vmq;
 	struct mbuf *m, *mp;
@@ -420,7 +414,7 @@ vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc, int tx)
 	vmq = &vs->vs_vmq;
 	m = *msrc;
 	*msrc = NULL;
-	if ((m->m_flags & M_VXLANTAG) && tx) {
+	if ((m->m_flags & (M_VXLANTAG|M_TRUNK)) == M_VXLANTAG) {
 		if (m->m_flags & M_EXT) {
 			if (__predict_false(m->m_next != NULL || m->m_pkthdr.len > MCLBYTES)) {
 				m_freem(m);
@@ -457,18 +451,16 @@ vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc, int tx)
 		mtx_unlock(&vs->vs_lock);
 		*msrc = NULL;
 	} else if (!(m->m_flags & M_VXLANTAG)) {
-		struct broadcast_info bi;
-
-		bi.m = m;
-		bi.tx = tx;
-		art_iter(vs->vs_ftable_ro, vpc_broadcast_one, &bi);
+		art_iter(vs->vs_ftable_ro, vpc_broadcast_one, m);
+		if (__predict_true(vs->vs_ifdefault != NULL))
+			vs->vs_ifdefault->if_transmit_txq(vs->vs_ifdefault, m);
+	} else
 		m_freem(m);
-	}
 	return (0);
 }
 
 static int
-vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp, int tx)
+vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp)
 {
 	struct ether_header *eh;
 	uint16_t *vif;
@@ -477,13 +469,14 @@ vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp, int tx)
 	m = *mp;
 	eh = (void*)m->m_data;
 	if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost)))
-		return (vpcb_process_mcast(vs, mp, tx));
-	if (vpcb_cache_lookup(m, tx))
+		return (vpcb_process_mcast(vs, mp));
+	if (vpcb_cache_lookup(m))
 		return (0);
 	vif = art_search(vs->vs_ftable_ro, (const unsigned char *)eh->ether_dhost);
 	ifp = (vif != NULL) ? vpc_ic->ic_ifps[*vif] : vs->vs_ifdefault;
 	if (__predict_false(ifp == NULL)) {
 		m_freem(m);
+		*mp = NULL;
 		return (ENOBUFS);
 	}
 	if (ifp->if_flags & IFF_DYING) {
@@ -497,7 +490,7 @@ vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp, int tx)
 }
 
 static int
-vpcb_transit(if_t ifp, struct mbuf *m, bool tx)
+vpcb_transit(if_t ifp, struct mbuf *m)
 {
 	if_ctx_t ctx = ifp->if_softc;
 	struct vpcb_softc *vs = iflib_get_softc(ctx);
@@ -511,7 +504,7 @@ vpcb_transit(if_t ifp, struct mbuf *m, bool tx)
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		rc = vpcb_process_one(vs, &m, tx);
+		rc = vpcb_process_one(vs, &m);
 		if (m == NULL) {
 			m = mnext;
 			continue;
@@ -540,7 +533,7 @@ vpcb_transit(if_t ifp, struct mbuf *m, bool tx)
 	ifnext = mh->m_pkthdr.rcvif;
 	lasterr = 0;
 	if (can_batch) {
-		if (tx || (ifnext == vs->vs_ifdefault))
+		if (ifnext == vs->vs_ifdefault)
 			lasterr = ifnext->if_transmit_txq(ifnext, mh);
 		else
 			ifnext->if_input(ifnext, mh);
@@ -551,7 +544,7 @@ vpcb_transit(if_t ifp, struct mbuf *m, bool tx)
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
 		ifnext = m->m_pkthdr.rcvif;
-		if (tx || ifnext == vs->vs_ifdefault) {
+		if (ifnext == vs->vs_ifdefault) {
 			m->m_pkthdr.rcvif = NULL;
 			rc = ifnext->if_transmit_txq(ifp, m);
 			if (rc)
@@ -569,13 +562,15 @@ vpcb_transit(if_t ifp, struct mbuf *m, bool tx)
 static int
 vpcb_transmit(if_t ifp, struct mbuf *m)
 {
-	return vpcb_transit(ifp, m, true);
+	m->m_flags &= ~M_TRUNK;
+	return vpcb_transit(ifp, m);
 }
 
 static void
 vpcb_input(if_t ifp, struct mbuf *m)
 {
-	vpcb_transit(ifp, m, false);
+	m->m_flags |= M_TRUNK;
+	vpcb_transit(ifp, m);
 }
 
 static int
