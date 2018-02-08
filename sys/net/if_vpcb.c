@@ -108,13 +108,6 @@ struct pinfo {
 
 static volatile int32_t modrefcnt;
 
-struct vpcb_if {
-	LIST_ENTRY(vpcb_if) vi_entry;
-	struct ifnet *vi_if;
-	uint32_t vi_vni;
-	uint16_t vi_vlanid;
-};
-
 struct vpcb_mcast_queue {
 	int vmq_mcount;
 	struct mbuf *vmq_mh;
@@ -129,8 +122,9 @@ struct vpcb_softc {
 	struct mtx vs_lock;
 
 	struct vpcb_mcast_queue vs_vmq;
-	art_tree vs_ftable;
-	LIST_HEAD(, vpcb_if) vs_if_list;
+	art_tree *vs_ftable_ro;
+	art_tree *vs_ftable_rw;
+	uint16_t vs_ifdefault;
 };
 
 static d_ioctl_t vpcbctl_ioctl;
@@ -268,12 +262,12 @@ vpcb_response_dispatch(struct vpcb_softc *vs, unsigned long cmd, struct vpcb_res
 		   vrs->vrs_context.voc_vni,
 		   vrs->vrs_context.voc_vlanid);
 	switch (cmd) {
-		case VPCB_RESPONSE_NDv6:
 		case VPCB_RESPONSE_NDv4:
-			printf("data: %6D", vrs->vrs_data.vrsd_ndv4.ether_addr, ":");
 			break;
+		case VPCB_RESPONSE_NDv6:
 		case VPCB_RESPONSE_DHCPv4:
 		case VPCB_RESPONSE_DHCPv6:
+			printf("not yet supported %lx\n", cmd);
 			break;
 	}
 	return (0);
@@ -387,6 +381,26 @@ vpcb_cache_update(struct mbuf *m)
 	_critical_exit();
 }
 
+static int
+vpc_broadcast_one(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct ifnet *ifp;
+	struct mbuf *m;
+	uint16_t *ifindexp = value;
+
+	m = m_dup((struct mbuf *)data, M_NOWAIT);
+	if (__predict_false(m == NULL))
+		return (ENOMEM);
+	ifp = vpc_ic->ic_ifps[*ifindexp];
+	if (ifp == NULL)
+		return (0);
+	if (ifp->if_flags & IFF_DYING) {
+		GROUPTASK_ENQUEUE(&vpc_ifp_task);
+		return (0);
+	}
+	ifp->if_transmit_txq(ifp, m);
+	return (0);
+}
 
 static int
 vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
@@ -434,14 +448,8 @@ vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
 		mtx_unlock(&vs->vs_lock);
 		*msrc = NULL;
 	} else {
-		struct vpcb_if *vi;
-
-		/* broadcast to all other interfaces */
-		LIST_FOREACH(vi, &vs->vs_if_list, vi_entry) {
-			if (vi->vi_vni | vi->vi_vlanid)
-				continue;
-			vi->vi_if->if_transmit_txq(vi->vi_if, m);
-		}
+		art_iter(vs->vs_ftable_ro, vpc_broadcast_one, m);
+		m_freem(m);
 	}
 	return (0);
 }
@@ -450,10 +458,8 @@ static int
 vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp)
 {
 	struct ether_header *eh;
-	struct mbuf *m;
-	struct vpcb_if *vi;
-	int vxlanid;
-	//int rc;
+	uint16_t *vif;
+	struct ifnet *ifp;
 
 	m = *mp;
 	eh = (void*)m->m_data;
@@ -462,26 +468,23 @@ vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp)
 	}
 	if (vpcb_cache_lookup(m))
 		return (0);
-#ifdef notyet
-	vxlanid = (m->m_flags & M_VXLANTAG) ? m->m_pkthdr.vxlanid : 0;
-	ftable = vpc_vxlanid_lookup(vs, &vxlanid);
-	if (ftable == NULL) {
-		m_freem(m);
-		*mp = NULL;
-		return (ENOENT);
-	}
-	vi = art_search(ftable, (const unsigned char *)eh->ether_dhost);
+	vif = art_search(vs->vs_ftable_ro, (const unsigned char *)eh->ether_dhost);
+	if (vif != NULL)
+		ifp = vpc_ic->ic_ifps[*vif];
+	else
+		ifp = vpc_ic->ic_ifps[vs->vs_ifdefault];
 
-	if (vi != NULL) {
-		m->m_pkthdr.rcvif = vi->vi_if;
-		vpcb_cache_update(m, vi->vi_vni, vi->vi_vlanid);
-		m->m_pkthdr.vxlanid = vi->vi_vni;
-		m->m_pkthdr.ether_vtag = vi->vi_vlanid;
-	} else {
-		m->m_pkthdr.rcvif = vs->vs_ifdefault;
-		vpcb_cache_update(m, 0, 0);
+	if (__predict_false(ifp == NULL)) {
+		m_freem(m);
+		return (ENOBUFS);
 	}
-#endif 	
+	if (ifp->if_flags & IFF_DYING) {
+		GROUPTASK_ENQUEUE(&vpc_ifp_task);
+		return (ENOBUFS);
+	}
+	m->m_pkthdr.rcvif = ifp;
+	vpcb_cache_update(m);
+
 	return (0);
 }
 
@@ -495,6 +498,7 @@ vpcb_transmit(if_t ifp, struct mbuf *m)
 	bool can_batch = true;
 	int rc, lasterr;
 
+	vpc_epoch_begin();
 	mh = mt = NULL;
 	do {
 		mnext = m->m_nextpkt;
@@ -521,11 +525,15 @@ vpcb_transmit(if_t ifp, struct mbuf *m)
 	if (__predict_false(mnext != NULL)) {
 		m_freechain(mnext);
 	}
-	if (mh == NULL)
-		return (rc);
+	if (mh == NULL) {
+		lasterr = rc;
+		goto done;
+	}
 	ifnext = mh->m_pkthdr.rcvif;
-	if (can_batch)
-		return (ifnext->if_transmit_txq(ifnext, mh));
+	if (can_batch) {
+		lasterr = ifnext->if_transmit_txq(ifnext, mh);
+		goto done;
+	}
 	lasterr = 0;
 	m = mh;
 	do {
@@ -538,7 +546,8 @@ vpcb_transmit(if_t ifp, struct mbuf *m)
 			lasterr = rc;
 		m = mnext;
 	} while (m != NULL);
-
+ done:
+	vpc_epoch_end();
 	return (lasterr);
 }
 
@@ -563,9 +572,140 @@ vpcb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 	refcount_init(&vs->vs_refcnt, 0);
 	vs->vs_vpcbctldev->si_drv1 = vs;
 	mtx_init(&vs->vs_lock, "vpcb softc", NULL, MTX_DEF);
-	LIST_INIT(&vs->vs_if_list);
-	art_tree_init(&vs->vs_ftable, ETHER_ADDR_LEN);
+	vs->vs_ftable_ro = malloc(sizeof(art_tree), M_VPCB, M_WAITOK|M_ZERO);
+	vs->vs_ftable_rw = malloc(sizeof(art_tree), M_VPCB, M_WAITOK|M_ZERO);
+	art_tree_init(vs->vs_ftable_ro, ETHER_ADDR_LEN);
+	art_tree_init(vs->vs_ftable_rw, ETHER_ADDR_LEN);
 	return (0);
+}
+
+static int
+vpcb_port_add(struct vpcb_softc *vs, struct vpcb_port *port)
+{
+	struct ifnet *ifp;
+	struct sockaddr_dl *sdl;
+	art_tree *newftable, *oldftable;
+	uint16_t *ifindexp;
+	int rc;
+
+	port->vp_if[IFNAMSIZ-1] = '\0';
+	if ((ifp = ifunit_ref(port->vp_if)) == NULL) {
+		if (bootverbose)
+			printf("couldn't reference %s\n", port->vp_if);
+		return (ENXIO);
+	}
+	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+	if (sdl->sdl_type != IFT_ETHER) {
+		if_rele(ifp);
+		return (EINVAL);
+	}
+	/* Verify ifnet not already in use */
+	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) != NULL) {
+		if (bootverbose)
+			printf("%s in use\n", port->vp_if);
+		if_rele(ifp);
+		return (EBUSY);
+	}
+	ifindexp = malloc(sizeof(uint16_t), M_VPCB, M_WAITOK);
+	*ifindexp = ifp->if_index;
+	vpc_ifp_cache(ifp);
+	art_insert(vs->vs_ftable_rw, LLADDR(sdl), ifindexp);
+	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCB);
+	if (rc)
+		goto fail;
+	oldftable = vs->vs_ftable_ro;
+	vs->vs_ftable_ro = newftable;
+	ck_epoch_synchronize(&vpc_global_record);
+	vpc_art_free(oldftable, M_VPCB);
+	if_rele(ifp);
+	return (0);
+ fail:
+	free(ifindexp, M_VPCB);
+	if_rele(ifp);
+	return (rc);
+}
+
+static int
+vpcb_port_delete(struct vpcb_softc *vs, struct vpcb_port *port)
+{
+	struct ifnet *ifp;
+	struct sockaddr_dl *sdl;
+	art_tree *newftable, *oldftable;
+	uint16_t *ifindexp;
+	int rc;
+
+	port->vp_if[IFNAMSIZ-1] = '\0';
+	if ((ifp = ifunit_ref(port->vp_if)) == NULL) {
+		if (bootverbose)
+			printf("couldn't reference %s\n", port->vp_if);
+		return (ENXIO);
+	}
+	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+	if (sdl->sdl_type != IFT_ETHER) {
+		if_rele(ifp);
+		return (EINVAL);
+	}
+	/* Verify ifnet in table */
+	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) == NULL) {
+		if (bootverbose)
+			printf("%s not found\n", port->vp_if);
+		if_rele(ifp);
+		return (ENOENT);
+	}
+
+	ifindexp = art_delete(vs->vs_ftable_rw, LLADDR(sdl));
+	free(ifindexp, M_VPCB);
+	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCB);
+	if (rc)
+		goto fail;
+	oldftable = vs->vs_ftable_ro;
+	vs->vs_ftable_ro = newftable;
+	ck_epoch_synchronize(&vpc_global_record);
+	vpc_art_free(oldftable, M_VPCB);
+	if_rele(ifp);
+	return (0);
+ fail:
+	free(ifindexp, M_VPCB);
+	if_rele(ifp);
+	return (rc);
+}
+
+static int
+vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
+{
+	struct vpcb_softc *vs = iflib_get_softc(ctx);
+	struct ifreq *ifr = (struct ifreq *)data;
+	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
+	struct vpc_ioctl_header *ioh =
+	    (struct vpc_ioctl_header *)(ifbuf->buffer);
+	int rc = ENOTSUP;
+	struct vpc_ioctl_data *iod = NULL;
+
+	if (command != SIOCGPRIVATE_0)
+		return (EINVAL);
+#ifdef notyet
+	/* need sx lock for iflib context */
+	iod = malloc(ifbuf->length, M_VPCB, M_WAITOK | M_ZERO);
+#endif
+	iod = malloc(ifbuf->length, M_VPCB, M_NOWAIT | M_ZERO);
+	if (iod == NULL)
+		return (ENOMEM);
+	rc = copyin(ioh, iod, ifbuf->length);
+	if (rc) {
+		free(iod, M_VPCB);
+		return (rc);
+	}
+	switch (ioh->vih_type) {
+		case VPCB_PORT_ADD:
+			rc = vpcb_port_add(vs, (struct vpcb_port *)iod);
+			break;
+		case VPCB_PORT_DEL:
+			rc = vpcb_port_delete(vs, (struct vpcb_port *)iod);
+			break;
+		default:
+			rc = ENOTSUP;
+	}
+	return (rc);
 }
 
 static int
@@ -608,6 +748,7 @@ static device_method_t vpcb_if_methods[] = {
 	DEVMETHOD(ifdi_detach, vpcb_detach),
 	DEVMETHOD(ifdi_init, vpcb_init),
 	DEVMETHOD(ifdi_stop, vpcb_stop),
+	DEVMETHOD(ifdi_priv_ioctl, vpcb_priv_ioctl),
 	DEVMETHOD_END
 };
 
