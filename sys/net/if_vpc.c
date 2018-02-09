@@ -1031,7 +1031,6 @@ vpc_detach(if_ctx_t ctx)
 
 	ck_epoch_unregister(&vs->vs_record);
 	vs->vs_ifparent->if_input = vs->vs_old_if_input;
-	vs->vs_ifparent->if_pspare[3] = NULL;
 	art_iter(&vs->vs_vxftable, vpc_vxftable_free_callback, NULL);
 
 	atomic_add_int(&clone_count, -1);
@@ -1046,26 +1045,6 @@ vpc_init(if_ctx_t ctx)
 static void
 vpc_stop(if_ctx_t ctx)
 {
-}
-
-static void
-vpc_if_input(struct ifnet *ifp, struct mbuf *m)
-{
-	struct vpc_softc *vs;
-	struct ifnet *vsifp;
-	struct ether_header *eh;
-
-	vs = ifp->if_pspare[3];
-	vsifp = iflib_get_ifp(vs->vs_ctx);
-	eh = mtod(m, struct ether_header*);
-	ETHER_BPF_MTAP(vsifp, m);
-	if (ntohs(eh->ether_type) == ETHERTYPE_ARP) {
-		m->m_pkthdr.rcvif = ifp;
-		vs->vs_old_if_input(ifp, m);
-	} else {
-		m->m_pkthdr.rcvif = vsifp;
-		vsifp->if_input(vsifp, m);
-	}
 }
 
 static int
@@ -1105,8 +1084,6 @@ vpc_set_listen(struct vpc_softc *vs, struct vpc_listen *vl)
 		vs->vs_old_if_input = ifp->if_input;
 		vs->vs_ifparent = ifp;
 	}
-	ifp->if_pspare[3] = vs;
-	ifp->if_input = vpc_if_input;
 	ifr.ifr_index = vs->vs_vxlan_port;
 
 	rc = ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
