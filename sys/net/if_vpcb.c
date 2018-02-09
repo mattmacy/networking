@@ -126,6 +126,7 @@ struct vpcb_softc {
 	struct vpcb_mcast_queue vs_vmq;
 	art_tree *vs_ftable_ro;
 	art_tree *vs_ftable_rw;
+	void (*vs_oinput)(struct ifnet *, struct mbuf *);
 	struct ifnet *vs_ifdefault;
 };
 
@@ -693,6 +694,40 @@ vpcb_port_delete(struct vpcb_softc *vs, struct vpcb_port *port)
 }
 
 static int
+vpcb_port_trunk(struct vpcb_softc *vs, struct vpcb_port *port)
+{
+	struct ifnet *ifp;
+	struct sockaddr_dl *sdl;
+
+	port->vp_if[IFNAMSIZ-1] = '\0';
+	if ((ifp = ifunit_ref(port->vp_if)) == NULL) {
+		if (bootverbose)
+			printf("couldn't reference %s\n", port->vp_if);
+		return (ENXIO);
+	}
+	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+	if (sdl->sdl_type != IFT_ETHER) {
+		if_rele(ifp);
+		return (EINVAL);
+	}
+	/* Verify ifnet not already in use */
+	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) != NULL) {
+		if (bootverbose)
+			printf("%s in use\n", port->vp_if);
+		if_rele(ifp);
+		return (EBUSY);
+	}
+	if (vs->vs_ifdefault != NULL) {
+		vs->vs_ifdefault->if_input = vs->vs_oinput;
+		if_rele(vs->vs_ifdefault);
+	}
+	vs->vs_ifdefault = ifp;
+	vs->vs_oinput = ifp->if_input;
+	ifp->if_input = vpcb_input;
+	return (0);
+}
+
+static int
 vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 {
 	struct vpcb_softc *vs = iflib_get_softc(ctx);
@@ -724,6 +759,9 @@ vpcb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 		case VPCB_PORT_DEL:
 			rc = vpcb_port_delete(vs, (struct vpcb_port *)iod);
 			break;
+		case VPCB_PORT_TRUNK:
+			rc = vpcb_port_trunk(vs, (struct vpcb_port *)iod);
+			break;
 		default:
 			rc = ENOTSUP;
 	}
@@ -754,10 +792,28 @@ static int
 vpcb_detach(if_ctx_t ctx)
 {
 	struct vpcb_softc *vs = iflib_get_softc(ctx);
+	struct vpcb_mcast_queue *vmq;
+	struct mbuf *m;
 
 	if (vs->vs_refcnt != 0)
 		return (EBUSY);
 
+	ck_epoch_synchronize(&vpc_global_record);
+
+	vmq = &vs->vs_vmq;
+	while (vmq->vmq_mh != NULL) {
+		m = vmq->vmq_mh;
+		vmq->vmq_mh = m->m_nextpkt;
+		m_freem(m);
+	}
+	if (vs->vs_ifdefault != NULL) {
+		vs->vs_ifdefault->if_input = vs->vs_oinput;
+		if_rele(vs->vs_ifdefault);
+	}
+
+	mtx_destroy(&vs->vs_lock);
+	vpc_art_free(vs->vs_ftable_ro, M_VPCB);
+	vpc_art_free(vs->vs_ftable_rw, M_VPCB);
 	destroy_dev(vs->vs_vpcbctldev);
 	refcount_release(&modrefcnt);
 	return (0);
