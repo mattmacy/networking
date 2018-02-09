@@ -230,7 +230,7 @@ vpc_epoch_end(void)
 }
 
 int vpc_ifp_cache(struct ifnet *ifp);
-
+int vpcb_output(struct ifnet *ifp, struct mbuf *m);
 #endif
 
 #endif
