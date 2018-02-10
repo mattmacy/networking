@@ -281,6 +281,10 @@ vcpu_reqidle(struct vm_eventinfo *info)
 	return (*info->iptr);
 }
 
+#ifdef INVARIANTS
+struct mtx *vcpu_mtx(struct vm *vm, int vcpuid);
+#endif
+
 /*
  * Return 1 if device indicated by bus/slot/func is supposed to be a
  * pci passthrough device.
@@ -301,6 +305,17 @@ enum vcpu_state {
 int vcpu_set_state(struct vm *vm, int vcpu, enum vcpu_state state,
     bool from_idle);
 enum vcpu_state vcpu_get_state(struct vm *vm, int vcpu, int *hostcpu);
+enum vcpu_state vcpu_get_state_locked(struct vm *vm, int vcpu, int *hostcpu);
+enum vcpu_state vcpu_get_state_(struct vm *vm, int vcpu, int *hostcpu, int locked);
+
+static int __inline
+vcpu_is_running_(struct vm *vm, int vcpu, int *hostcpu, int locked)
+{
+	if (locked)
+		return (vcpu_get_state_locked(vm, vcpu, hostcpu) == VCPU_RUNNING);
+	else
+		return (vcpu_get_state(vm, vcpu, hostcpu) == VCPU_RUNNING);
+}
 
 static int __inline
 vcpu_is_running(struct vm *vm, int vcpu, int *hostcpu)

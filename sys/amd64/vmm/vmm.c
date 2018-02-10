@@ -307,6 +307,14 @@ vcpu_trace_exceptions(struct vm *vm, int vcpuid)
 	return (trace_guest_exceptions);
 }
 
+#ifdef INVARIANTS
+struct mtx *
+vcpu_mtx(struct vm *vm, int vcpuid)
+{
+	return &(vm->vcpu[vcpuid].mtx);
+}
+#endif
+
 struct vm_exit *
 vm_exitinfo(struct vm *vm, int cpuid)
 {
@@ -2309,7 +2317,7 @@ vcpu_set_state(struct vm *vm, int vcpuid, enum vcpu_state newstate,
 }
 
 enum vcpu_state
-vcpu_get_state(struct vm *vm, int vcpuid, int *hostcpu)
+vcpu_get_state_(struct vm *vm, int vcpuid, int *hostcpu, int locked)
 {
 	struct vcpu *vcpu;
 	enum vcpu_state state;
@@ -2319,13 +2327,27 @@ vcpu_get_state(struct vm *vm, int vcpuid, int *hostcpu)
 
 	vcpu = &vm->vcpu[vcpuid];
 
-	vcpu_lock(vcpu);
+	if (!locked)
+		vcpu_lock(vcpu);
 	state = vcpu->state;
 	if (hostcpu != NULL)
 		*hostcpu = vcpu->hostcpu;
-	vcpu_unlock(vcpu);
+	if (!locked)
+		vcpu_unlock(vcpu);
 
 	return (state);
+}
+
+enum vcpu_state
+vcpu_get_state(struct vm *vm, int vcpuid, int *hostcpu)
+{
+	return (vcpu_get_state_(vm, vcpuid, hostcpu, 0));
+}
+
+enum vcpu_state
+vcpu_get_state_locked(struct vm *vm, int vcpuid, int *hostcpu)
+{
+	return (vcpu_get_state_(vm, vcpuid, hostcpu, 1));
 }
 
 int

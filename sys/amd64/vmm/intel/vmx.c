@@ -2946,12 +2946,12 @@ vmx_shadow_reg(int reg)
 }
 
 static int
-vmx_getreg(void *arg, int vcpu, int reg, uint64_t *retval)
+vmx_getreg_(void *arg, int vcpu, int reg, uint64_t *retval, int locked)
 {
 	int running, hostcpu;
 	struct vmx *vmx = arg;
 
-	running = vcpu_is_running(vmx->vm, vcpu, &hostcpu);
+	running = vcpu_is_running_(vmx->vm, vcpu, &hostcpu, locked);
 	if (running && hostcpu != curcpu)
 		panic("vmx_getreg: %s%d is running", vm_name(vmx->vm), vcpu);
 
@@ -2962,6 +2962,18 @@ vmx_getreg(void *arg, int vcpu, int reg, uint64_t *retval)
 		return (0);
 
 	return (vmcs_getreg(&vmx->vmcs[vcpu], running, reg, retval));
+}
+
+static int
+vmx_getreg(void *arg, int vcpu, int reg, uint64_t *retval)
+{
+	return (vmx_getreg_(arg, vcpu, reg, retval, 0));
+}
+
+static int
+vmx_getreg_locked(void *arg, int vcpu, int reg, uint64_t *retval)
+{
+	return (vmx_getreg_(arg, vcpu, reg, retval, 1));
 }
 
 static int
@@ -3242,12 +3254,17 @@ vmx_set_intr_ready(struct vlapic *vlapic, int vector, bool level)
 static int
 vmx_pending_intr(struct vlapic *vlapic, int *vecptr)
 {
-	struct vlapic_vtx *vlapic_vtx;
 	struct pir_desc *pir_desc;
 	struct LAPIC *lapic;
 	uint64_t pending, pirval;
 	uint32_t ppr, vpr;
 	int i;
+	struct vlapic_vtx *vlapic_vtx = (struct vlapic_vtx *)vlapic;
+#ifdef INVARIANTS
+	struct mtx *m = vcpu_mtx(vlapic_vtx->vmx->vm, vlapic->vcpuid);
+
+	mtx_assert(m, MA_OWNED);
+#endif
 
 	/*
 	 * This function is only expected to be called from the 'HLT' exit
@@ -3255,7 +3272,6 @@ vmx_pending_intr(struct vlapic *vlapic, int *vecptr)
 	 */
 	KASSERT(vecptr == NULL, ("vmx_pending_intr: vecptr must be NULL"));
 
-	vlapic_vtx = (struct vlapic_vtx *)vlapic;
 	pir_desc = vlapic_vtx->pir_desc;
 
 	pending = atomic_load_acq_long(&pir_desc->pending);
@@ -3270,7 +3286,7 @@ vmx_pending_intr(struct vlapic *vlapic, int *vecptr)
 		uint64_t val;
 		uint8_t rvi, ppr;
 
-		vmx_getreg(vlapic_vtx->vmx, vlapic->vcpuid,
+		vmx_getreg_locked(vlapic_vtx->vmx, vlapic->vcpuid,
 		    VMCS_IDENT(VMCS_GUEST_INTR_STATUS), &val);
 		rvi = val & APIC_TPR_INT;
 		lapic = vlapic->apic_page;
