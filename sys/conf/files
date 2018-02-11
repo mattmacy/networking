@@ -4075,7 +4075,6 @@ net/altq/altq_red.c		optional altq
 net/altq/altq_rio.c		optional altq
 net/altq/altq_rmclass.c		optional altq
 net/altq/altq_subr.c		optional altq
-net/art.c			standard
 net/bpf.c			standard
 net/bpf_buffer.c		optional bpf
 net/bpf_jitter.c		optional bpf_jitter
