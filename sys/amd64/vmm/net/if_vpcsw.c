@@ -762,7 +762,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 }
 
 static int
-vpcsw_port_trunk(struct vpcsw_softc *vs, struct vpcsw_port *port)
+vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
 	struct sockaddr_dl *sdl;
@@ -823,8 +823,8 @@ vpcsw_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 		case VPCSW_PORT_DEL:
 			rc = vpcsw_port_delete(vs, (struct vpcsw_port *)iod);
 			break;
-		case VPCSW_PORT_TRUNK:
-			rc = vpcsw_port_trunk(vs, (struct vpcsw_port *)iod);
+		case VPCSW_PORT_UPLINK:
+			rc = vpcsw_port_uplink(vs, (struct vpcsw_port *)iod);
 			break;
 		default:
 			rc = ENOTSUP;
