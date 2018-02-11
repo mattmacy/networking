@@ -79,8 +79,6 @@ static MALLOC_DEFINE(M_VPCSW, "vpcsw", "virtual private cloud bridge");
 #define DHCP_SPORT	68
 #define DHCP_DPORT	67
 
-#define M_TRUNK M_PROTO1
-
 /*
  * ifconfig vpcsw0 create
  * ifconfig vpcsw0 addm vpc0
@@ -533,13 +531,10 @@ vpcsw_transit(struct vpcsw_softc *vs, struct mbuf *m)
 		lasterr = rc;
 		goto done;
 	}
-	ifnext = mh->m_pkthdr.rcvif;
 	lasterr = 0;
 	if (can_batch) {
-		if (ifnext == vs->vs_ifdefault)
-			lasterr = ifnext->if_transmit_txq(ifnext, mh);
-		else
-			ifnext->if_input(ifnext, mh);
+		ifnext = mh->m_pkthdr.rcvif;
+		ifnext->if_input(ifnext, mh);
 		goto done;
 	}
 	m = mh;
@@ -547,14 +542,7 @@ vpcsw_transit(struct vpcsw_softc *vs, struct mbuf *m)
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
 		ifnext = m->m_pkthdr.rcvif;
-		if (ifnext == vs->vs_ifdefault) {
-			m->m_pkthdr.rcvif = NULL;
-			rc = ifnext->if_transmit_txq(ifnext, m);
-			if (rc)
-				lasterr = rc;
-		} else
-			ifnext->if_input(ifnext, m);
-
+		ifnext->if_input(ifnext, m);
 		m = mnext;
 	} while (m != NULL);
  done:
@@ -566,15 +554,8 @@ static int
 vpcsw_transmit(if_t ifp, struct mbuf *m)
 {
 	struct vpcsw_softc *vs;
-	struct mbuf *mp;
 
 	vs = ifp->if_softc;
-	mp = m;
-	do {
-		mp->m_flags &= ~M_TRUNK;
-		mp = mp->m_nextpkt;
-	} while (mp);
-
 	return vpcsw_transit(vs, m);
 }
 
@@ -582,52 +563,22 @@ static int
 vpcsw_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
 {
 	struct vpcsw_softc *vs;
-	struct mbuf *mp;
 
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
-
-	mp = m;
-	do {
-		mp->m_flags &= ~M_TRUNK;
-		mp = mp->m_nextpkt;
-	} while (mp);
 	return (vpcsw_transit(vs, m));
 }
 
 static struct mbuf *
 vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 {
-	struct ether_header *eh;
-	struct mbuf *mret, *mh, *mt, *mnext, *mp;
 	struct vpcsw_softc *vs;
 
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
+	vpcsw_transit(vs, m);
 
-	eh = (void*)m->m_data;
-	mh = mt = mret = NULL;
-	mp = m;
-	do {
-		mnext = mp->m_nextpkt;
-		mp->m_flags |= M_TRUNK;
-		if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost) &&
-							!(m->m_flags & M_VXLANTAG|M_VLANTAG))) {
-			mp->m_nextpkt = mret;
-			mret = mp;
-		} else if (mh == NULL) {
-			mh = mt = mp;
-		} else {
-			mt->m_nextpkt = mp;
-			mt = mp;
-		}
-		mp = mnext;
-	} while (mp);
-
-	vpcsw_transit(vs, mh);
-	if (__predict_false((mret != NULL) && vpcsw_transit(vs, mret)))
-		return (NULL);
-	return (mret);
+	return (NULL);
 }
 
 static int
