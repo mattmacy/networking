@@ -290,32 +290,6 @@ hdrcmp(uint16_t *lhs, uint16_t *rhs)
 }
 
 static void *
-m_advance(struct mbuf **pm, int *poffset, int len)
-{
-	struct mbuf *m = *pm;
-	int offset = *poffset;
-	uintptr_t p = 0;
-
-	MPASS(!m_ismvec(m));
-	MPASS(len > 0);
-
-	for (;;) {
-		if (offset + len < m->m_len) {
-			offset += len;
-			p = mtod(m, uintptr_t) + offset;
-			break;
-		}
-		len -= m->m_len - offset;
-		m = m->m_next;
-		offset = 0;
-		MPASS(m != NULL);
-	}
-	*poffset = offset;
-	*pm = m;
-	return ((void *)p);
-}
-
-static void *
 mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
 {
 	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
@@ -340,7 +314,7 @@ mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
 }
 
 static inline int
-parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
+parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi)
 {
 	struct ether_vlan_header *evh;
 	struct tcphdr *th;
@@ -350,6 +324,8 @@ parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
 	int l2len, l3len;
 	void *l3hdr;
 	void *l4hdr;
+
+	MPASS(!(m0->m_flags & M_EXT) || m_ismvec(m0));
 
 	offset = mc.mc_idx = mc.mc_off = 0;
 	m = m0;
@@ -364,11 +340,7 @@ parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
 	} else
 		l2len = ETHER_HDR_LEN;
 
-	if (mvec)
-		l3hdr = mvec_advance(m, &mc, l2len);
-	else
-		l3hdr = m_advance(&m, &offset, l2len);
-
+	l3hdr = mvec_advance(m, &mc, l2len);
 	switch(eh_type) {
 #ifdef INET6
 	case ETHERTYPE_IPV6:
@@ -403,11 +375,7 @@ parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
 	tpi->vpi_proto = ipproto;
 	m->m_pkthdr.l2hlen = tpi->vpi_l2_len = l2len;
 	m->m_pkthdr.l3hlen = tpi->vpi_l3_len = l3len;
-	if (mvec)
-		l4hdr = mvec_advance(m, &mc, l3len);
-	else
-		l4hdr = m_advance(&m, &offset, l3len);
-
+	l4hdr = mvec_advance(m, &mc, l3len);
 	if (ipproto == IPPROTO_TCP) {
 		th = l4hdr;
 		m->m_pkthdr.l4hlen = tpi->vpi_l4_len = th->th_off << 2;
@@ -421,9 +389,9 @@ parse_pkt_(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
 }
 
 int
-parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec)
+vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 {
-	return (parse_pkt_(m0, tpi, mvec));
+	return (parse_pkt_(m0, tpi));
 }
 
 static void
@@ -563,10 +531,11 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	struct udphdr *uh;
 	struct vxlanhdr *vhdr;
 	caddr_t smac;
-	int len, offset;
+	int len;
 	uint16_t seed;
 	struct mvec_cursor mc;
 
+	MPASS(!(m->m_flags & M_EXT) || m_ismvec(m));
 	seed = 0;
 	len = m->m_pkthdr.len;
 	smac = ifp->if_hw_addr;
@@ -574,13 +543,8 @@ vpc_vxlanhdr_init(struct vpc_ftable *vf, struct vxlan_header *vh,
 	if (tpi->vpi_l4_len) {
 		struct tcphdr *th;
 
-		if (m_ismvec(m)) {
-			mc.mc_idx = mc.mc_off = 0;
-			th = mvec_advance(m, &mc, m->m_pkthdr.encaplen + tpi->vpi_l2_len + tpi->vpi_l3_len);
-		} else {
-			offset = 0;
-			th = m_advance(&m, &offset,  m->m_pkthdr.encaplen + tpi->vpi_l2_len + tpi->vpi_l3_len);
-		}
+		mc.mc_idx = mc.mc_off = 0;
+		th = mvec_advance(m, &mc, m->m_pkthdr.encaplen + tpi->vpi_l2_len + tpi->vpi_l3_len);
 		seed = th->th_sport ^ th->th_dport;
 	}
 
@@ -781,7 +745,7 @@ vpc_vxlan_encap(struct vpc_softc *vs, struct mbuf **mp)
 		m_freem(m);
 		return (EINVAL);
 	}
-	parse_pkt_(m, &tpi, m_ismvec(m));
+	parse_pkt_(m, &tpi);
 
 	MPASS(m->m_pkthdr.vxlanid);
 	evhvx = (struct ether_vlan_header *)m->m_data;
