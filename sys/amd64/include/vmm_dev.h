@@ -394,7 +394,7 @@ enum {
 #define IFNAMSIZ 16
 #endif
 
-#define VB_QUEUES_MAX 32
+#define VB_QUEUES_MAX VM_MAXCPU
 #define VB_MAGIC 0x20171202
 struct vb_ioctl_header {
 	uint64_t vih_magic;
@@ -425,16 +425,6 @@ struct vb_vm_attach {
 	uint16_t	vva_mtu;
 };
 
-struct vb_if_attach {
-	struct vb_ioctl_header via_ioh;
-	char via_ifparent[IFNAMSIZ];
-};
-
-struct vb_vni {
-	struct vb_ioctl_header vv_ioh;
-	uint32_t		vv_vni;
-};
-
 struct vb_macaddr {
 	struct vb_ioctl_header vm_ioh;
 	uint8_t		vm_macaddr[6];
@@ -444,10 +434,6 @@ struct vb_macaddr {
 	_IOW('k', 1, struct vb_msix)
 #define VB_VM_ATTACH							\
 	_IOW('k', 2, struct vb_vm_attach)
-#define VB_IF_ATTACH							\
-	_IOW('k', 3, struct vb_if_attach)
-#define VB_VNI									\
-	_IOW('k', 4, struct vb_vni)
 #define VB_MACADDR_SET							\
 	_IOW('k', 5, struct vb_macaddr)
 
