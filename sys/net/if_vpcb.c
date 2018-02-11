@@ -412,6 +412,7 @@ vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
 {
 	struct vpcb_mcast_queue *vmq;
 	struct mbuf *m, *mp;
+	int rc;
 
 	vmq = &vs->vs_vmq;
 	m = *msrc;
@@ -452,22 +453,15 @@ vpcb_process_mcast(struct vpcb_softc *vs, struct mbuf **msrc)
 		wakeup(vs);
 		mtx_unlock(&vs->vs_lock);
 		*msrc = NULL;
+		rc = 0;
 	} else if (!(m->m_flags & M_VXLANTAG)) {
 		art_iter(vs->vs_ftable_ro, vpc_broadcast_one, m);
-		if (__predict_true(vs->vs_ifdefault != NULL)) {
-			/*
-			 * If it's from the network also pass it to default input
-			 * otherwise send it off to the network
-			 */
-			if (m->m_flags & M_TRUNK)
-				vs->vs_oinput(vs->vs_ifdefault, m);
-			else
-				vs->vs_ifdefault->if_transmit_txq(vs->vs_ifdefault, m);
-		} else
-			m_freem(m);
-	} else
+		rc = 0;
+	} else {
 		m_freem(m);
-	return (0);
+		rc = EINVAL;
+	}
+	return (rc);
 }
 
 static int
@@ -501,10 +495,8 @@ vpcb_process_one(struct vpcb_softc *vs, struct mbuf **mp)
 }
 
 static int
-vpcb_transit(if_t ifp, struct mbuf *m)
+vpcb_transit(struct vpcb_softc *vs, struct mbuf *m)
 {
-	if_ctx_t ctx = ifp->if_softc;
-	struct vpcb_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *ifnext;
 	struct mbuf *mh, *mt, *mnext;
 	bool can_batch = true;
@@ -524,11 +516,11 @@ vpcb_transit(if_t ifp, struct mbuf *m)
 			break;
 		if (mh == NULL) {
 			mh = mt = m;
-			ifp = m->m_pkthdr.rcvif;
+			ifnext = m->m_pkthdr.rcvif;
 		} else {
 			mt->m_nextpkt = m;
 			mt = m;
-			if (__predict_false(ifp != m->m_pkthdr.rcvif))
+			if (__predict_false(ifnext != m->m_pkthdr.rcvif))
 				can_batch = false;
 		}
 		MPASS(m != mnext);
@@ -557,11 +549,11 @@ vpcb_transit(if_t ifp, struct mbuf *m)
 		ifnext = m->m_pkthdr.rcvif;
 		if (ifnext == vs->vs_ifdefault) {
 			m->m_pkthdr.rcvif = NULL;
-			rc = ifnext->if_transmit_txq(ifp, m);
+			rc = ifnext->if_transmit_txq(ifnext, m);
 			if (rc)
 				lasterr = rc;
 		} else
-			ifp->if_input(ifp, m);
+			ifnext->if_input(ifnext, m);
 
 		m = mnext;
 	} while (m != NULL);
@@ -573,29 +565,69 @@ vpcb_transit(if_t ifp, struct mbuf *m)
 static int
 vpcb_transmit(if_t ifp, struct mbuf *m)
 {
-	m->m_flags &= ~M_TRUNK;
-	return vpcb_transit(ifp, m);
+	struct vpcb_softc *vs;
+	struct mbuf *mp;
+
+	vs = ifp->if_softc;
+	mp = m;
+	do {
+		mp->m_flags &= ~M_TRUNK;
+		mp = mp->m_nextpkt;
+	} while (mp);
+
+	return vpcb_transit(vs, m);
 }
 
-static void
-vpcb_input(if_t ifp, struct mbuf *m)
-{
-	m->m_flags |= M_TRUNK;
-	vpcb_transit(ifp, m);
-}
-
-int
-vpcb_output(struct ifnet *ifp, struct mbuf *m)
+static int
+vpcb_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
 {
 	struct vpcb_softc *vs;
+	struct mbuf *mp;
 
-	if (__predict_false(ifp->if_bridge == NULL)) {
-		m_freem(m);
-		return (ENOBUFS);
-	}
+	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
-	m->m_flags &= ~M_PROMISC;
-	return (vpcb_transmit(vs->vs_ifp, m));
+
+	mp = m;
+	do {
+		mp->m_flags &= ~M_TRUNK;
+		mp = mp->m_nextpkt;
+	} while (mp);
+	return (vpcb_transit(vs, m));
+}
+
+static struct mbuf *
+vpcb_bridge_input(if_t ifp, struct mbuf *m)
+{
+	struct ether_header *eh;
+	struct mbuf *mret, *mh, *mt, *mnext, *mp;
+	struct vpcb_softc *vs;
+
+	MPASS(ifp->if_bridge != NULL);
+	vs = ifp->if_bridge;
+
+	eh = (void*)m->m_data;
+	mh = mt = mret = NULL;
+	mp = m;
+	do {
+		mnext = mp->m_nextpkt;
+		mp->m_flags |= M_TRUNK;
+		if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost) &&
+							!(m->m_flags & M_VXLANTAG|M_VLANTAG))) {
+			mp->m_nextpkt = mret;
+			mret = mp;
+		} else if (mh == NULL) {
+			mh = mt = mp;
+		} else {
+			mt->m_nextpkt = mp;
+			mt = mp;
+		}
+		mp = mnext;
+	} while (mp);
+
+	vpcb_transit(vs, mh);
+	if (__predict_false((mret != NULL) && vpcb_transit(vs, mret)))
+		return (NULL);
+	return (mret);
 }
 
 static int
@@ -663,6 +695,8 @@ vpcb_port_add(struct vpcb_softc *vs, struct vpcb_port *port)
 	*ifindexp = ifp->if_index;
 	vpc_ifp_cache(ifp);
 	ifp->if_bridge = vs;
+	ifp->if_bridge_input = vpcb_bridge_input;
+	ifp->if_bridge_output = vpcb_bridge_output;
 	art_insert(vs->vs_ftable_rw, LLADDR(sdl), ifindexp);
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCB);
 	if (rc)
@@ -717,6 +751,8 @@ vpcb_port_delete(struct vpcb_softc *vs, struct vpcb_port *port)
 	ck_epoch_synchronize(&vpc_global_record);
 	vpc_art_free(oldftable, M_VPCB);
 	ifp->if_bridge = NULL;
+	ifp->if_bridge_input = NULL;
+	ifp->if_bridge_output = NULL;
 	if_rele(ifp);
 	return (0);
  fail:
@@ -749,13 +785,9 @@ vpcb_port_trunk(struct vpcb_softc *vs, struct vpcb_port *port)
 		if_rele(ifp);
 		return (EBUSY);
 	}
-	if (vs->vs_ifdefault != NULL) {
-		vs->vs_ifdefault->if_input = vs->vs_oinput;
+	if (vs->vs_ifdefault != NULL)
 		if_rele(vs->vs_ifdefault);
-	}
 	vs->vs_ifdefault = ifp;
-	vs->vs_oinput = ifp->if_input;
-	ifp->if_input = vpcb_input;
 	return (0);
 }
 
@@ -816,7 +848,6 @@ vpcb_attach_post(if_ctx_t ctx)
 	ifp->if_transmit = vpcb_transmit;
 	ifp->if_transmit_txq = vpcb_transmit;
 	ifp->if_mbuf_to_qid = vpcb_mbuf_to_qid;
-	ifp->if_input = vpcb_input;
 	return (0);
 }
 
