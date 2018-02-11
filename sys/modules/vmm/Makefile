@@ -42,7 +42,7 @@ SRCS+=	iommu.c		\
 
 .PATH: ${SRCTOP}/sys/amd64/vmm/net
 SRCS+=	art.c \
-	if_vmi.c \
+	if_vmnic.c \
 	if_vpc.c \
 	if_vpcp.c \
 	if_vpcsw.c
