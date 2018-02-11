@@ -68,7 +68,6 @@ __FBSDID("$FreeBSD$");
 #include <net/mp_ring.h>
 #include <net/if_vxlan.h>
 #include <net/vnet.h>
-#include <net/art.h>
 
 #include <netinet/in.h>
 #include <netinet/in_pcb.h>
