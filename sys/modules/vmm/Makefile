@@ -43,6 +43,7 @@ SRCS+=	iommu.c		\
 .PATH: ${SRCTOP}/sys/amd64/vmm/net
 SRCS+=	if_vmi.c \
 	if_vpc.c \
+	if_vpcp.c \
 	if_vpcsw.c
 
 # intel-specific files
