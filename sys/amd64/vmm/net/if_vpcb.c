@@ -102,7 +102,7 @@ struct vpcb_cache_ent {
 	int vce_ticks;		/* time when entry was created */
 };
 
-DPCPU_DEFINE(struct vpcb_cache_ent *, hdr_cache);
+static DPCPU_DEFINE(struct vpcb_cache_ent *, hdr_cache);
 
 struct pinfo {
 	uint16_t etype;
