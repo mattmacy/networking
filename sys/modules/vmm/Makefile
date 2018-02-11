@@ -10,6 +10,7 @@ DPSRCS+=	vmx_genassym.c svm_genassym.c
 CFLAGS+= -DVMM_KEEP_STATS -DSMP
 CFLAGS+= -I${SRCTOP}/sys/amd64/vmm
 CFLAGS+= -I${SRCTOP}/sys/amd64/vmm/io
+CFLAGS+= -I${SRCTOP}/sys/amd64/vmm/net
 CFLAGS+= -I${SRCTOP}/sys/amd64/vmm/intel
 CFLAGS+= -I${SRCTOP}/sys/amd64/vmm/amd
 #CFLAGS+= -O0
@@ -37,8 +38,10 @@ SRCS+=	iommu.c		\
 	vioapic.c	\
 	vlapic.c	\
 	vpmtmr.c	\
-	vrtc.c		\
-	vtnet_be.c
+	vrtc.c
+
+.PATH: ${SRCTOP}/sys/amd64/vmm/net
+SRCS+=	vtnet_be.c
 
 # intel-specific files
 .PATH: ${SRCTOP}/sys/amd64/vmm/intel
