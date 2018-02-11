@@ -100,7 +100,7 @@ struct vpcsw_port {
 	_IOW('k', 2, struct vpcsw_port)
 #define VPCSW_PORT_DEL						\
 	_IOW('k', 3, struct vpcsw_port)
-#define VPCSW_PORT_TRUNK						\
+#define VPCSW_PORT_UPLINK						\
 	_IOW('k', 4, struct vpcsw_port)
 
 
