@@ -86,6 +86,7 @@ struct vpcp_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	struct ifnet *vs_ifparent;
+	struct ifnet *vs_ifswitch;
 	uint32_t vs_mflags;
 	uint32_t vs_vxlanid;
 	uint16_t vs_vlanid;
@@ -93,6 +94,25 @@ struct vpcp_softc {
 };
 
 static int clone_count;
+
+static int
+vpcp_stub_transmit(if_t ifp __unused, struct mbuf *m)
+{
+	m_freechain(m);
+	return (0);
+}
+
+static void
+vpcp_stub_input(if_t ifp __unused, struct mbuf *m)
+{
+	m_freechain(m);
+}
+
+static int
+vpcp_stub_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+{
+	return (0);
+}
 
 static void
 vmi_txflags(struct mbuf *m, struct vpc_pkt_info *vpi)
@@ -147,59 +167,164 @@ static void
 vmi_input(if_t ifp, struct mbuf *m)
 {
 	struct vpcp_softc *vs;
-	struct ifnet *vbifp;
 
 	vmi_input_process(ifp, m, false);
 	vs = iflib_get_softc((if_ctx_t)ifp->if_softc);
-	vbifp = vs->vs_ifparent;
-	(void)vbifp->if_transmit_txq(vbifp, m);
+	(void)vs->vs_ifparent->if_transmit_txq(vs->vs_ifparent, m);
 }
 
 static int
-vpcp_stub_transmit(if_t ifp __unused, struct mbuf *m)
+phys_transmit(if_t ifp __unused, struct mbuf *m)
 {
+	panic("%s should not be called\n", __func__);
 	m_freechain(m);
 	return (0);
 }
 
+/*
+ * Egress -- from switch (i.e. switch output -> NIC input)
+ */
 static void
-vpcp_stub_input(if_t ifp __unused, struct mbuf *m)
+phys_input(struct ifnet *ifport, struct mbuf *m)
 {
-	m_freechain(m);
+	if_ctx_t ctx = ifport->if_softc;
+	struct vpcp_softc *vs = iflib_get_softc(ctx);
+	struct ifnet *ifparent = vs->vs_ifparent;
+	struct mbuf *mp, *mnext;
+	int qid;
+	bool batch;
+
+	mp = m->m_nextpkt;
+	qid = ifparent->if_mbuf_to_qid(ifparent, m);
+	batch = true;
+	while (mp) {
+		mp->m_pkthdr.rcvif = NULL;
+		if (ifparent->if_mbuf_to_qid(ifparent, m) != qid)
+			batch = false;
+	}
+	if (__predict_true(batch)) {
+		vs->vs_ifparent->if_transmit_txq(vs->vs_ifparent, m);
+	} else {
+		mp = m;
+		do {
+			mnext = mp->m_nextpkt;
+			mp->m_nextpkt = NULL;
+			vs->vs_ifparent->if_transmit_txq(vs->vs_ifparent, mp);
+			mp = mnext;
+		} while (mp);
+	}
 }
 
 static int
-vpcp_stub_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+phys_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 {
+	panic("%s should not be called\n", __func__);
 	return (0);
+}
+
+static int
+phys_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
+{
+	panic("%s should not be called\n", __func__);
+	return (0);
+}
+
+/*
+ * Ingress -- from NIC
+ */
+static struct mbuf *
+phys_bridge_input(if_t ifp, struct mbuf *m)
+{
+	struct ether_header *eh;
+	struct mbuf *mret, *mh, *mt, *mnext, *mp;
+	struct vpcp_softc *vs;
+	struct ifnet *ifswitch;
+
+	MPASS(ifp->if_bridge != NULL);
+	vs = ifp->if_bridge;
+
+	eh = (void*)m->m_data;
+	mh = mt = mret = NULL;
+	mp = m;
+	do {
+		mnext = mp->m_nextpkt;
+		mp->m_nextpkt = NULL;
+		mp->m_flags |= M_TRUNK;
+		if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost) &&
+							!(m->m_flags & M_VXLANTAG|M_VLANTAG))) {
+			/* Order doesn't matter for broadcast packets */
+			mp->m_nextpkt = mret;
+			mret = mp;
+		} else if (mh == NULL) {
+			mh = mt = mp;
+		} else {
+			mt->m_nextpkt = mp;
+			mt = mp;
+		}
+		mp = mnext;
+	} while (mp);
+
+	ifswitch = vs->vs_ifswitch;
+	if (__predict_true(mh != NULL))
+		ifswitch->if_transmit_txq(ifswitch, mh);
+	if (__predict_false((mret != NULL) && ifswitch->if_transmit_txq(ifswitch, mret)))
+		return (NULL);
+	return (mret);
 }
 
 int
-vpcp_port_type_set(if_ctx_t ctx, enum vpcp_port_type type)
+vpcp_port_type_set(if_ctx_t portctx, struct ifnet *devifp, enum vpcp_port_type type)
 {
 	struct ifnet *ifp;
 	struct vpcp_softc *vs;
+	enum vpcp_port_type prevtype;
 	int rc;
 
-	ifp = iflib_get_ifp(ctx);
-	vs = iflib_get_softc(ctx);
+#ifdef INVARIANTS
+	if (type == VPCP_TYPE_NONE)
+		MPASS(devifp == NULL);
+	else
+		MPASS(devifp != NULL);
+#endif
+
+	ifp = iflib_get_ifp(portctx);
+	vs = iflib_get_softc(portctx);
+	vs->vs_ifparent = devifp;
+	prevtype = vs->vs_type;
+	vs->vs_type = type;
 	rc = 0;
 
+	if (devifp->if_bridge != NULL) {
+		printf("%s in use\n", devifp->if_xname);
+		return (EINVAL);
+	}
+	devifp->if_bridge = NULL;
+	devifp->if_bridge_input = NULL;
+	devifp->if_bridge_output = NULL;
+
 	switch (type) {
-		case VPCP_TYPE_VMI:
-			if_settransmitfn(ifp, vmi_transmit);
-			if_settransmittxqfn(ifp, vmi_transmit);
-			ifp->if_input = vmi_input;
-			vs->vs_type = type;
-			break;
 		case VPCP_TYPE_NONE:
 			if_settransmitfn(ifp, vpcp_stub_transmit);
 			if_settransmittxqfn(ifp, vpcp_stub_transmit);
 			ifp->if_input = vpcp_stub_input;
-			vs->vs_type = type;
+			break;
+		case VPCP_TYPE_VMI:
+			if_settransmitfn(ifp, vmi_transmit);
+			if_settransmittxqfn(ifp, vmi_transmit);
+			ifp->if_input = vmi_input;
+			break;
+		case VPCP_TYPE_PHYS:
+			if_settransmitfn(ifp, phys_transmit);
+			if_settransmittxqfn(ifp, phys_transmit);
+			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);
+			ifp->if_input = phys_input;
+			devifp->if_bridge = vs;
+			devifp->if_bridge_input = phys_bridge_input;
+			devifp->if_bridge_output = phys_bridge_output;
 			break;
 		default:
-			device_printf(iflib_get_dev(ctx), "unknown port type %d\n", type);
+			vs->vs_type = prevtype;
+			device_printf(iflib_get_dev(portctx), "unknown port type %d\n", type);
 			rc = EINVAL;
 	}
 	return (rc);

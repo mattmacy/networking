@@ -184,6 +184,8 @@ struct vpcsw_response {
 #include <net/art.h>
 #include <ck_epoch.h>
 
+#define M_TRUNK M_PROTO1
+
 struct ifp_cache {
 	uint16_t ic_ifindex_max;
 	uint16_t ic_size;
@@ -233,8 +235,9 @@ int vpc_ifp_cache(struct ifnet *ifp);
 
 
 enum vpcp_port_type {
-	 VPCP_TYPE_NONE,
-	 VPCP_TYPE_VMI
+	VPCP_TYPE_NONE,
+	VPCP_TYPE_VMI,
+	VPCP_TYPE_PHYS
 };
 
 void vpcp_set_ifparent(if_ctx_t ctx, if_t ifp);
@@ -244,7 +247,7 @@ void vpcp_set_vxlanid(if_ctx_t ctx, uint32_t vxlanid);
 uint32_t vpcp_get_vxlanid(if_ctx_t ctx);
 void vpcp_set_vlanid(if_ctx_t ctx, uint16_t vlanid);
 uint16_t vpcp_get_vlanid(if_ctx_t ctx);
-int vpcp_port_type_set(if_ctx_t ctx, enum vpcp_port_type type);
+int vpcp_port_type_set(if_ctx_t ctx, if_t devifp, enum vpcp_port_type type);
 enum vpcp_port_type vpcp_port_type_get(if_ctx_t ctx);
 
 
