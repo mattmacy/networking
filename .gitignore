@@ -14,5 +14,7 @@ GPATH
 GRTAGS
 GTAGS
 ID
+cscope.files
 cscope.out
 ?cscope.out
+*.orig
