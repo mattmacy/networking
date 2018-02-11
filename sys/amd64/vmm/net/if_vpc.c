@@ -167,7 +167,7 @@ SX_SYSINIT(vpc, &vpc_lock, "VPC global");
 #define VPC_UNLOCK() sx_xunlock(&vpc_lock)
 
 
-DPCPU_DEFINE(struct egress_cache *, hdr_cache);
+static DPCPU_DEFINE(struct egress_cache *, hdr_cache);
 DPCPU_DEFINE(ck_epoch_record_t *, vpc_epoch_record);
 ck_epoch_record_t vpc_global_record;
 
