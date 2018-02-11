@@ -64,41 +64,41 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
-static MALLOC_DEFINE(M_VPCBCTL, "vpcbctl", "virtual private cloud bridge control");
+static MALLOC_DEFINE(M_VPCSWCTL, "vpcswctl", "virtual private cloud bridge control");
 
 /*
- * ifconfig vpcb0 create
- * ifconfig vpcb0 addm vpc0
- * ifconfig vpcb0 priority vpc0 200
- * ifconfig vpcb0 vpc-resolver 127.0.0.1:5000
- * ifconfig vpcb0 addm vmi7
- * ifconfig vpcb0 pathcost vmi7 2000000
+ * ifconfig vpcsw0 create
+ * ifconfig vpcsw0 addm vpc0
+ * ifconfig vpcsw0 priority vpc0 200
+ * ifconfig vpcsw0 vpc-resolver 127.0.0.1:5000
+ * ifconfig vpcsw0 addm vmi7
+ * ifconfig vpcsw0 pathcost vmi7 2000000
  */
 
 static int open_count = 0;
 
-static d_ioctl_t vpcbctl_ioctl;
-static d_open_t vpcbctl_open;
-static d_close_t vpcbctl_close;
+static d_ioctl_t vpcswctl_ioctl;
+static d_open_t vpcswctl_open;
+static d_close_t vpcswctl_close;
 
-static struct cdevsw vpcbctl_cdevsw = {
+static struct cdevsw vpcswctl_cdevsw = {
        .d_version =    D_VERSION,
        .d_flags =      0,
-       .d_open =       vpcbctl_open,
-       .d_close =      vpcbctl_close,
-       .d_ioctl =      vpcbctl_ioctl,
-       .d_name =       "vpcbctl",
+       .d_open =       vpcswctl_open,
+       .d_close =      vpcswctl_close,
+       .d_ioctl =      vpcswctl_ioctl,
+       .d_name =       "vpcswctl",
 };
 
 static int
-vpcbctl_open(struct cdev *dev, int flags, int fmp, struct thread *td)
+vpcswctl_open(struct cdev *dev, int flags, int fmp, struct thread *td)
 {
 	atomic_add_int(&open_count, 1);
 	return (0);
 }
 
 static int
-vpcbctl_close(struct cdev *dev, int flags, int fmt, struct thread *td)
+vpcswctl_close(struct cdev *dev, int flags, int fmt, struct thread *td)
 {
 	atomic_add_int(&open_count, -1);
 	return (0);
@@ -106,14 +106,14 @@ vpcbctl_close(struct cdev *dev, int flags, int fmt, struct thread *td)
 
 static const char *opcode_map[] = {
 	"",
-	"VPCB_REQ_NDv4",
-	"VPCB_REQ_NDv6",
-	"VPCB_REQ_DHCPv4",
-	"VPCB_REQ_DHCPv6",
+	"VPCSW_REQ_NDv4",
+	"VPCSW_REQ_NDv6",
+	"VPCSW_REQ_DHCPv4",
+	"VPCSW_REQ_DHCPv6",
 };
 
 static int
-vpcb_poll_dispatch(struct vpcb_request *vr)
+vpcsw_poll_dispatch(struct vpcsw_request *vr)
 {
 	static int calls = 0;
 	uint32_t randval, opcode;
@@ -125,15 +125,15 @@ vpcb_poll_dispatch(struct vpcb_request *vr)
 
 	if (calls++ & 1) {
 		printf("blocking for %d seconds\n", randval % 30);
-		tsleep(&calls, PCATCH, "vpcb_poll", (randval % 30)*hz);
+		tsleep(&calls, PCATCH, "vpcsw_poll", (randval % 30)*hz);
 	}
 	opcode = (randval % 3) + 1;
-	vr->vrq_header.voh_version = VPCB_VERSION;
+	vr->vrq_header.voh_version = VPCSW_VERSION;
 	vr->vrq_header.voh_op = opcode;
 	vr->vrq_context.voc_vni = 150;
 	vr->vrq_context.voc_vlanid = 0; 
 	printf("version: %x opcode: %s vni: %d vlanid: %d\n",
-		   VPCB_VERSION, opcode_map[opcode], 150, 0);
+		   VPCSW_VERSION, opcode_map[opcode], 150, 0);
 	eth = vr->vrq_context.voc_smac;
 	eth[0] = 0x58;
 	eth[1] = 0x9C;
@@ -142,31 +142,31 @@ vpcb_poll_dispatch(struct vpcb_request *vr)
 	eth[4] = 0x2;
 	eth[5] = 0x3;
 	switch (opcode) {
-		case VPCB_RESPONSE_NDv4:
+		case VPCSW_RESPONSE_NDv4:
 			 rc = inet_pton(AF_INET, "192.168.1.10",
 							&vr->vrq_data.vrqd_ndv4.target);
 			 break;
-		case VPCB_RESPONSE_NDv6:
+		case VPCSW_RESPONSE_NDv6:
 			rc = inet_pton(AF_INET6, "fe80::2bd:44ff:fede:7e09%zt97bteb5hu3748",
 						   &vr->vrq_data.vrqd_ndv6.target);
 
-		case VPCB_RESPONSE_DHCPv4:
-		case VPCB_RESPONSE_DHCPv6:
+		case VPCSW_RESPONSE_DHCPv4:
+		case VPCSW_RESPONSE_DHCPv6:
 			break;
 	}
 	return (rc);
 }
 
 static int 
-vpcb_response_dispatch(unsigned long cmd, struct vpcb_response *vrs)
+vpcsw_response_dispatch(unsigned long cmd, struct vpcsw_response *vrs)
 {
 	if (vrs->vrs_header.voh_op < 1 ||
-		vrs->vrs_header.voh_op > VPCB_REQ_MAX) {
+		vrs->vrs_header.voh_op > VPCSW_REQ_MAX) {
 		printf("invalid opcode %d\n",
 			   vrs->vrs_header.voh_op);
 		return (EINVAL);
 	}
-	if (vrs->vrs_header.voh_version != VPCB_VERSION) {
+	if (vrs->vrs_header.voh_version != VPCSW_VERSION) {
 		printf("invalid version %d\n",
 			   vrs->vrs_header.voh_version);
 		return (EINVAL);
@@ -177,69 +177,69 @@ vpcb_response_dispatch(unsigned long cmd, struct vpcb_response *vrs)
 		   vrs->vrs_context.voc_vni,
 		   vrs->vrs_context.voc_vlanid);
 	switch (cmd) {
-		case VPCB_RESPONSE_NDv6:
-		case VPCB_RESPONSE_NDv4:
+		case VPCSW_RESPONSE_NDv6:
+		case VPCSW_RESPONSE_NDv4:
 			printf("data: %6D", vrs->vrs_data.vrsd_ndv4.ether_addr, ":");
 			break;
-		case VPCB_RESPONSE_DHCPv4:
-		case VPCB_RESPONSE_DHCPv6:
+		case VPCSW_RESPONSE_DHCPv4:
+		case VPCSW_RESPONSE_DHCPv6:
 			break;
 	}
 	return (0);
 }
 
 static int
-vpcbctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
+vpcswctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
     int fflag, struct thread *td)
 {
 
 	switch (cmd) {
-		case VPCB_POLL:
-			return (vpcb_poll_dispatch((struct vpcb_request *)data));
+		case VPCSW_POLL:
+			return (vpcsw_poll_dispatch((struct vpcsw_request *)data));
 			break;
-		case VPCB_RESPONSE_NDv4:
-		case VPCB_RESPONSE_NDv6:
-		case VPCB_RESPONSE_DHCPv4:
-		case VPCB_RESPONSE_DHCPv6:
-			return (vpcb_response_dispatch(cmd, (struct vpcb_response *)data));
+		case VPCSW_RESPONSE_NDv4:
+		case VPCSW_RESPONSE_NDv6:
+		case VPCSW_RESPONSE_DHCPv4:
+		case VPCSW_RESPONSE_DHCPv6:
+			return (vpcsw_response_dispatch(cmd, (struct vpcsw_response *)data));
 			break;
 	}
 	return (0);
 }
 
-static struct cdev *vpcbdev;
+static struct cdev *vpcswdev;
 
 static int
-vpcbctl_module_init(void)
+vpcswctl_module_init(void)
 {
-	vpcbdev = make_dev(&vpcbctl_cdevsw, 0 /* unit no */,
-					   UID_ROOT, GID_VPC, 0660, "%s", "vpcbctl");
-	if (vpcbdev == NULL)
+	vpcswdev = make_dev(&vpcswctl_cdevsw, 0 /* unit no */,
+					   UID_ROOT, GID_VPC, 0660, "%s", "vpcswctl");
+	if (vpcswdev == NULL)
 		return (ENOMEM);
 	return (0);
 }
 
 static int
-vpcbctl_module_deinit(void)
+vpcswctl_module_deinit(void)
 {
 
-	destroy_dev(vpcbdev);
+	destroy_dev(vpcswdev);
 	return (0);
 }
 
 static int
-vpcbctl_module_event_handler(module_t mod, int what, void *arg)
+vpcswctl_module_event_handler(module_t mod, int what, void *arg)
 {
 	int err;
 
 	switch (what) {
 		case MOD_LOAD:
-			if ((err = vpcbctl_module_init()) != 0)
+			if ((err = vpcswctl_module_init()) != 0)
 				return (err);
 			break;
 		case MOD_UNLOAD:
 			if (open_count == 0)
-				vpcbctl_module_deinit();
+				vpcswctl_module_deinit();
 			else
 				return (EBUSY);
 			break;
@@ -249,12 +249,12 @@ vpcbctl_module_event_handler(module_t mod, int what, void *arg)
 	return (0);
 }
 
-static moduledata_t vpcbctl_moduledata = {
-	"vpcbctl",
-	vpcbctl_module_event_handler,
+static moduledata_t vpcswctl_moduledata = {
+	"vpcswctl",
+	vpcswctl_module_event_handler,
 	NULL
 };
 
-DECLARE_MODULE(vpc, vpcbctl_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
-MODULE_VERSION(vpcbctl, 1);
+DECLARE_MODULE(vpc, vpcswctl_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+MODULE_VERSION(vpcswctl, 1);
 
