@@ -89,12 +89,13 @@ struct vpcp_softc {
 	uint32_t vs_mflags;
 	uint32_t vs_vxlanid;
 	uint16_t vs_vlanid;
+	enum vpcp_port_type vs_type;
 };
 
 static int clone_count;
 
 static void
-vpcp_txflags(struct mbuf *m, struct vpc_pkt_info *vpi)
+vmi_txflags(struct mbuf *m, struct vpc_pkt_info *vpi)
 {
 	m->m_pkthdr.tso_segsz = m->m_pkthdr.fibnum;
 	m->m_pkthdr.l2hlen = vpi->vpi_l2_len;
@@ -104,35 +105,31 @@ vpcp_txflags(struct mbuf *m, struct vpc_pkt_info *vpi)
 }
 
 static void
-vpcp_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
+vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
 {
+	struct vpcp_softc *vs;
 	struct vpc_pkt_info vpi;
 	caddr_t hdr;
 	//vni = (vs->vs_flags & VS_VXLANTAG) ? vs->vs_vni : 0;
-	
+
+	vs = iflib_get_softc(ifp->if_softc);
 	do {
 		/* set mbuf flags for transmit */
 		ETHER_BPF_MTAP(ifp, m);
 		hdr = mtod(m, caddr_t);
 		vpc_parse_pkt(m, &vpi);
-		vpcp_txflags(m, &vpi);
+		vmi_txflags(m, &vpi);
 		if (setid) {
-			//m->m_flags |= vs->vs_flags;
-			//m->m_pkthdr.vxlanid = vs->vs_vxlanid;
-			//m->m_pkthdr.ether_vtag = vs->vs_vlanid;
+			m->m_flags |= vs->vs_mflags;
+			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
+			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
 		}
 		m = m->m_nextpkt;
 	} while (m != NULL);
 }
 
 static int
-vpcp_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
-{
-	return (0);
-}
-
-static int
-vpcp_transmit(if_t ifp, struct mbuf *m)
+vmi_transmit(if_t ifp, struct mbuf *m)
 {
 	int rc;
 
@@ -140,22 +137,81 @@ vpcp_transmit(if_t ifp, struct mbuf *m)
 	/*
 	 * Preprocess
 	 */
-	vpcp_input_process(ifp, m, true);
+	vmi_input_process(ifp, m, true);
 	
 	BRIDGE_OUTPUT(ifp, m, rc);
 	return (rc);
 }
 
 static void
-vpcp_input(if_t ifp, struct mbuf *m)
+vmi_input(if_t ifp, struct mbuf *m)
 {
 	struct vpcp_softc *vs;
 	struct ifnet *vbifp;
 
-	vpcp_input_process(ifp, m, false);
+	vmi_input_process(ifp, m, false);
 	vs = iflib_get_softc((if_ctx_t)ifp->if_softc);
 	vbifp = vs->vs_ifparent;
 	(void)vbifp->if_transmit_txq(vbifp, m);
+}
+
+static int
+vpcp_stub_transmit(if_t ifp __unused, struct mbuf *m)
+{
+	m_freechain(m);
+	return (0);
+}
+
+static void
+vpcp_stub_input(if_t ifp __unused, struct mbuf *m)
+{
+	m_freechain(m);
+}
+
+static int
+vpcp_stub_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+{
+	return (0);
+}
+
+int
+vpcp_port_type_set(if_ctx_t ctx, enum vpcp_port_type type)
+{
+	struct ifnet *ifp;
+	struct vpcp_softc *vs;
+	int rc;
+
+	ifp = iflib_get_ifp(ctx);
+	vs = iflib_get_softc(ctx);
+	rc = 0;
+
+	switch (type) {
+		case VPCP_TYPE_VMI:
+			if_settransmitfn(ifp, vmi_transmit);
+			if_settransmittxqfn(ifp, vmi_transmit);
+			ifp->if_input = vmi_input;
+			vs->vs_type = type;
+			break;
+		case VPCP_TYPE_NONE:
+			if_settransmitfn(ifp, vpcp_stub_transmit);
+			if_settransmittxqfn(ifp, vpcp_stub_transmit);
+			ifp->if_input = vpcp_stub_input;
+			vs->vs_type = type;
+			break;
+		default:
+			device_printf(iflib_get_dev(ctx), "unknown port type %d\n", type);
+			rc = EINVAL;
+	}
+	return (rc);
+}
+
+enum vpcp_port_type
+vpcp_port_type_get(if_ctx_t ctx)
+{
+	struct vpcp_softc *vs;
+
+	vs = iflib_get_softc(ctx);
+	return (vs->vs_type);
 }
 
 #define VPCP_CAPS														\
@@ -185,10 +241,10 @@ vpcp_attach_post(if_ctx_t ctx)
 	struct ifnet *ifp;
 
 	ifp = iflib_get_ifp(ctx);
-	if_settransmitfn(ifp, vpcp_transmit);
-	if_settransmittxqfn(ifp, vpcp_transmit);
-	if_setmbuftoqidfn(ifp, vpcp_mbuf_to_qid);
-	ifp->if_input = vpcp_input;
+	if_settransmitfn(ifp, vpcp_stub_transmit);
+	if_settransmittxqfn(ifp, vpcp_stub_transmit);
+	if_setmbuftoqidfn(ifp, vpcp_stub_mbuf_to_qid);
+	ifp->if_input = vpcp_stub_input;
 	return (0);
 }
 
@@ -253,6 +309,8 @@ vpcp_set_vxlanid(if_ctx_t ctx, uint32_t vxlanid)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
+	if (vxlanid)
+		vs->vs_mflags |= M_VXLANTAG;
 	vs->vs_vxlanid = vxlanid;
 }
 
@@ -269,6 +327,8 @@ vpcp_set_vlanid(if_ctx_t ctx, uint16_t vlanid)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
+	if (vlanid)
+		vs->vs_mflags |= M_VLANTAG;
 	vs->vs_vlanid = vlanid;
 }
 

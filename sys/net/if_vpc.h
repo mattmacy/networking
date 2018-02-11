@@ -231,6 +231,12 @@ vpc_epoch_end(void)
 
 int vpc_ifp_cache(struct ifnet *ifp);
 
+
+enum vpcp_port_type {
+	 VPCP_TYPE_NONE,
+	 VPCP_TYPE_VMI
+};
+
 void vpcp_set_ifparent(if_ctx_t ctx, if_t ifp);
 if_t vpcp_get_ifparent(if_ctx_t ctx);
 void vpcp_clear_ifparent(if_ctx_t ctx);
@@ -238,6 +244,9 @@ void vpcp_set_vxlanid(if_ctx_t ctx, uint32_t vxlanid);
 uint32_t vpcp_get_vxlanid(if_ctx_t ctx);
 void vpcp_set_vlanid(if_ctx_t ctx, uint16_t vlanid);
 uint16_t vpcp_get_vlanid(if_ctx_t ctx);
+int vpcp_port_type_set(if_ctx_t ctx, enum vpcp_port_type type);
+enum vpcp_port_type vpcp_port_type_get(if_ctx_t ctx);
+
 
 #endif
 
