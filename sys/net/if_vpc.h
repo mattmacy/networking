@@ -93,7 +93,7 @@ struct vpci_vni {
 
 struct vpcsw_port {
 	struct vpc_ioctl_header vp_ioh;
-	char vp_if[IFNAMSIZ];
+	uint16_t vp_portno;
 };
 
 #define VPCSW_PORT_ADD							\
