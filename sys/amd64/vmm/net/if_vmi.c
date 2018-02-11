@@ -86,7 +86,7 @@ __FBSDID("$FreeBSD$");
 #include "vmm_ktr.h"
 #include "vmm_ioport.h"
 #include "vmm_lapic.h"
-#include "vtnet_be.h"
+#include "if_vmi.h"
 #include "ifdi_if.h"
 
 const char * pci_cmds[] = {
