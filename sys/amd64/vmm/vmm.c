@@ -76,7 +76,7 @@ __FBSDID("$FreeBSD$");
 #include "vhpet.h"
 #include "vioapic.h"
 #include "vlapic.h"
-#include "if_vmi.h"
+#include "if_vmnic.h"
 #include "vpmtmr.h"
 #include "vrtc.h"
 #include "vmm_stat.h"
