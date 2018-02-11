@@ -64,6 +64,7 @@ __FBSDID("$FreeBSD$");
 #include <net/iflib.h>
 #include <net/if.h>
 #include <net/if_clone.h>
+#include <net/if_vpc.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -212,13 +213,6 @@ rxq2vq(int rxq)
 
 struct vb_softc;
 
-struct vtnet_be {
-	SLIST_ENTRY(vtnet_be) next;
-	SLIST_HEAD(, vb_softc) dev;
-	struct vm *vm;
-	const char *name;	/* can point back to VM name */
-};
-
 /* Packet parse info */
 struct pinfo {
 	uint16_t etype;
@@ -227,6 +221,13 @@ struct pinfo {
 	uint8_t	 l3size:7;	/* size of l3 header */
 	uint8_t	 l4size;	/* layer 4 protocol type */
 	uint8_t	 l3valid:1;	/* size of l3 header */
+};
+
+struct vtnet_be {
+	SLIST_ENTRY(vtnet_be) next;
+	SLIST_HEAD(, vb_softc) dev;
+	struct vm *vm;
+	const char *name;	/* can point back to VM name */
 };
 
 static SLIST_HEAD(, vtnet_be) vb_head;
@@ -255,7 +256,6 @@ struct vb_queue {
 #define VS_VERS_1		0x02
 #define VS_READY		0x04
 #define VS_OWNED		0x08
-#define VS_VXLANTAG		0x10
 
 #define VB_CIDX_VALID (1 << 18)
 
@@ -269,7 +269,6 @@ struct vb_softc {
 	struct vb_txq *vs_tx_queues;
 	struct ifnet *vs_ifparent;
 	struct proc *vs_proc;  /* proc that did the cloneattach  */
-	void (*vs_oinput)(struct ifnet *, struct mbuf *);
 	SLIST_ENTRY(vb_softc) vs_next;
 	uint32_t vs_flags;
 	uint16_t vs_gpa_hint;
@@ -286,7 +285,6 @@ struct vb_softc {
 	uint8_t    vs_curq;
 	uint8_t    vs_status;
 	uint8_t    vs_origmac[6];
-	uint32_t   vs_vni;
 	uint32_t   vs_hv_caps;
 	uint32_t   vs_negotiated_caps;
 
@@ -1122,70 +1120,17 @@ vb_intr_msix(struct vb_softc *vs, int q)
 	}
 }
 
-static void
-vb_txflags(struct mbuf *m, struct pinfo *pinfo)
-{
-	m->m_pkthdr.tso_segsz = m->m_pkthdr.fibnum;
-	m->m_pkthdr.l2hlen = pinfo->ehdrlen;
-	m->m_pkthdr.l3hlen = pinfo->l3size;
-	m->m_pkthdr.l4hlen = pinfo->l4size;
-	m->m_pkthdr.fibnum = 0;
-}
-
-static void
-vb_input_process(struct ifnet *ifp, struct mbuf *m, int vni)
-{
-	struct pinfo pinfo;
-	caddr_t hdr;
-	
-	do {
-		/* set mbuf flags for transmit */
-		ETHER_BPF_MTAP(ifp, m);
-		hdr = mtod(m, caddr_t);
-		vb_pparse(hdr, &pinfo);
-		vb_txflags(m, &pinfo);
-		if (vni) {
-			m->m_flags |= M_VXLANTAG;
-			m->m_pkthdr.vxlanid = vni;
-		}
-		m = m->m_nextpkt;
-	} while (m != NULL);
-}
-
 /*
- * Input from vtnet_be iflib_rxeof
+ * Input from vtnet_be iflib_rxeof (output from guest)
  */
 static void
 vb_if_input(struct ifnet *vbifp, struct mbuf *m)
 {
 	if_ctx_t ctx = vbifp->if_softc;
 	struct vb_softc *vs = iflib_get_softc(ctx);
-	struct ifnet *hwifp = vs->vs_ifparent;
-	int vni;
 
-	vni = (vs->vs_flags & VS_VXLANTAG) ? vs->vs_vni : 0;
-	vb_input_process(vbifp, m, vni);
-	/*
-	 * XXX check mbuf_to_qid
-	 */
-	(void)hwifp->if_transmit_txq(hwifp, m);
-}
-
-/*
- * Input from physical NIC
- */
-static void
-vb_hw_if_input(struct ifnet *hwifp, struct mbuf *m)
-{
-	struct vb_softc *vs;
-	struct ifnet *vbifp;
-
-	/* XXX UGH - add parent ifp -> to vs mapping */
-	vs = hwifp->if_pspare[3];
-	vbifp = iflib_get_ifp(vs->vs_ctx);
-
-	vb_input_process(hwifp, m, 0);
-	(void)vbifp->if_transmit(vbifp, m);
+	MPASS(vs->vs_ifparent);
+	vs->vs_ifparent->if_transmit_txq(vs->vs_ifparent, m);
 }
 
 static void
@@ -1414,19 +1359,6 @@ vb_dev_msix(struct vb_softc *vs, struct vb_msix *vx, int length)
 	return (0);
 }
 
-static int
-vb_dev_vni(struct vb_softc *vs, struct vb_vni *vn)
-{
-	vs->vs_vni = vn->vv_vni;
-
-	if (vn->vv_vni)
-		vs->vs_flags |= VS_VXLANTAG;
-	else
-		vs->vs_flags &= ~VS_VXLANTAG;
-
-	return (0);
-}
-
 struct vtnet_be *
 vtnet_be_init(struct vm *vm)
 {
@@ -1531,19 +1463,19 @@ vb_txq_init(struct vb_softc *vs, struct vb_txq *txq, int idx)
 }
 
 static int
-vb_if_attach(struct vb_softc *vs, struct vb_if_attach *via)
+vb_if_attach(struct vb_softc *vs, struct vb_vm_attach *via)
 {
 	struct ifnet *ifp;
 
-	if ((ifp = ifunit_ref(via->via_ifparent)) == NULL) {
+	if ((ifp = ifunit_ref(via->vva_ifparent)) == NULL) {
 		printf("ifunit_ref failed\n");
 		return (ENXIO);
 	}
 
 	/* Verify ifnet not already in use */
 	if (vb_ifnet_inuse(ifp)) {
-		via->via_ifparent[IFNAMSIZ-1] = '\0';
-		printf("vtnet_be: ifp %s in use\n", via->via_ifparent);
+		via->vva_ifparent[IFNAMSIZ-1] = '\0';
+		printf("vtnet_be: ifp %s in use\n", via->vva_ifparent);
 		if_rele(ifp);
 		return (EBUSY);
 	}
@@ -1574,7 +1506,7 @@ vb_vm_attach(struct vb_softc *vs, struct vb_vm_attach *vva)
 
 	vva->vva_vmparent[VMNAMSIZ-1] = '\0';
 	if (strlen(vva->vva_ifparent)) {
-		if ((rc = vb_if_attach(vs, (struct vb_if_attach *)vva)))
+		if ((rc = vb_if_attach(vs, vva)))
 			return (rc);
 	}
 
@@ -1708,18 +1640,9 @@ vb_attach_post(if_ctx_t ctx)
 	 * If interface was created by bhyve
 	 * plug everything together here
 	 */
-	if (vs->vs_flags & VS_OWNED) {
-		ifp = iflib_get_ifp(ctx);
-		ifp->if_input = vb_if_input;
-		iflib_set_mac(ctx, vs->vs_origmac);
-		/* XXX provide state pointer for hw if_input :-( */
-		vs->vs_ifparent->if_pspare[3] = vs;
-		vs->vs_oinput = vs->vs_ifparent->if_input;
-		vs->vs_ifparent->if_input = vb_hw_if_input;
-
-		/* Put the interface into promisc mode */
-		ifpromisc(vs->vs_ifparent, 1);
-	}
+	ifp = iflib_get_ifp(ctx);
+	ifp->if_input = vb_if_input;
+	iflib_set_mac(ctx, vs->vs_origmac);
 	return (0);
 }
 
@@ -1737,11 +1660,6 @@ vb_detach(if_ctx_t ctx)
 		SLIST_REMOVE(&vb->dev, vs, vb_softc, vs_next);
 		VB_UNLOCK;
 	}
-	if (vs->vs_oinput != NULL) {
-		ifpromisc(vs->vs_ifparent, 0);
-		vs->vs_ifparent->if_input = vs->vs_oinput;
-	}
-
 	for (i = 0; i < vs->vs_nvqs; i++) {
 		vb_vring_munmap(vs, i);
 	}
@@ -1815,9 +1733,6 @@ vb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	switch (ioh->vih_type) {
 		case VB_MSIX:
 			rc = vb_dev_msix(sc, (struct vb_msix *)iod, ifbuf->length);
-			break;
-		case VB_VNI:
-			rc = vb_dev_vni(sc, (struct vb_vni *)iod);
 			break;
 		default:
 			rc = ENOIOCTL;
