@@ -663,33 +663,24 @@ static int
 vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
+	struct ifreq ifr;
 	struct sockaddr_dl *sdl;
 	art_tree *newftable, *oldftable;
 	uint16_t *ifindexp;
 	int rc;
 
-	port->vp_if[IFNAMSIZ-1] = '\0';
-	if ((ifp = ifunit_ref(port->vp_if)) == NULL) {
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp%d", port->vp_portno);
+	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
+		return (rc);
+	if ((ifp = ifunit_ref(ifr.ifr_name)) == NULL) {
 		if (bootverbose)
-			printf("couldn't reference %s\n", port->vp_if);
+			printf("couldn't reference %s\n", ifr.ifr_name);
 		return (ENXIO);
 	}
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 	if (sdl->sdl_type != IFT_ETHER) {
 		if_rele(ifp);
 		return (EINVAL);
-	}
-	/* Verify ifnet not already in use */
-	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) != NULL) {
-		if (bootverbose)
-			printf("%s in use\n", port->vp_if);
-		if_rele(ifp);
-		return (EBUSY);
-	}
-	if (ifp->if_bridge != NULL) {
-		if (bootverbose)
-			printf("%s already part of a bridge\n", port->vp_if);
-		return (EBUSY);
 	}
 	ifindexp = malloc(sizeof(uint16_t), M_VPCSW, M_WAITOK);
 	*ifindexp = ifp->if_index;
@@ -720,12 +711,13 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	struct sockaddr_dl *sdl;
 	art_tree *newftable, *oldftable;
 	uint16_t *ifindexp;
+	struct ifreq ifr;
 	int rc;
 
-	port->vp_if[IFNAMSIZ-1] = '\0';
-	if ((ifp = ifunit_ref(port->vp_if)) == NULL) {
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp%d", port->vp_portno);
+	if ((ifp = ifunit_ref(ifr.ifr_name)) == NULL) {
 		if (bootverbose)
-			printf("couldn't reference %s\n", port->vp_if);
+			printf("couldn't reference %s\n", ifr.ifr_name);
 		return (ENXIO);
 	}
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
@@ -736,7 +728,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	/* Verify ifnet in table */
 	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) == NULL) {
 		if (bootverbose)
-			printf("%s not found\n", port->vp_if);
+			printf("%s not found\n", ifr.ifr_name);
 		if_rele(ifp);
 		return (ENOENT);
 	}
@@ -754,6 +746,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	ifp->if_bridge_input = NULL;
 	ifp->if_bridge_output = NULL;
 	if_rele(ifp);
+	if_clone_destroy(ifr.ifr_name);
 	return (0);
  fail:
 	free(ifindexp, M_VPCSW);
@@ -765,28 +758,21 @@ static int
 vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
-	struct sockaddr_dl *sdl;
+	struct ifreq ifr;
+	int rc;
 
-	port->vp_if[IFNAMSIZ-1] = '\0';
-	if ((ifp = ifunit_ref(port->vp_if)) == NULL) {
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp%d", port->vp_portno);
+	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
+		return (rc);
+	if ((ifp = ifunit_ref(ifr.ifr_name)) == NULL) {
 		if (bootverbose)
-			printf("couldn't reference %s\n", port->vp_if);
+			printf("couldn't reference %s\n", ifr.ifr_name);
 		return (ENXIO);
 	}
-	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-	if (sdl->sdl_type != IFT_ETHER) {
-		if_rele(ifp);
-		return (EINVAL);
-	}
-	/* Verify ifnet not already in use */
-	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) != NULL) {
-		if (bootverbose)
-			printf("%s in use\n", port->vp_if);
-		if_rele(ifp);
-		return (EBUSY);
-	}
-	if (vs->vs_ifdefault != NULL)
+	if (vs->vs_ifdefault != NULL) {
 		if_rele(vs->vs_ifdefault);
+		if_clone_destroy(ifr.ifr_name);
+	}
 	vs->vs_ifdefault = ifp;
 	return (0);
 }
