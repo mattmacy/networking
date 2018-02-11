@@ -207,7 +207,7 @@ extern struct ifp_cache *vpc_ic;
 extern struct grouptask vpc_ifp_task;
 
 
-int parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi, int mvec);
+int vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi);
 int vpc_art_tree_clone(art_tree *src, art_tree **dst, struct malloc_type *type);
 void vpc_art_free(art_tree *tree, struct malloc_type *type);
 
@@ -230,6 +230,15 @@ vpc_epoch_end(void)
 }
 
 int vpc_ifp_cache(struct ifnet *ifp);
+
+void vpcp_set_ifparent(if_ctx_t ctx, if_t ifp);
+if_t vpcp_get_ifparent(if_ctx_t ctx);
+void vpcp_clear_ifparent(if_ctx_t ctx);
+void vpcp_set_vxlanid(if_ctx_t ctx, uint32_t vxlanid);
+uint32_t vpcp_get_vxlanid(if_ctx_t ctx);
+void vpcp_set_vlanid(if_ctx_t ctx, uint16_t vlanid);
+uint16_t vpcp_get_vlanid(if_ctx_t ctx);
+
 #endif
 
 #endif

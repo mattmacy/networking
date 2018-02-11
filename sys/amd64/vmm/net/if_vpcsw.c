@@ -212,7 +212,7 @@ vpcsw_poll_dispatch(struct vpcsw_softc *vs, struct vpcsw_request *vr)
 		vr->vrq_context.voc_vni = m->m_pkthdr.vxlanid;
 	if (m->m_flags & M_VLANTAG)
 		vr->vrq_context.voc_vlanid = m->m_pkthdr.ether_vtag;
-	parse_pkt(m, &pinfo, m_ismvec(m));
+	vpc_parse_pkt(m, &pinfo);
 	eh = (void*)m->m_data;
 	memcpy(vr->vrq_context.voc_smac, eh->ether_shost, ETHER_ADDR_LEN);
 	switch (pinfo.vpi_etype) {
