@@ -28,26 +28,21 @@
 /*
  * Proxy for the kernel vtnet_be pseudo device
  *
- * Configuration is either SOHO - configuration by bhyve:
+ * Configuration is
  *
- *  -s <bsd>,kvirtio-net,<ifname><unit>[,macaddr=x:x:x:x:x:x,]
+ *  -s <bsd>,kvirtio-net,intf=vpcp<unit>[,mac=x:x:x:x:x:x][,mtu=<n>][,queues=<nq>]
  *
- *    e.g.   -s  2:3:0,kvirtio-net,<vxlan1|igb0>,mac=00:bd:5d:32:00:e7
+ *    e.g.   -s  2:3:0,kvirtio-net,intf=vpcp1,mac=00:bd:5d:32:00:e7,mtu=1450,queues=8
  *
  *
- * Where the MAC address can be specified on the command line. If not, 
- * it will be synthesized and will be unique for a given guest b/s/f, 
- * vm name, and host UUID.
+ * If mac is not specified it will be synthesized and will be unique for a given 
+ * guest b/s/f, vm name, and host UUID.
  *
- * or DC - independent configuration:
- *
- *  -s <bsd>,kvirtio-net,vmi<unit>
- *
- *    e.g.   -s  2:3:0,kvirtio-net,vmi7
+ * nq: Can be 1 - VM_MAXCPU, if not specified defaults to 1
  *
  * Communication with the kernel module is via ioctls to the cloned interface
  * named:
- *  vmi<unit>
+ *  vmnic<unit>
  *
  *   NB:
  *   - MSI-x is always used
@@ -99,7 +94,6 @@ __FBSDID("$FreeBSD$");
 
 
 #define VTNET_BE_REGSZ		(20 + 4 + 8)	/* virtio + MSI-x + config */
-#define MAX_VMS				256
 
 struct vtnet_be_softc {
 	struct pci_devinst *vbs_pi;
@@ -107,10 +101,9 @@ struct vtnet_be_softc {
 	int vbs_fd;				/* socket descriptor for config */
 	int vbs_nqs;
 	int vbs_nvqs;
-	int vbs_vni;
 	int vbs_mtu;
 	const char *vbs_vm_intf;
-	const char *vbs_hw_intf;
+	const char *vbs_port_intf;
 };
 
 static void
@@ -221,17 +214,13 @@ struct token_value {
 };
 
 #define KW_INTF 0x1
-#define KW_VMI 0x2
-#define KW_VNI 0x3
-#define KW_MAC 0x4
-#define KW_MTU 0x5
-#define KW_QUEUES 0x6
+#define KW_MAC 0x2
+#define KW_MTU 0x3
+#define KW_QUEUES 0x4
 #define KW_MAX KW_QUEUES
 
 struct token_value token_map[] = {
 	{"intf", KW_INTF},
-	{"vmi", KW_VMI},
-	{"vni", KW_VNI},
 	{"mac", KW_MAC},
 	{"mtu", KW_MTU},
 	{"queues", KW_QUEUES},
@@ -266,7 +255,7 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 		return (1);
 
 	mac = NULL;
-	vbs->vbs_vm_intf = vbs->vbs_hw_intf = NULL;
+	vbs->vbs_vm_intf = vbs->vbs_port_intf = NULL;
 	vbs->vbs_nqs = 1;
 	vbs->vbs_nvqs = 3;
 	input = strdup(opts);
@@ -274,13 +263,7 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 		id = strtype(token);
 		switch(id) {
 			case KW_INTF:
-				vbs->vbs_hw_intf = tokenval(token);
-				break;
-			case KW_VMI:
-				vbs->vbs_vm_intf = tokenval(token);
-				break;
-			case KW_VNI:
-				vbs->vbs_vni = atoi(tokenval(token));
+				vbs->vbs_port_intf = tokenval(token);
 				break;
 			case KW_MTU:
 				vbs->vbs_mtu = atoi(tokenval(token));
@@ -297,8 +280,7 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 				break;
 		}
 	}
-	if (vbs->vbs_vm_intf == NULL &&
-		vbs->vbs_hw_intf == NULL)
+	if (vbs->vbs_port_intf == NULL)
 		return (1);
 	return (vtnet_be_macaddr(vbs, mac));
 }
@@ -328,28 +310,17 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	va.vva_mtu = vbs->vbs_mtu;
 	va.vva_queue_size = 0;	/* accept default */
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
-	/*
-	 * We've been given a preconfigured interface
-	 * just attach and go
-	 */
-	if (vbs->vbs_vm_intf != NULL) {
-		strncpy(ifr.ifr_name, vbs->vbs_vm_intf, IFNAMSIZ-1);
-		va.vva_ioh.vih_magic = VB_MAGIC;
-		va.vva_ioh.vih_type = VB_VM_ATTACH;;
-		err = ioctl(s, SIOCGPRIVATE_0, &ifr);
-		goto drop_rights;
-	}
-
-	strncpy(va.vva_ifparent, vbs->vbs_hw_intf, IFNAMSIZ-1);
+	strncpy(va.vva_ifparent, vbs->vbs_port_intf, IFNAMSIZ-1);
 	memcpy(va.vva_macaddr, vbs->vbs_origmac, ETHER_ADDR_LEN);
-	for (i = 0; i < MAX_VMS; i++) {
-		sprintf(ifr.ifr_name, "vmi%d", i);
+	vbs->vbs_vm_intf = NULL;
+	for (i = 0; i < VB_VMNIC_MAX; i++) {
+		sprintf(ifr.ifr_name, "vmnic%d", i);
 		if (ioctl(s, SIOCIFCREATE2, &ifr) == 0) {
 			vbs->vbs_vm_intf = strdup(ifr.ifr_name);
 			break;
 		}
 	}
-	if (i == MAX_VMS)
+	if (i == VB_VMNIC_MAX)
 		return (ENOSPC);
 
 	if (ioctl(s, SIOCGIFFLAGS, &ifr) < 0) {
@@ -361,26 +332,6 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	flags |= IFF_UP;
 	ifr.ifr_flags = flags & 0xffff;
 	ifr.ifr_flagshigh = flags >> 16;
-#if 0
-	if (ioctl(s, SIOCSIFFLAGS, &ifr) < 0) {
-		perror("SIOCSIFFLAGS");
-		return (errno);
-	}
-	strncpy(ifr.ifr_name, vbs->vbs_hw_intf, IFNAMSIZ-1);
-	if (ioctl(s, SIOCGIFFLAGS, &ifr) < 0) {
-		perror("SIOCGIFFLAGS");
-		return (errno);
-	}
-	flags = (ifr.ifr_flags & 0xffff) | (ifr.ifr_flagshigh << 16);
-	flags |= IFF_UP;
-	ifr.ifr_flags = flags & 0xffff;
-	ifr.ifr_flagshigh = flags >> 16;
-	if (ioctl(s, SIOCSIFFLAGS, &ifr) < 0) {
-		perror("SIOCSIFFLAGS");
-		return (errno);
-	}
-#endif
- drop_rights:
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_IOCTL);
 	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
