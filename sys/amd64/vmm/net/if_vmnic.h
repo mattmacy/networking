@@ -30,8 +30,8 @@
 #ifndef _VTNETBE_H_
 #define	_VTNETBE_H_
 
-struct vtnet_be *vtnet_be_init(struct vm *);
-void vtnet_be_cleanup(struct vtnet_be *);
+struct vtnet_be *(*vtnet_be_init)(struct vm *);
+extern void (*vtnet_be_cleanup)(struct vtnet_be *);
 
 void vmm_vtnet_be_modinit(void);
 void vmm_vtnet_be_modunload(void);

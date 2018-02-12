@@ -14,7 +14,6 @@ CFLAGS+= -I${SRCTOP}/sys/amd64/vmm/net
 CFLAGS+= -I${SRCTOP}/sys/amd64/vmm/intel
 CFLAGS+= -I${SRCTOP}/sys/amd64/vmm/amd
 #CFLAGS+= -O0
-CFLAGS+= -I${SRCTOP}/sys/contrib/ck/include
 
 # generic vmm support
 .PATH: ${SRCTOP}/sys/amd64/vmm
@@ -39,13 +38,6 @@ SRCS+=	iommu.c		\
 	vlapic.c	\
 	vpmtmr.c	\
 	vrtc.c
-
-.PATH: ${SRCTOP}/sys/amd64/vmm/net
-SRCS+=	art.c \
-	if_vmnic.c \
-	if_vpc.c \
-	if_vpcp.c \
-	if_vpcsw.c
 
 # intel-specific files
 .PATH: ${SRCTOP}/sys/amd64/vmm/intel
