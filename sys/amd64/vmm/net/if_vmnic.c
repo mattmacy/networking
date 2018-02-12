@@ -1884,7 +1884,7 @@ static device_method_t vb_if_methods[] = {
 };
 
 static driver_t vb_iflib_driver = {
-	"vmi", vb_if_methods, sizeof(struct vb_softc)
+	"vmnic", vb_if_methods, sizeof(struct vb_softc)
 };
 
 char vb_driver_version[] = "0.0.1";
@@ -1918,7 +1918,7 @@ static struct if_shared_ctx vb_sctx_init = {
 	.isc_ntxd_max = {VB_MAX_TXD},
 	.isc_nrxd_default = {VB_DEFAULT_RXD, VB_DEFAULT_RXD},
 	.isc_ntxd_default = {VB_DEFAULT_TXD},
-	.isc_name = "vmi",
+	.isc_name = "vmnic",
 	.isc_rx_completion = vb_rx_completion,
 };
 
