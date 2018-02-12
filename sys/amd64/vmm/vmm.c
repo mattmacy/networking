@@ -353,8 +353,6 @@ vmm_init(void)
 
 	vmm_resume_p = vmm_resume;
 
-	vmm_vtnet_be_modinit();
-
 	return (VMM_INIT(vmm_ipinum));
 }
 
@@ -377,7 +375,6 @@ vmm_handler(module_t mod, int what, void *arg)
 			iommu_cleanup();
 			if (vmm_ipinum != IPI_AST)
 				lapic_ipi_free(vmm_ipinum);
-			vmm_vtnet_be_modunload();
 			error = VMM_CLEANUP();
 			/*
 			 * Something bad happened - prevent new

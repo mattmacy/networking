@@ -33,7 +33,4 @@
 struct vtnet_be *(*vtnet_be_init)(struct vm *);
 extern void (*vtnet_be_cleanup)(struct vtnet_be *);
 
-void vmm_vtnet_be_modinit(void);
-void vmm_vtnet_be_modunload(void);
-
 #endif	/* _VTNETBE_H_ */
