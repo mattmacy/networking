@@ -464,6 +464,7 @@ static int
 vpcsw_process_one(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf **mp)
 {
 	struct ether_header *eh;
+	struct mbuf *m;
 	uint16_t *vif;
 	struct ifnet *ifp;
 
