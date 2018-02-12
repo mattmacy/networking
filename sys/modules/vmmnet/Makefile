@@ -4,7 +4,7 @@
 
 KMOD=	vmmnet
 SRCS=	if_vpci.c
-SRCS+=	opt_inet.h opt_inet6.h ifdi_if.h device_if.h bus_if.h
+SRCS+=	opt_inet.h opt_inet6.h ifdi_if.h device_if.h bus_if.h pci_if.h
 
 CFLAGS+= -DVMM_KEEP_STATS -DSMP
 CFLAGS+= -I${SRCTOP}/sys/amd64/vmm
