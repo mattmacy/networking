@@ -36,6 +36,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -130,7 +131,7 @@ const char * pci_cmds[] = {
 	 IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU)
 
 static MALLOC_DEFINE(M_VTNETBE, "vtnetbe", "virtio-net backend");
-
+static volatile int32_t modrefcnt;
 
 #ifdef VB_DEBUG
 
@@ -1359,8 +1360,8 @@ vb_dev_msix(struct vb_softc *vs, struct vb_msix *vx, int length)
 	return (0);
 }
 
-struct vtnet_be *
-vtnet_be_init(struct vm *vm)
+static struct vtnet_be *
+vtnet_be_init_(struct vm *vm)
 {
 	struct vtnet_be *vb;
 
@@ -1375,8 +1376,8 @@ vtnet_be_init(struct vm *vm)
 	return (vb);
 }
 
-void
-vtnet_be_cleanup(struct vtnet_be *vb)
+static void
+vtnet_be_cleanup_(struct vtnet_be *vb)
 {
 	struct vb_softc *vs;
 	device_t dev;
@@ -1417,18 +1418,24 @@ vtnet_be_cleanup(struct vtnet_be *vb)
 
 static if_pseudo_t vb_pseudo;
 
-void
-vmm_vtnet_be_modinit(void)
+static int
+vmnic_module_init(void)
 {
 	vb_pseudo = vb_clone_register();
 	mtx_init(&vb_mtx, "vtnet_be", NULL, MTX_DEF);
+	vtnet_be_cleanup = vtnet_be_cleanup_;
+	vtnet_be_init = vtnet_be_init_;
+	return (0);
 }
 
-void
-vmm_vtnet_be_modunload(void)
+static void
+vmnic_module_deinit(void)
 {
+	/* XXX refcount --- check */
 	iflib_clone_deregister(vb_pseudo);
 	mtx_destroy(&vb_mtx);
+	vtnet_be_cleanup = NULL;
+	vtnet_be_init = NULL;
 }
 
 static void
@@ -1929,3 +1936,37 @@ vb_clone_register(void)
 {
 	return (iflib_clone_register(vb_sctx));
 }
+
+static int
+vmnic_module_event_handler(module_t mod, int what, void *arg)
+{
+	int err;
+
+	switch (what) {
+	case MOD_LOAD:
+		if ((err = vmnic_module_init()) != 0)
+			return (err);
+		break;
+	case MOD_UNLOAD:
+		if (modrefcnt == 0)
+			vmnic_module_deinit();
+		else
+			return (EBUSY);
+		break;
+	default:
+		return (EOPNOTSUPP);
+	}
+
+	return (0);
+}
+
+static moduledata_t vmnic_moduledata = {
+	"vmnic",
+	vmnic_module_event_handler,
+	NULL
+};
+
+DECLARE_MODULE(vmnic, vmnic_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+MODULE_VERSION(vmnic, 1);
+MODULE_DEPEND(vmnic, iflib, 1, 1, 1);
+MODULE_DEPEND(vmnic, vmm, 1, 1, 1);

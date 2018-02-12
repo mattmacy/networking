@@ -172,6 +172,8 @@ struct vm {
 	void		*vtnet_be;	       	/* (i) kvt hook */
 };
 
+void (*vtnet_be_cleanup)(struct vtnet_be *);
+struct vtnet_be *(*vtnet_be_init)(struct vm *vm);
 static int vmm_initialized;
 
 static struct vmm_ops *ops;
@@ -422,7 +424,8 @@ vm_init(struct vm *vm, bool create)
 	if (create)
 		vm->vrtc = vrtc_init(vm);
 	vm->ioport = vm_ioport_init(vm);
-	vm->vtnet_be = vtnet_be_init(vm);
+	if (vtnet_be_init)
+		vm->vtnet_be = vtnet_be_init(vm);
 
 	CPU_ZERO(&vm->active_cpus);
 
@@ -485,7 +488,8 @@ vm_cleanup(struct vm *vm, bool destroy)
 	vatpic_cleanup(vm->vatpic);
 	vioapic_cleanup(vm->vioapic);
 	vm_ioport_cleanup(vm, vm->ioport);
-	vtnet_be_cleanup(vm->vtnet_be);
+	if (vtnet_be_cleanup)
+		vtnet_be_cleanup(vm->vtnet_be);
 
 	for (i = 0; i < VM_MAXCPU; i++)
 		vcpu_cleanup(vm, i, destroy);
