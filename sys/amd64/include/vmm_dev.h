@@ -394,7 +394,11 @@ enum {
 #define IFNAMSIZ 16
 #endif
 
+/* Maximum queues per VM */
 #define VB_QUEUES_MAX VM_MAXCPU
+/* Maximum vmnics per CN */
+#define VB_VMNIC_MAX 1024
+/* Version identifier */
 #define VB_MAGIC 0x20171202
 struct vb_ioctl_header {
 	uint64_t vih_magic;
