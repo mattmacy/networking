@@ -1,6 +1,6 @@
 /*-
- * Copyright (c) 2014-2017, Matthew Macy <mmacy@mattmacy.io>
- * Copyright (C) 2017 Joyent Inc.
+ * Copyright (c) 2014-2018, Matthew Macy <mmacy@mattmacy.io>
+ * Copyright (C) 2017-2018 Joyent Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -5097,7 +5097,8 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
 		return (err);
 	}
-	iflib_gen_mac(ctx);
+	if (sctx->isc_flags & IFLIB_GEN_MAC)
+		iflib_gen_mac(ctx);
 	if ((err = IFDI_CLONEATTACH(ctx, clctx->cc_ifc, clctx->cc_name,
 								clctx->cc_params)) != 0) {
 		device_printf(dev, "IFDI_CLONEATTACH failed %d\n", err);

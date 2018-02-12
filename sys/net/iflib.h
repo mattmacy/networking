@@ -361,6 +361,10 @@ typedef enum {
  * No DMA support needed / wanted
  */
 #define IFLIB_VIRTUAL	0x2000
+/*
+ * autogenerate a MAC address
+ */
+#define IFLIB_GEN_MAC	0x4000
 
 /*
  * field accessors
