@@ -100,8 +100,6 @@ struct vpcsw_cache_ent {
 	int vce_ticks;		/* time when entry was created */
 };
 
-static DPCPU_DEFINE(struct vpcsw_cache_ent *, hdr_cache);
-
 struct pinfo {
 	uint16_t etype;
 };
@@ -314,7 +312,7 @@ hdrcmp(struct vpcsw_source *vlhs, struct vpcsw_source *vrhs)
 }
 
 static int
-vpcsw_cache_lookup(struct mbuf *m)
+vpcsw_cache_lookup(struct vpcsw_cache_ent *cache, struct mbuf *m)
 {
 	struct vpcsw_cache_ent *vcep;
 	struct vpcsw_source vsrc;
@@ -330,7 +328,7 @@ vpcsw_cache_lookup(struct mbuf *m)
 	vsrc.vs_dmac[1] = mac[1];
 	vsrc.vs_dmac[2] = mac[2];
 	_critical_enter();
-	vcep = DPCPU_GET(hdr_cache);
+	vcep = &cache[curcpu];
 	if (__predict_false(vcep->vce_ticks == 0))
 		goto skip;
 	ifp = vpc_ic->ic_ifps[vcep->vce_ifindex];
@@ -361,7 +359,7 @@ vpcsw_cache_lookup(struct mbuf *m)
 }
 
 static void
-vpcsw_cache_update(struct mbuf *m)
+vpcsw_cache_update(struct vpcsw_cache_ent *cache, struct mbuf *m)
 {
 	struct vpcsw_cache_ent *vcep;
 	struct vpcsw_source *vsrc;
@@ -371,7 +369,7 @@ vpcsw_cache_update(struct mbuf *m)
 	eh = (void*)m->m_data;
 	mac = (uint16_t *)eh->ether_dhost;
 	_critical_enter();
-	vcep = DPCPU_GET(hdr_cache);
+	vcep = &cache[curcpu];
 	vsrc = &vcep->vce_src;
 	vsrc->vs_vlanid = m->m_pkthdr.ether_vtag;
 	vsrc->vs_vni = m->m_pkthdr.vxlanid;
@@ -463,7 +461,7 @@ vpcsw_process_mcast(struct vpcsw_softc *vs, struct mbuf **msrc)
 }
 
 static int
-vpcsw_process_one(struct vpcsw_softc *vs, struct mbuf **mp)
+vpcsw_process_one(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf **mp)
 {
 	struct ether_header *eh;
 	uint16_t *vif;
@@ -473,7 +471,7 @@ vpcsw_process_one(struct vpcsw_softc *vs, struct mbuf **mp)
 	eh = (void*)m->m_data;
 	if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost)))
 		return (vpcsw_process_mcast(vs, mp));
-	if (vpcsw_cache_lookup(m))
+	if (vpcsw_cache_lookup(cache, m))
 		return (0);
 	vif = art_search(vs->vs_ftable_ro, (const unsigned char *)eh->ether_dhost);
 	ifp = (vif != NULL) ? vpc_ic->ic_ifps[*vif] : vs->vs_ifdefault;
@@ -487,13 +485,12 @@ vpcsw_process_one(struct vpcsw_softc *vs, struct mbuf **mp)
 		return (ENOBUFS);
 	}
 	m->m_pkthdr.rcvif = ifp;
-	vpcsw_cache_update(m);
-
+	vpcsw_cache_update(cache, m);
 	return (0);
 }
 
 static int
-vpcsw_transit(struct vpcsw_softc *vs, struct mbuf *m)
+vpcsw_transit(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf *m)
 {
 	struct ifnet *ifnext;
 	struct mbuf *mh, *mt, *mnext;
@@ -505,7 +502,7 @@ vpcsw_transit(struct vpcsw_softc *vs, struct mbuf *m)
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		rc = vpcsw_process_one(vs, &m);
+		rc = vpcsw_process_one(vs, cache, &m);
 		if (m == NULL) {
 			m = mnext;
 			continue;
@@ -553,31 +550,44 @@ vpcsw_transit(struct vpcsw_softc *vs, struct mbuf *m)
 static int
 vpcsw_transmit(if_t ifp, struct mbuf *m)
 {
+	if_ctx_t ctx;
 	struct vpcsw_softc *vs;
+	struct vpcsw_cache_ent *cache;
 
-	vs = ifp->if_softc;
-	return vpcsw_transit(vs, m);
+	ctx = ifp->if_softc;
+	cache = iflib_get_pcpu_cache(ctx);
+	vs = iflib_get_softc(ctx);
+
+	return (vpcsw_transit(vs, cache, m));
 }
 
 static int
 vpcsw_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
 {
 	struct vpcsw_softc *vs;
+	if_ctx_t ctx;
+	struct vpcsw_cache_ent *cache;
 
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
-	return (vpcsw_transit(vs, m));
+	ctx = ifp->if_softc;
+	cache = iflib_get_pcpu_cache(ctx);
+	return (vpcsw_transit(vs, cache, m));
 }
 
 static struct mbuf *
 vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 {
 	struct vpcsw_softc *vs;
+	if_ctx_t ctx;
+	struct vpcsw_cache_ent *cache;
 
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
-	vpcsw_transit(vs, m);
+	ctx = ifp->if_softc;
+	cache = iflib_get_pcpu_cache(ctx);
 
+	vpcsw_transit(vs, cache, m);
 	return (NULL);
 }
 
@@ -615,6 +625,8 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
 	struct ifreq ifr;
+	if_ctx_t ctx;
+	void *cache;
 	struct sockaddr_dl *sdl;
 	art_tree *newftable, *oldftable;
 	uint16_t *ifindexp;
@@ -635,7 +647,9 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	}
 	ifindexp = malloc(sizeof(uint16_t), M_VPCSW, M_WAITOK);
 	*ifindexp = ifp->if_index;
-	vpc_ifp_cache(ifp);
+	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
+	ctx = ifp->if_softc;
+	iflib_set_pcpu_cache(ctx, cache);
 	ifp->if_bridge = vs;
 	ifp->if_bridge_input = vpcsw_bridge_input;
 	ifp->if_bridge_output = vpcsw_bridge_output;
@@ -643,6 +657,9 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
 	if (rc)
 		goto fail;
+	vpc_ifp_cache(ifp);
+	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
+	ctx = ifp->if_softc;
 	oldftable = vs->vs_ftable_ro;
 	vs->vs_ftable_ro = newftable;
 	ck_epoch_synchronize(&vpc_global_record);
@@ -661,6 +678,8 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	struct ifnet *ifp;
 	struct sockaddr_dl *sdl;
 	art_tree *newftable, *oldftable;
+	if_ctx_t ctx;
+	void *cache;
 	uint16_t *ifindexp;
 	struct ifreq ifr;
 	int rc;
@@ -693,6 +712,9 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	vs->vs_ftable_ro = newftable;
 	ck_epoch_synchronize(&vpc_global_record);
 	vpc_art_free(oldftable, M_VPCSW);
+	ctx = ifp->if_softc;
+	cache = iflib_get_pcpu_cache(ctx);
+	free(cache, M_VPCSW);
 	ifp->if_bridge = NULL;
 	ifp->if_bridge_input = NULL;
 	ifp->if_bridge_output = NULL;
@@ -709,6 +731,8 @@ static int
 vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
+	void *cache;
+	if_ctx_t ctx;
 	struct ifreq ifr;
 	int rc;
 
@@ -724,6 +748,9 @@ vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
 		if_rele(vs->vs_ifdefault);
 		if_clone_destroy(ifr.ifr_name);
 	}
+	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
+	ctx = ifp->if_softc;
+	iflib_set_pcpu_cache(ctx, cache);
 	vs->vs_ifdefault = ifp;
 	return (0);
 }
