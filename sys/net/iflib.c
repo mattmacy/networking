@@ -177,6 +177,7 @@ struct iflib_ctx {
 	void *ifc_softc;
 	device_t ifc_dev;
 	if_t ifc_ifp;
+	void *ifc_pcpu_cache;
 
 	cpuset_t ifc_cpus;
 	if_shared_ctx_t ifc_sctx;
@@ -281,6 +282,20 @@ iflib_get_sctx(if_ctx_t ctx)
 {
 
 	return (ctx->ifc_sctx);
+}
+
+void
+iflib_set_pcpu_cache(if_ctx_t ctx, void *cache)
+{
+
+	ctx->ifc_pcpu_cache = cache;
+}
+
+void *
+iflib_get_pcpu_cache(if_ctx_t ctx)
+{
+
+	return (ctx->ifc_pcpu_cache);
 }
 
 #define IP_ALIGNED(m) ((((uintptr_t)(m)->m_data) & 0x3) == 0x2)
