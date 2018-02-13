@@ -52,7 +52,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/syslog.h>
 #include <sys/taskqueue.h>
 #include <sys/limits.h>
+#include <sys/syslimits.h>
 #include <sys/queue.h>
+#include <sys/uuid.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -74,6 +76,20 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_VMMNET, "vmmnet", "vmm networking");
 
+static int
+kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
+			  vpc_type_t obj_type, vpc_flags_t flags,
+			  int *vpcd)
+{
+	return (ENOSYS);
+}
+
+static int
+kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
+			 const void *key, size_t *vallen, void **buf, bool *docopy)
+{
+	return (ENOSYS);
+}
 
 #ifndef _SYS_SYSPROTO_H_
 struct vpc_open_args {
@@ -85,7 +101,21 @@ struct vpc_open_args {
 int
 sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 {
-	return (ENOSYS);
+	vpc_id_t *vpc_id;
+	int rc, vpcd;
+
+	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
+	if (copyin(vpc_id, (void*)(uintptr_t)uap->vpc_id, sizeof(*vpc_id)))
+		return (EFAULT);
+	rc = kern_vpc_open(td, vpc_id, uap->obj_type, uap->flags, &vpcd);
+	if (rc)
+		goto done;
+	td->td_retval[0] = vpcd;
+	td->td_retval[1] = 0;
+	return (0);
+ done:
+	free(vpc_id, M_TEMP);
+	return (rc);
 }
 
 #ifndef _SYS_SYSPROTO_H_
@@ -98,10 +128,46 @@ struct vpc_ctl_args {
 	void *buf;
 };
 #endif
+
 int
 sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 {
-	return (ENOSYS);
+	size_t vlen;
+	void *value, *keyp;
+	bool docopy;
+	int rc;
+
+	if (uap->keylen > ARG_MAX)
+		return (E2BIG);
+
+	value = NULL;
+	vlen = 0;
+	docopy = false;
+	keyp = malloc(uap->keylen, M_TEMP, M_WAITOK);
+	if (copyin(keyp, (void *)(uintptr_t)uap->key, uap->keylen)) {
+		free(keyp, M_TEMP);
+		return (EFAULT);
+	}
+	if (uap->buf != NULL) {
+		if (copyin(&vlen, uap->vallen, sizeof(vlen)))
+			return (EFAULT);
+		if (vlen > ARG_MAX)
+			return (E2BIG);
+		value = malloc(vlen, M_TEMP, M_WAITOK);
+		if ((rc = copyin(value, uap->buf, vlen)))
+			goto done;
+	}
+	rc = kern_vpc_ctl(td, uap->vpcd, uap->op, uap->keylen, keyp, &vlen, &value, &docopy);
+	if (!rc && docopy) {
+		if ((rc = copyout(&vlen, uap->vallen, sizeof(vlen))))
+			goto done;
+		if ((rc = copyout(value, uap->buf, vlen)))
+			goto done;
+	}
+ done:
+	free(keyp, M_TEMP);
+	free(value, M_TEMP);
+	return (rc);
 }
 
 static struct sysent vpc_open_sysent = {
