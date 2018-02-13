@@ -1768,6 +1768,19 @@ struct cpuset_setdomain_args {
 	char mask_l_[PADL_(domainset_t *)]; domainset_t * mask; char mask_r_[PADR_(domainset_t *)];
 	char policy_l_[PADL_(int)]; int policy; char policy_r_[PADR_(int)];
 };
+struct vpc_open_args {
+	char vpc_id_l_[PADL_(const vpc_id_t *)]; const vpc_id_t * vpc_id; char vpc_id_r_[PADR_(const vpc_id_t *)];
+	char obj_type_l_[PADL_(vpc_type_t)]; vpc_type_t obj_type; char obj_type_r_[PADR_(vpc_type_t)];
+	char flags_l_[PADL_(vpc_flags_t)]; vpc_flags_t flags; char flags_r_[PADR_(vpc_flags_t)];
+};
+struct vpc_ctl_args {
+	char vpcd_l_[PADL_(int)]; int vpcd; char vpcd_r_[PADR_(int)];
+	char op_l_[PADL_(vpc_op_t)]; vpc_op_t op; char op_r_[PADR_(vpc_op_t)];
+	char keylen_l_[PADL_(size_t)]; size_t keylen; char keylen_r_[PADR_(size_t)];
+	char key_l_[PADL_(const void *)]; const void * key; char key_r_[PADR_(const void *)];
+	char vallen_l_[PADL_(size_t *)]; size_t * vallen; char vallen_r_[PADR_(size_t *)];
+	char buf_l_[PADL_(void *)]; void * buf; char buf_r_[PADR_(void *)];
+};
 int	nosys(struct thread *, struct nosys_args *);
 void	sys_sys_exit(struct thread *, struct sys_exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
@@ -2148,6 +2161,8 @@ int	sys_mknodat(struct thread *, struct mknodat_args *);
 int	sys_kevent(struct thread *, struct kevent_args *);
 int	sys_cpuset_getdomain(struct thread *, struct cpuset_getdomain_args *);
 int	sys_cpuset_setdomain(struct thread *, struct cpuset_setdomain_args *);
+int	sys_vpc_open(struct thread *, struct vpc_open_args *);
+int	sys_vpc_ctl(struct thread *, struct vpc_ctl_args *);
 
 #ifdef COMPAT_43
 
@@ -3040,6 +3055,8 @@ int	freebsd11_mknodat(struct thread *, struct freebsd11_mknodat_args *);
 #define	SYS_AUE_kevent	AUE_KEVENT
 #define	SYS_AUE_cpuset_getdomain	AUE_NULL
 #define	SYS_AUE_cpuset_setdomain	AUE_NULL
+#define	SYS_AUE_vpc_open	AUE_VPC
+#define	SYS_AUE_vpc_ctl	AUE_VPC
 
 #undef PAD_
 #undef PADL_

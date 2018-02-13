@@ -405,4 +405,6 @@ MIASM =  \
 	mknodat.o \
 	kevent.o \
 	cpuset_getdomain.o \
-	cpuset_setdomain.o
+	cpuset_setdomain.o \
+	vpc_open.o \
+	vpc_ctl.o

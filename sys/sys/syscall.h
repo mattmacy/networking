@@ -478,4 +478,6 @@
 #define	SYS_kevent	560
 #define	SYS_cpuset_getdomain	561
 #define	SYS_cpuset_setdomain	562
-#define	SYS_MAXSYSCALL	563
+#define	SYS_vpc_open	580
+#define	SYS_vpc_ctl	581
+#define	SYS_MAXSYSCALL	582
