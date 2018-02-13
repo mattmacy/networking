@@ -262,6 +262,9 @@ enum vpcp_if_type {
 	VPC_IF_MAX = 6,
 };
 
+#define VPC_F_CREATE (1 << 1)
+#define VPC_F_OPEN (1 << 2)
+
 
 #endif
 
