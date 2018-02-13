@@ -479,4 +479,6 @@
 #define	SYS_cpuset_getdomain	561
 #define	SYS_cpuset_setdomain	562
 #define	SYS_getrandom	563
-#define	SYS_MAXSYSCALL	564
+#define	SYS_vpc_open	580
+#define	SYS_vpc_ctl	581
+#define	SYS_MAXSYSCALL	582

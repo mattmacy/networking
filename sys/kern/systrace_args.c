@@ -3291,6 +3291,27 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 3;
 		break;
 	}
+	/* vpc_open */
+	case 580: {
+		struct vpc_open_args *p = params;
+		uarg[0] = (intptr_t) p->vpc_id; /* const vpc_id_t * */
+		iarg[1] = p->obj_type; /* vpc_type_t */
+		iarg[2] = p->flags; /* vpc_flags_t */
+		*n_args = 3;
+		break;
+	}
+	/* vpc_ctl */
+	case 581: {
+		struct vpc_ctl_args *p = params;
+		iarg[0] = p->vpcd; /* int */
+		iarg[1] = p->op; /* vpc_op_t */
+		uarg[2] = p->keylen; /* size_t */
+		uarg[3] = (intptr_t) p->key; /* const void * */
+		uarg[4] = (intptr_t) p->vallen; /* size_t * */
+		uarg[5] = (intptr_t) p->buf; /* void * */
+		*n_args = 6;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -8777,6 +8798,47 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* vpc_open */
+	case 580:
+		switch(ndx) {
+		case 0:
+			p = "userland const vpc_id_t *";
+			break;
+		case 1:
+			p = "vpc_type_t";
+			break;
+		case 2:
+			p = "vpc_flags_t";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* vpc_ctl */
+	case 581:
+		switch(ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "vpc_op_t";
+			break;
+		case 2:
+			p = "size_t";
+			break;
+		case 3:
+			p = "userland const void *";
+			break;
+		case 4:
+			p = "userland size_t *";
+			break;
+		case 5:
+			p = "userland void *";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -10665,6 +10727,16 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* getrandom */
 	case 563:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* vpc_open */
+	case 580:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* vpc_ctl */
+	case 581:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

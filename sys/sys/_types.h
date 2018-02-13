@@ -69,6 +69,13 @@ typedef	int		__cpuwhich_t;	/* which parameter for cpuset. */
 typedef	int		__cpulevel_t;	/* level parameter for cpuset. */
 typedef int		__cpusetid_t;	/* cpuset identifier. */
 
+struct uuid;
+typedef struct uuid	__vpc_id_t;
+typedef __uint64_t	__vpc_type_t;
+typedef __uint64_t	__vpc_flags_t;
+typedef __uint32_t	__vpc_op_t;
+typedef __int32_t	__vpc_txn_t;
+
 /*
  * Unusual type definitions.
  */

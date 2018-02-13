@@ -85,6 +85,13 @@ typedef	__cpuwhich_t	cpuwhich_t;
 typedef	__cpulevel_t	cpulevel_t;
 typedef	__cpusetid_t	cpusetid_t;
 
+typedef __vpc_id_t		vpc_id_t;
+typedef __vpc_type_t		vpc_type_t;
+typedef __vpc_flags_t		vpc_flags_t;
+typedef __vpc_op_t		vpc_op_t;
+typedef __vpc_txn_t		vpc_txn_t;
+
+
 #ifndef _BLKCNT_T_DECLARED
 typedef	__blkcnt_t	blkcnt_t;
 #define	_BLKCNT_T_DECLARED

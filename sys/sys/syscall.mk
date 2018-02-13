@@ -406,4 +406,6 @@ MIASM =  \
 	kevent.o \
 	cpuset_getdomain.o \
 	cpuset_setdomain.o \
-	getrandom.o
+	getrandom.o \
+	vpc_open.o \
+	vpc_ctl.o

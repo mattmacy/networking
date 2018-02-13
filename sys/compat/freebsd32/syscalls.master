@@ -1118,5 +1118,26 @@
 				    int policy); }
 563	AUE_NULL	NOPROTO	{ int getrandom(void *buf, size_t buflen, \
 				    unsigned int flags); }
+564	AUE_NULL	UNIMPL	nosys
+565	AUE_NULL	UNIMPL	nosys
+566	AUE_NULL	UNIMPL	nosys
+567	AUE_NULL	UNIMPL	nosys
+568	AUE_NULL	UNIMPL	nosys
+569	AUE_NULL	UNIMPL	nosys
+570	AUE_NULL	UNIMPL	nosys
+571	AUE_NULL	UNIMPL	nosys
+572	AUE_NULL	UNIMPL	nosys
+573	AUE_NULL	UNIMPL	nosys
+574	AUE_NULL	UNIMPL	nosys
+575	AUE_NULL	UNIMPL	nosys
+576	AUE_NULL	UNIMPL	nosys
+577	AUE_NULL	UNIMPL	nosys
+578	AUE_NULL	UNIMPL	nosys
+579	AUE_NULL	UNIMPL	nosys
+580	AUE_VPC		NOSTD	{ int vpc_open(const vpc_id_t *vpc_id, vpc_type_t obj_type, \
+				    vpc_flags_t flags); }
+581	AUE_VPC		NOSTD	{ int vpc_ctl(int vpcd, vpc_op_t op, size_t keylen, \
+				    const void *key, size_t *vallen, void *buf); }
+
 
 ; vim: syntax=off
