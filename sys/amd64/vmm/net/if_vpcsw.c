@@ -633,7 +633,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	uint16_t *ifindexp;
 	int rc;
 
-	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp%d", port->vp_portno);
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp");
 	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
 		return (rc);
 	if ((ifp = ifunit_ref(ifr.ifr_name)) == NULL) {
@@ -658,6 +658,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
 	if (rc)
 		goto fail;
+	port->vp_portno = ifp->if_dunit;
 	vpc_ifp_cache(ifp);
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
@@ -784,6 +785,8 @@ vpcsw_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 	switch (ioh->vih_type) {
 		case VPCSW_PORT_ADD:
 			rc = vpcsw_port_add(vs, (struct vpcsw_port *)iod);
+			if (!rc)
+				rc = copyout(iod, ioh, ifbuf->length);
 			break;
 		case VPCSW_PORT_DEL:
 			rc = vpcsw_port_delete(vs, (struct vpcsw_port *)iod);
