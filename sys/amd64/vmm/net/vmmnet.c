@@ -79,9 +79,19 @@ __FBSDID("$FreeBSD$");
 
 
 static MALLOC_DEFINE(M_VMMNET, "vmmnet", "vmm networking");
+static art_tree vpc_uuid_table;
+
+static struct sx vmmnet_lock;
+
+
+SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
+
+#define VMMNET_LOCK() sx_xlock(&vmmnet_lock)
+#define VMMNET_UNLOCK() sx_xunlock(&vmmnet_lock)
 
 struct vpcctx {
 	struct ifnet *v_ifp;
+	volatile u_int v_refcnt;
 };
 typedef struct {
 	uint64_t vht_version:4;
@@ -167,29 +177,57 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_IF_MAX)
 		return (EINVAL);
 
-	strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
-	rc = if_clone_create(buf, sizeof(buf), NULL);
-	if (rc)
-		return (rc);
-	if ((ifp = ifunit_ref(buf)) == NULL) {
-		if (bootverbose)
-			printf("couldn't reference %s\n", buf);
-		return (ENXIO);
+	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
+		(flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN))
+		return (EINVAL);
+
+	VMMNET_LOCK();
+	ctx = art_search(&vpc_uuid_table, (const unsigned char *)vpc_id);
+	if ((flags & VPC_F_CREATE) && (ctx != NULL)) {
+		rc = EEXIST;
+		goto unlock;
+	}
+	if (flags & VPC_F_OPEN) {
+		if (ctx == NULL) {
+			rc = ENOENT;
+			goto unlock;
+		}
+		refcount_acquire(&ctx->v_refcnt);
+	} else {
+		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
+		strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
+		rc = if_clone_create(buf, sizeof(buf), NULL);
+		if (rc)
+			return (rc);
+		if ((ifp = ifunit_ref(buf)) == NULL) {
+			if (bootverbose)
+				printf("couldn't reference %s\n", buf);
+			if_clone_destroy(buf);
+			rc = ENXIO;
+			goto unlock;
+		}
+		refcount_init(&ctx->v_refcnt, 1);
+		ctx->v_ifp = ifp;
+		art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
 	}
 
 	fflags = O_CLOEXEC;
 	fdp = td->td_proc->p_fd;
 	rc = falloc(td, &fp, &fd, fflags);
 	if (rc) {
-		if_rele(ifp);
-		if_clone_destroy(buf);
-		return (rc);
+		if (flags & VPC_F_OPEN) {
+			if_rele(ifp);
+			if_clone_destroy(buf);
+			art_delete(&vpc_uuid_table, (const char *)vpc_id);
+			free(ctx, M_VMMNET);
+		}
+		goto unlock;
 	}
-	ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
-	ctx->v_ifp = ifp;
 	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
 	fdrop(fp, td);
 	td->td_retval[0] = fd;
+ unlock:
+	VMMNET_UNLOCK();
 	return (rc);
 }
 
@@ -221,7 +259,6 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 		goto done;
 	td->td_retval[0] = vpcd;
 	td->td_retval[1] = 0;
-	return (0);
  done:
 	free(vpc_id, M_TEMP);
 	return (rc);
@@ -306,6 +343,7 @@ vmmnet_module_init(void)
 		syscall_deregister(&off, &oldent);
 		return (rc);
 	}
+	art_tree_init(&vpc_uuid_table, sizeof(vpc_id_t));
 	return (0);
 }
 
