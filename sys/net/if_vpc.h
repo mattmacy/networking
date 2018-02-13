@@ -251,6 +251,18 @@ int vpcp_port_type_set(if_ctx_t ctx, if_t devifp, enum vpcp_port_type type);
 enum vpcp_port_type vpcp_port_type_get(if_ctx_t ctx);
 
 
+enum vpcp_if_type {
+	VPC_IF_INVALID = 0,
+	VPC_IF_SWITCH = 1,
+	VPC_IF_PORT = 2,
+	VPC_IF_ROUTER = 3,
+	VPC_IF_NAT = 4,
+	VPC_IF_LINK = 5,
+	VPC_IF_VMNIC = 6,
+	VPC_IF_MAX = 6,
+};
+
+
 #endif
 
 #endif

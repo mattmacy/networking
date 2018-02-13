@@ -37,6 +37,10 @@ __FBSDID("$FreeBSD$");
 #include <sys/conf.h>
 #include <sys/eventhandler.h>
 #include <sys/sockio.h>
+#include <sys/user.h>
+#include <sys/file.h>
+#include <sys/filedesc.h>
+#include <sys/fcntl.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/priv.h>
@@ -76,12 +80,117 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_VMMNET, "vmmnet", "vmm networking");
 
+struct vpcctx {
+	struct ifnet *v_ifp;
+};
+typedef struct {
+	uint64_t vht_version:4;
+	uint64_t vht_pad1:4;
+	uint64_t vht_obj_type:8;
+	uint64_t vht_pad2:48;
+} vpc_handle_type_t;
+
+static fo_close_t vpcd_close;
+static fo_stat_t vpcd_stat;
+static fo_fill_kinfo_t vpcd_fill_kinfo;
+static fo_poll_t vpcd_poll;
+static fo_ioctl_t vpcd_ioctl;
+
+struct fileops vpcd_fileops  = {
+	.fo_close = vpcd_close,
+	.fo_stat = vpcd_stat,
+	.fo_fill_kinfo = vpcd_fill_kinfo,
+	.fo_poll = vpcd_poll,
+	.fo_ioctl = vpcd_ioctl,
+	.fo_flags = DFLAG_PASSABLE,
+};
+
+
+static int
+vpcd_close(struct file *fp, struct thread *td)
+{
+	return (ENXIO);
+}
+
+static int
+vpcd_stat(struct file *fp, struct stat *st, struct ucred *active_cred,
+    struct thread *td)
+{
+	return (ENXIO);
+}
+
+static int
+vpcd_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
+{
+
+	kif->kf_type = KF_TYPE_UNKNOWN;
+	return (0);
+}
+
+static int
+vpcd_poll(struct file *fp, int events, struct ucred *active_cred,
+    struct thread *td)
+{
+	return (ENXIO);
+}
+
+static int
+vpcd_ioctl(struct file *fp, u_long cmd, void *data,
+    struct ucred *active_cred, struct thread *td)
+{
+	return (ENXIO);
+}
+char *if_names[] = {
+	"NONE",
+	"vpcsw",
+	"vpcp",
+	"vpcr",
+	"vpcnat",
+	"vpclink",
+	"vmnic",
+};
+
 static int
 kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			  vpc_type_t obj_type, vpc_flags_t flags,
 			  int *vpcd)
 {
-	return (ENOSYS);
+	struct filedesc *fdp;
+	struct file *fp;
+	struct vpcctx *ctx;
+	struct ifnet *ifp;
+	vpc_handle_type_t *type;
+	char buf[IFNAMSIZ];
+	int rc, fflags, fd;
+
+	type = (vpc_handle_type_t*)&obj_type;
+	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_IF_MAX)
+		return (EINVAL);
+
+	strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
+	rc = if_clone_create(buf, sizeof(buf), NULL);
+	if (rc)
+		return (rc);
+	if ((ifp = ifunit_ref(buf)) == NULL) {
+		if (bootverbose)
+			printf("couldn't reference %s\n", buf);
+		return (ENXIO);
+	}
+
+	fflags = O_CLOEXEC;
+	fdp = td->td_proc->p_fd;
+	rc = falloc(td, &fp, &fd, fflags);
+	if (rc) {
+		if_rele(ifp);
+		if_clone_destroy(buf);
+		return (rc);
+	}
+	ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
+	ctx->v_ifp = ifp;
+	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
+	fdrop(fp, td);
+	td->td_retval[0] = fd;
+	return (rc);
 }
 
 static int
