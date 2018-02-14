@@ -236,7 +236,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	type = (vpc_handle_type_t*)&obj_type;
 	ifp = NULL;
 	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX ||
-		type->vht_obj_type == VPC_OBJ_META)
+		type->vht_obj_type == VPC_OBJ_MGMT)
 		return (EINVAL);
 
 	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
@@ -344,8 +344,8 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	phys_ctl
 };
 static int
-kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
-			 const void *key, size_t *vallen, void **buf)
+kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
+			 const void *in, size_t *outnbyte, void **outp)
 {
 	cap_rights_t rights;
 	struct file *fp;
@@ -368,14 +368,14 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
 		goto done;
 	}
 	ctx = fp->f_data;
-	if ((objtype != VPC_OBJ_META) && (ctx->v_obj_type != objtype)) {
+	if ((objtype != VPC_OBJ_MGMT) && (ctx->v_obj_type != objtype)) {
 		rc = ENODEV;
 		goto done;
 	}
-	if (objtype != VPC_OBJ_META) {
+	if (objtype != VPC_OBJ_MGMT) {
 		if_ctx_t ifctx = ctx->v_ifp->if_softc;
 
-		rc = vpc_ctl_dispatch[objtype](ifctx, objop, keylen, key, vallen, buf);
+		rc = vpc_ctl_dispatch[objtype](ifctx, op, innbyte, in, outnbyte, outp);
 		goto done;
 	}
 	switch (op) {
@@ -406,7 +406,7 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 	int rc, vpcd;
 
 	if (uap->obj_type == 0 || uap->obj_type > VPC_OBJ_TYPE_MAX ||
-		uap->obj_type == VPC_OBJ_META)
+		uap->obj_type == VPC_OBJ_MGMT)
 		return (ENOPROTOOPT);
 
 	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
@@ -426,53 +426,53 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 struct vpc_ctl_args {
 	int vpcd;
 	vpc_op_t op;
-	size_t keylen;
-	const void *key;
-	size_t *vallen;
-	void *buf;
+	size_t innbyte;
+	const void *in;
+	size_t *outnbyte;
+	void *out;
 };
 #endif
 
 int
 sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 {
-	size_t vlen;
-	void *value, *keyp;
+	size_t koutlen;
+	void *kout, *kin;
 	vpc_type_t objtype;
 	int rc;
 
-	if (uap->keylen > ARG_MAX)
+	if (uap->innbyte > ARG_MAX)
 		return (E2BIG);
 
-	keyp =value = NULL;
+	kin = kout = NULL;
 	objtype = VPC_OBJ_TYPE(uap->op);
-	vlen = 0;
+	koutlen = 0;
 	if (objtype == 0 || objtype > VPC_OBJ_TYPE_MAX)
 		return (ENXIO);
 	if (uap->op & IOC_IN) {
-		if (uap->keylen == 0)
+		if (uap->innbyte == 0)
 			return (EFAULT);
-		keyp = malloc(uap->keylen, M_TEMP, M_WAITOK);
-		if (copyin(keyp, (void *)(uintptr_t)uap->key, uap->keylen)) {
+		kin = malloc(uap->innbyte, M_TEMP, M_WAITOK);
+		if (copyin(kin, (void *)(uintptr_t)uap->in, uap->innbyte)) {
 			rc = EFAULT;
 			goto done;
 		}
 	}
 	if ((uap->op & IOC_OUT) &&
-		((uap->vallen == NULL) || (uap->buf == NULL))) {
+		((uap->outnbyte == NULL) || (uap->out == NULL))) {
 			rc = EFAULT;
 			goto done;
 	}
-	rc = kern_vpc_ctl(td, uap->vpcd, uap->op, uap->keylen, keyp, &vlen, &value);
+	rc = kern_vpc_ctl(td, uap->vpcd, uap->op, uap->innbyte, kin, &koutlen, &kout);
 	if (uap->op & IOC_OUT) {
-		if ((rc = copyout(&vlen, uap->vallen, sizeof(vlen))))
+		if ((rc = copyout(&koutlen, uap->outnbyte, sizeof(koutlen))))
 			goto done;
-		if ((rc = copyout(value, uap->buf, vlen)))
+		if ((rc = copyout(kout, uap->out, koutlen)))
 			goto done;
 	}
  done:
-	free(keyp, M_TEMP);
-	free(value, M_TEMP);
+	free(kin, M_TEMP);
+	free(kout, M_TEMP);
 	return (rc);
 }
 

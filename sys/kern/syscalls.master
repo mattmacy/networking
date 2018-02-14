@@ -1041,8 +1041,8 @@
 579	AUE_NULL	UNIMPL	nosys
 580	AUE_VPC		NOSTD	{ int vpc_open(const vpc_id_t *vpc_id, vpc_type_t obj_type, \
 				    vpc_flags_t flags); }
-581	AUE_VPC		NOSTD	{ int vpc_ctl(int vpcd, vpc_op_t op, size_t keylen, \
-				    const void *key, size_t *vallen, void *buf); }
+581	AUE_VPC		NOSTD	{ int vpc_ctl(int vpcd, vpc_op_t op, size_t innbyte, \
+				    const void *in, size_t *outnbyte, void *out); }
 
 
 ; Please copy any additions and changes to the following compatability tables:

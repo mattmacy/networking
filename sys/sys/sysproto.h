@@ -1781,10 +1781,10 @@ struct vpc_open_args {
 struct vpc_ctl_args {
 	char vpcd_l_[PADL_(int)]; int vpcd; char vpcd_r_[PADR_(int)];
 	char op_l_[PADL_(vpc_op_t)]; vpc_op_t op; char op_r_[PADR_(vpc_op_t)];
-	char keylen_l_[PADL_(size_t)]; size_t keylen; char keylen_r_[PADR_(size_t)];
-	char key_l_[PADL_(const void *)]; const void * key; char key_r_[PADR_(const void *)];
-	char vallen_l_[PADL_(size_t *)]; size_t * vallen; char vallen_r_[PADR_(size_t *)];
-	char buf_l_[PADL_(void *)]; void * buf; char buf_r_[PADR_(void *)];
+	char innbyte_l_[PADL_(size_t)]; size_t innbyte; char innbyte_r_[PADR_(size_t)];
+	char in_l_[PADL_(const void *)]; const void * in; char in_r_[PADR_(const void *)];
+	char outnbyte_l_[PADL_(size_t *)]; size_t * outnbyte; char outnbyte_r_[PADR_(size_t *)];
+	char out_l_[PADL_(void *)]; void * out; char out_r_[PADR_(void *)];
 };
 int	nosys(struct thread *, struct nosys_args *);
 void	sys_sys_exit(struct thread *, struct sys_exit_args *);

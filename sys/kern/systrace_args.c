@@ -3305,10 +3305,10 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		struct vpc_ctl_args *p = params;
 		iarg[0] = p->vpcd; /* int */
 		iarg[1] = p->op; /* vpc_op_t */
-		uarg[2] = p->keylen; /* size_t */
-		uarg[3] = (intptr_t) p->key; /* const void * */
-		uarg[4] = (intptr_t) p->vallen; /* size_t * */
-		uarg[5] = (intptr_t) p->buf; /* void * */
+		uarg[2] = p->innbyte; /* size_t */
+		uarg[3] = (intptr_t) p->in; /* const void * */
+		uarg[4] = (intptr_t) p->outnbyte; /* size_t * */
+		uarg[5] = (intptr_t) p->out; /* void * */
 		*n_args = 6;
 		break;
 	}
