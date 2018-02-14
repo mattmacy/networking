@@ -622,7 +622,7 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 }
 
 static int
-vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
+vpcsw_port_add(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
 	struct ifreq ifr;
@@ -644,6 +644,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 	if (sdl->sdl_type != IFT_ETHER) {
 		if_rele(ifp);
+		if_clone_destroy(ifr.ifr_name);
 		return (EINVAL);
 	}
 	ifindexp = malloc(sizeof(uint16_t), M_VPCSW, M_WAITOK);
@@ -655,10 +656,10 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	ifp->if_bridge_input = vpcsw_bridge_input;
 	ifp->if_bridge_output = vpcsw_bridge_output;
 	art_insert(vs->vs_ftable_rw, LLADDR(sdl), ifindexp);
+	vmmnet_insert(&port->vp_id, ifp, VPC_OBJ_PORT);
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
 	if (rc)
 		goto fail;
-	port->vp_portno = ifp->if_dunit;
 	vpc_ifp_cache(ifp);
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
@@ -675,7 +676,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, struct vpcsw_port *port)
 }
 
 static int
-vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
+vpcsw_port_delete(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
 	struct sockaddr_dl *sdl;
@@ -686,12 +687,9 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	struct ifreq ifr;
 	int rc;
 
-	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp%d", port->vp_portno);
-	if ((ifp = ifunit_ref(ifr.ifr_name)) == NULL) {
-		if (bootverbose)
-			printf("couldn't reference %s\n", ifr.ifr_name);
-		return (ENXIO);
-	}
+	ifp = vmmnet_lookup(&port->vp_id);
+	if (ifp == NULL)
+		return (ENOENT);
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 	if (sdl->sdl_type != IFT_ETHER) {
 		if_rele(ifp);
@@ -704,7 +702,6 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 		if_rele(ifp);
 		return (ENOENT);
 	}
-
 	ifindexp = art_delete(vs->vs_ftable_rw, LLADDR(sdl));
 	free(ifindexp, M_VPCSW);
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
@@ -721,7 +718,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	ifp->if_bridge_input = NULL;
 	ifp->if_bridge_output = NULL;
 	if_rele(ifp);
-	if_clone_destroy(ifr.ifr_name);
+	if_clone_destroy(ifp->if_xname);
 	return (0);
  fail:
 	free(ifindexp, M_VPCSW);
@@ -730,7 +727,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, struct vpcsw_port *port)
 }
 
 static int
-vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
+vpcsw_port_uplink(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
 	void *cache;
@@ -738,7 +735,7 @@ vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	struct ifreq ifr;
 	int rc;
 
-	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp%d", port->vp_portno);
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp");
 	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
 		return (rc);
 	if ((ifp = ifunit_ref(ifr.ifr_name)) == NULL) {
@@ -750,6 +747,9 @@ vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
 		if_rele(vs->vs_ifdefault);
 		if_clone_destroy(ifr.ifr_name);
 	}
+	rc = vmmnet_insert(&port->vp_id, ifp, VPC_OBJ_PORT);
+	if (rc)
+		return (rc);
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
 	iflib_set_pcpu_cache(ctx, cache);
@@ -757,42 +757,22 @@ vpcsw_port_uplink(struct vpcsw_softc *vs, struct vpcsw_port *port)
 	return (0);
 }
 
-static int
-vpcsw_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
+int
+vpcsw_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
 {
 	struct vpcsw_softc *vs = iflib_get_softc(ctx);
-	struct ifreq *ifr = (struct ifreq *)data;
-	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
-	struct vpc_ioctl_header *ioh =
-	    (struct vpc_ioctl_header *)(ifbuf->buffer);
-	int rc = ENOTSUP;
-	struct vpc_ioctl_data *iod = NULL;
+	int rc;
 
-	if (command != SIOCGPRIVATE_0)
-		return (EINVAL);
-#ifdef notyet
-	/* need sx lock for iflib context */
-	iod = malloc(ifbuf->length, M_VPCSW, M_WAITOK | M_ZERO);
-#endif
-	iod = malloc(ifbuf->length, M_VPCSW, M_NOWAIT | M_ZERO);
-	if (iod == NULL)
-		return (ENOMEM);
-	rc = copyin(ioh, iod, ifbuf->length);
-	if (rc) {
-		free(iod, M_VPCSW);
-		return (rc);
-	}
-	switch (ioh->vih_type) {
-		case VPCSW_PORT_ADD:
-			rc = vpcsw_port_add(vs, (struct vpcsw_port *)iod);
-			if (!rc)
-				rc = copyout(iod, ioh, ifbuf->length);
+	switch (op) {
+		case VPC_VPCSW_PORT_ADD:
+			rc = vpcsw_port_add(vs, (const struct vpcsw_port *)in);
 			break;
-		case VPCSW_PORT_DEL:
-			rc = vpcsw_port_delete(vs, (struct vpcsw_port *)iod);
+		case VPC_VPCSW_PORT_DEL:
+			rc = vpcsw_port_delete(vs, (const struct vpcsw_port *)in);
 			break;
-		case VPCSW_PORT_UPLINK:
-			rc = vpcsw_port_uplink(vs, (struct vpcsw_port *)iod);
+		case VPC_VPCSW_PORT_UPLINK:
+			rc = vpcsw_port_uplink(vs, (const struct vpcsw_port *)in);
 			break;
 		default:
 			rc = ENOTSUP;
@@ -884,7 +864,6 @@ static device_method_t vpcsw_if_methods[] = {
 	DEVMETHOD(ifdi_detach, vpcsw_detach),
 	DEVMETHOD(ifdi_init, vpcsw_init),
 	DEVMETHOD(ifdi_stop, vpcsw_stop),
-	DEVMETHOD(ifdi_priv_ioctl, vpcsw_priv_ioctl),
 	DEVMETHOD_END
 };
 

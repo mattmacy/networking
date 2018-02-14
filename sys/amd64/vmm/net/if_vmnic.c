@@ -1334,7 +1334,7 @@ vb_dev_reset(struct vb_softc *vs)
 }
 
 static int
-vb_dev_msix(struct vb_softc *vs, struct vb_msix *vx, int length)
+vb_dev_msix(struct vb_softc *vs, const struct vb_msix *vx, int length)
 {
 	int i, size;
 
@@ -1711,14 +1711,15 @@ vb_rx_clset(if_ctx_t ctx, uint16_t fl __unused, uint16_t qidx,
 }
 
 int
-vmnic_ctl(if_ctx_t ctx, u_long command, size_t size, caddr_t data)
+vmnic_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
 {
 	struct vb_softc *sc = iflib_get_softc(ctx);
 	int rc;
 
-	switch (command) {
-		case VPC_OP_VMNIC_MSIX:
-			rc = vb_dev_msix(sc, (struct vb_msix *)data, size);
+	switch (op) {
+		case VPC_VMNIC_MSIX:
+			rc = vb_dev_msix(sc, (const struct vb_msix *)in, inlen);
 			break;
 		default:
 			rc = ENOIOCTL;
