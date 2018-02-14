@@ -698,13 +698,18 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	ctx = ifp->if_softc;
 	iflib_set_pcpu_cache(ctx, cache);
 	vs->vs_ifdefault = ifp;
+	memcpy(&vs->vs_uplink_id, &port->vp_id, sizeof(vpc_id_t));
 	return (0);
 }
 
 static int
-vpcsw_port_uplink_get(struct vpcsw_softc *vs, const struct vpcsw_port *port)
+vpcsw_port_uplink_get(struct vpcsw_softc *vs, struct vpcsw_port *port)
 {
-	return (ENOTSUP);
+	if (vs->vs_ifdefault == NULL)
+		return (ENOENT);
+
+	memcpy(&port->vp_id, &vs->vs_uplink_id, sizeof(vpc_id_t));
+	return (0);
 }
 
 int
@@ -712,6 +717,7 @@ vpcsw_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	struct vpcsw_softc *vs = iflib_get_softc(ctx);
+	struct vpcsw_port *out;
 	int rc;
 
 	switch (op) {
@@ -725,7 +731,10 @@ vpcsw_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			rc = vpcsw_port_uplink_create(vs, (const struct vpcsw_port *)in);
 			break;
 		case VPC_VPCSW_OP_PORT_UPLINK_GET:
-			rc = vpcsw_port_uplink_get(vs, (const struct vpcsw_port *)in);
+			out = malloc(sizeof(*out), M_TEMP, M_WAITOK|M_ZERO);
+			*outdata = out;
+			*outlen = sizeof(*out);
+			rc = vpcsw_port_uplink_get(vs, out);
 			break;
 		default:
 			rc = ENOTSUP;
