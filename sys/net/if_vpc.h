@@ -289,6 +289,20 @@ enum vpc_vpcsw_op_type {
 	VPC_VPCSW_OP_TYPE_MAX =			3,
 };
 
+enum vpc_vpcp_op_type {
+	VPC_VPCP_INVALID = 0,
+	VPC_VPCP_CONNECT = 1,
+	VPC_VPCP_DISCONNECT = 2,
+	VPC_VPCP_VNI_GET = 3,
+	VPC_VPCP_VNI_SET = 4,
+	VPC_VPCP_VTAG_GET = 5,
+	VPC_VPCP_VTAG_SET = 6,
+	VPC_VPCP_MAC_GET = 7,
+	VPC_VPCP_MAC_SET = 8,
+	VPC_VPCP_MAX = 8,
+};
+
+
 #define VPC_OP(objtype, op) (((objtype) << 16)| (op))
 #define VPC_OP_R(objtype, op) (IOC_OUT | ((objtype) << 16)| (op))
 #define VPC_OP_W(objtype, op) (IOC_IN | ((objtype) << 16)| (op))
@@ -307,6 +321,15 @@ enum vpc_vpcsw_op_type {
 #define VPC_VMNIC_OP_MSIX VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_MSIX)
 #define VPC_VMNIC_OP_FREEZE VPC_OP(VPC_OBJ_VMNIC, VPC_VMNIC_FREEZE)
 
+#define VPC_VPCP_OP_CONNECT VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
+#define VPC_VPCP_OP_DISCONNECT VPC_OP(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
+#define VPC_VPCP_OP_VNI_GET VPC_OP_R(VPC_OBJ_VPCP, VPC_VPCP_VNI_GET)
+#define VPC_VPCP_OP_VNI_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_VNI_SET)
+#define VPC_VPCP_OP_VTAG_GET VPC_OP_R(VPC_OBJ_VPCP, VPC_VPCP_VTAG_GET)
+#define VPC_VPCP_OP_VTAG_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_VTAG_SET)
+#define VPC_VPCP_OP_MAC_GET VPC_OP_R(VPC_OBJ_VPCP, VPC_VPCP_MAC_GET)
+#define VPC_VPCP_OP_MAC_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_MAC_SET)
+
 #define VPC_F_CREATE (1ULL << 1)
 #define VPC_F_OPEN (1ULL << 2)
 
@@ -315,5 +338,8 @@ int vmnic_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
 
 int vpcsw_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
 			  size_t *outlen, void **outdata);
+
+int vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+			 size_t *outlen, void **outdata);
 
 #endif
