@@ -284,7 +284,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
 			rc = ENOTSUP;
 			break;
 	}
-
+	fdrop(fp, td);
 	return (rc);
 }
 
