@@ -262,7 +262,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
 	struct vpcctx *ctx;
 	int rc;
 
-	if (op == 0 || op > VPC_OP_MAX)
+	if (op == 0 || op > VPC_OP_OBJ_MAX)
 		return (EOPNOTSUPP);
 
 	if (fget(td, vpcd, cap_rights_init(&rights, CAP_VPC_CTL), &fp) != 0)
@@ -275,11 +275,11 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
 	ctx = fp->f_data;
 	rc = 0;
 	switch (op) {
-		case VPC_OP_DESTROY:
+		case VPC_OP_OBJ_DESTROY:
 			ctx->v_flags |= VPC_CTX_F_DESTROYED;
 			refcount_release(&ctx->v_refcnt);
 			break;
-		case VPC_OP_INVALID:
+		case VPC_OP_OBJ_INVALID:
 		default:
 			rc = ENOTSUP;
 			break;
