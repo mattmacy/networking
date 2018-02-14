@@ -31,6 +31,7 @@
 #define __IF_VPC_H_
 
 #include <netinet/in.h>
+#include <sys/uuid.h>
 
 #define VPC_VERS 0x20171228
 struct vpc_ioctl_header {
@@ -93,16 +94,8 @@ struct vpci_vni {
 
 struct vpcsw_port {
 	struct vpc_ioctl_header vp_ioh;
-	uint16_t vp_portno;
+	vpc_id_t vp_id;
 };
-
-#define VPCSW_PORT_ADD							\
-	_IOW('k', 2, struct vpcsw_port)
-#define VPCSW_PORT_DEL						\
-	_IOW('k', 3, struct vpcsw_port)
-#define VPCSW_PORT_UPLINK						\
-	_IOW('k', 4, struct vpcsw_port)
-
 
 #define VPCSW_REQ_NDv4 0x1
 #define VPCSW_REQ_NDv6 0x2
@@ -250,9 +243,15 @@ uint16_t vpcp_get_vlanid(if_ctx_t ctx);
 int vpcp_port_type_set(if_ctx_t ctx, if_t devifp, enum vpcp_port_type type);
 enum vpcp_port_type vpcp_port_type_get(if_ctx_t ctx);
 
+typedef int (*vpc_ctl_fn) (if_ctx_t ctx, vpc_op_t op, size_t keylen,
+				   const void *key, size_t *vallen, void **buf);
+
+
+int vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type);
+struct ifnet *vmmnet_lookup(const vpc_id_t *id);
 
 #endif
-enum vpcp_obj_type {
+enum vpc_obj_type {
 	VPC_OBJ_INVALID = 0,
 	VPC_OBJ_SWITCH = 1,
 	VPC_OBJ_PORT = 2,
@@ -260,26 +259,61 @@ enum vpcp_obj_type {
 	VPC_OBJ_NAT = 4,
 	VPC_OBJ_LINK = 5,
 	VPC_OBJ_VMNIC = 6,
-	VPC_OBJ_MAX = 6,
+	VPC_OBJ_META = 7,
+	VPC_OBJ_TYPE_MAX = 7,
 };
 
 
 enum vpc_obj_op_type {
-	VPC_OP_OBJ_INVALID = 0,
-	VPC_OP_OBJ_DESTROY = 1,
-	VPC_OP_OBJ_MAX = 1
+	VPC_OBJ_DESTROY = 1,
+	VPC_OBJ_OP_TYPE_MAX = 1
 };
 
 enum vpc_vmnic_op_type {
-	VPC_OP_VMNIC_INVALID = 0,
-	VPC_OP_VMNIC_NQUEUES_GET =	1,
-	VPC_OP_VMNIC_NQUEUES_SET =	2,
-	VPC_OP_VMNIC_MAC_GET =		3,
-	VPC_OP_VMNIC_MAC_SET =		4,
-	VPC_OP_VMNIC_ATTACH =		5,
-	VPC_OP_VMNIC_MSIX =		6,
+	VPC_VMNIC_INVALID = 0,
+	VPC_VMNIC_NQUEUES_GET =		1,
+	VPC_VMNIC_NQUEUES_SET =		2,
+	VPC_VMNIC_MAC_GET =		3,
+	VPC_VMNIC_MAC_SET =		4,
+	VPC_VMNIC_ATTACH =		5,
+	VPC_VMNIC_MSIX =		6,
+	VPC_VMNIC_FREEZE =		7,
+	VPC_VMNIC_OP_TYPE_MAX =			7,
 };
+
+enum vpc_vpcsw_op_type {
+	VPC_VPCSW_INVALID = 0,
+	VPC_VPCSW_PORT_ADD =		1,
+	VPC_VPCSW_PORT_DEL =		2,
+	VPC_VPCSW_PORT_UPLINK =		3,
+	VPC_VPCSW_OP_TYPE_MAX =			3,
+};
+
+#define VPC_OP(objtype, op) (((objtype) << 16)| (op))
+#define VPC_OP_R(objtype, op) (IOC_OUT | ((objtype) << 16)| (op))
+#define VPC_OP_W(objtype, op) (IOC_IN | ((objtype) << 16)| (op))
+#define VPC_OP_RW(objtype, op) ((IOC_IN|IOC_OUT) | ((objtype) << 16)| (op))
+
+#define VPC_OBJ_TYPE(op) ((op & ~(IOC_OUT|IOC_IN)) >> 16)
+#define VPC_OBJ_OP(op) ((op) & ((1<<16)-1))
+
+#define VPC_OBJ_OP_DESTROY VPC_OP(VPC_OBJ_META, VPC_OBJ_DESTROY)
+
+#define VPC_VMNIC_OP_NQUEUES_GET VPC_OP_R(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_GET)
+#define VPC_VMNIC_OP_NQUEUES_SET VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_SET)
+#define VPC_VMNIC_OP_MAC_GET VPC_OP_R(VPC_OBJ_VMNIC, VPC_VMNIC_MAC_GET)
+#define VPC_VMNIC_OP_MAC_SET VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_MAC_SET)
+#define VPC_VMNIC_OP_ATTACH VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_ATTACH)
+#define VPC_VMNIC_OP_MSIX VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_MSIX)
+#define VPC_VMNIC_OP_FREEZE VPC_OP(VPC_OBJ_VMNIC, VPC_VMNIC_FREEZE)
 
 #define VPC_F_CREATE (1ULL << 1)
 #define VPC_F_OPEN (1ULL << 2)
+
+int vmnic_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
+			  size_t *outlen, void **outdata);
+
+int vpcsw_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
+			  size_t *outlen, void **outdata);
+
 #endif

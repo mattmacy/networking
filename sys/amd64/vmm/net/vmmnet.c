@@ -95,6 +95,7 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 struct vpcctx {
 	struct ifnet *v_ifp;
 	vpc_id_t v_id;
+	vpc_type_t v_obj_type;
 	volatile u_int v_refcnt;
 	uint32_t v_flags;
 };
@@ -132,6 +133,7 @@ vpcd_close(struct file *fp, struct thread *td)
 		VMMNET_LOCK();
 		art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
 		VMMNET_UNLOCK();
+		/* run object dtor */
 		if_rele(ctx->v_ifp);
 		if_clone_destroy(ctx->v_ifp->if_xname);
 		free(ctx, M_VMMNET);
@@ -177,6 +179,44 @@ char *if_names[] = {
 	"vmnic",
 };
 
+int
+vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type)
+{
+	struct vpcctx *ctx;
+
+	VMMNET_LOCK();
+	if (art_search(&vpc_uuid_table, (const char*)id) != NULL) {
+		VMMNET_UNLOCK();
+		return (EEXIST);
+	}
+	ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
+	if_ref(ifp);
+	ctx->v_ifp = ifp;
+	memcpy(&ctx->v_id, id, sizeof(*id));
+	ctx->v_obj_type = type;
+	refcount_init(&ctx->v_refcnt, 1);
+	ctx->v_flags = 0;
+	art_insert(&vpc_uuid_table, (const char *)id, ctx);
+	VMMNET_UNLOCK();
+	return (0);
+}
+struct ifnet *
+vmmnet_lookup(const vpc_id_t *id)
+{
+	struct vpcctx *ctx;
+	struct ifnet *ifp;
+
+	ifp = NULL;
+	VMMNET_LOCK();
+	ctx = art_search(&vpc_uuid_table, (const char*)id);
+	if (ctx == NULL)
+		goto unlock;
+	ifp = ctx->v_ifp;
+ unlock:
+	VMMNET_UNLOCK();
+	return (ifp);
+}
+
 static int
 kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			  vpc_type_t obj_type, vpc_flags_t flags,
@@ -191,7 +231,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	int rc, fflags, fd;
 
 	type = (vpc_handle_type_t*)&obj_type;
-	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_MAX)
+	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX)
 		return (EINVAL);
 
 	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
@@ -207,6 +247,10 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	if (flags & VPC_F_OPEN) {
 		if (ctx == NULL) {
 			rc = ENOENT;
+			goto unlock;
+		}
+		if (ctx->v_obj_type != obj_type) {
+			rc = ENODEV;
 			goto unlock;
 		}
 		refcount_acquire(&ctx->v_refcnt);
@@ -228,6 +272,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		 */
 		refcount_init(&ctx->v_refcnt, 2);
 		ctx->v_ifp = ifp;
+		ctx->v_obj_type = obj_type;
 		memcpy(&ctx->v_id, vpc_id, sizeof(*vpc_id));
 		art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
 	}
@@ -254,36 +299,87 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 }
 
 static int
+vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
+{
+	return (EOPNOTSUPP);
+}
+
+static int
+vpcr_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
+{
+	return (EOPNOTSUPP);
+}
+
+static int
+vpcnat_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
+{
+	return (EOPNOTSUPP);
+}
+
+static int
+vpclink_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
+{
+	return (EOPNOTSUPP);
+}
+
+static vpc_ctl_fn vpc_ctl_dispatch[] = {
+	NULL,
+	vpcsw_ctl,
+	vpcp_ctl,
+	vpcr_ctl,
+	vpcnat_ctl,
+	vpclink_ctl,
+	vmnic_ctl,
+};
+static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
-			 const void *key, size_t *vallen, void **buf, bool *docopy)
+			 const void *key, size_t *vallen, void **buf)
 {
 	cap_rights_t rights;
 	struct file *fp;
+	vpc_op_t objop;
+	vpc_type_t objtype;
 	struct vpcctx *ctx;
 	int rc;
 
-	if (op == 0 || op > VPC_OP_OBJ_MAX)
+	objtype = VPC_OBJ_TYPE(op);
+	objop = VPC_OBJ_OP(op);
+	rc = 0;
+	if (objtype == 0 || objtype > VPC_OBJ_TYPE_MAX)
 		return (EOPNOTSUPP);
 
 	if (fget(td, vpcd, cap_rights_init(&rights, CAP_VPC_CTL), &fp) != 0)
 		return (EBADF);
 	if ((fp->f_type != DTYPE_VPCFD) ||
 		(fp->f_data == NULL)) {
-		fdrop(fp, td);
-		return (EBADF);
+		rc = EBADF;
+		goto done;
 	}
 	ctx = fp->f_data;
-	rc = 0;
+	if ((objtype != VPC_OBJ_META) && (ctx->v_obj_type != objtype)) {
+		rc = ENODEV;
+		goto done;
+	}
+	if (objtype != VPC_OBJ_META) {
+		if_ctx_t ifctx = ctx->v_ifp->if_softc;
+
+		rc = vpc_ctl_dispatch[objtype](ifctx, objop, keylen, key, vallen, buf);
+		goto done;
+	}
 	switch (op) {
-		case VPC_OP_OBJ_DESTROY:
+		case VPC_OBJ_DESTROY:
 			ctx->v_flags |= VPC_CTX_F_DESTROYED;
 			refcount_release(&ctx->v_refcnt);
 			break;
-		case VPC_OP_OBJ_INVALID:
 		default:
 			rc = ENOTSUP;
 			break;
 	}
+ done:
 	fdrop(fp, td);
 	return (rc);
 }
@@ -300,6 +396,10 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 {
 	vpc_id_t *vpc_id;
 	int rc, vpcd;
+
+	if (uap->obj_type == 0 || uap->obj_type > VPC_OBJ_TYPE_MAX ||
+		uap->obj_type == VPC_OBJ_META)
+		return (ENOPROTOOPT);
 
 	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
 	if (copyin(vpc_id, (void*)(uintptr_t)uap->vpc_id, sizeof(*vpc_id)))
@@ -330,31 +430,33 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 {
 	size_t vlen;
 	void *value, *keyp;
-	bool docopy;
+	vpc_type_t objtype;
 	int rc;
 
 	if (uap->keylen > ARG_MAX)
 		return (E2BIG);
 
-	value = NULL;
+	keyp =value = NULL;
+	objtype = VPC_OBJ_TYPE(uap->op);
 	vlen = 0;
-	docopy = false;
-	keyp = malloc(uap->keylen, M_TEMP, M_WAITOK);
-	if (copyin(keyp, (void *)(uintptr_t)uap->key, uap->keylen)) {
-		free(keyp, M_TEMP);
-		return (EFAULT);
-	}
-	if (uap->buf != NULL) {
-		if (copyin(&vlen, uap->vallen, sizeof(vlen)))
+	if (objtype == 0 || objtype > VPC_OBJ_TYPE_MAX)
+		return (ENXIO);
+	if (uap->op & IOC_IN) {
+		if (uap->keylen == 0)
 			return (EFAULT);
-		if (vlen > ARG_MAX)
-			return (E2BIG);
-		value = malloc(vlen, M_TEMP, M_WAITOK);
-		if ((rc = copyin(value, uap->buf, vlen)))
+		keyp = malloc(uap->keylen, M_TEMP, M_WAITOK);
+		if (copyin(keyp, (void *)(uintptr_t)uap->key, uap->keylen)) {
+			rc = EFAULT;
+			goto done;
+		}
+	}
+	if ((uap->op & IOC_OUT) &&
+		((uap->vallen == NULL) || (uap->buf == NULL))) {
+			rc = EFAULT;
 			goto done;
 	}
-	rc = kern_vpc_ctl(td, uap->vpcd, uap->op, uap->keylen, keyp, &vlen, &value, &docopy);
-	if (!rc && docopy) {
+	rc = kern_vpc_ctl(td, uap->vpcd, uap->op, uap->keylen, keyp, &vlen, &value);
+	if (uap->op & IOC_OUT) {
 		if ((rc = copyout(&vlen, uap->vallen, sizeof(vlen))))
 			goto done;
 		if ((rc = copyout(value, uap->buf, vlen)))
