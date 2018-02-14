@@ -58,23 +58,25 @@ __FBSDID("$FreeBSD$");
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
 #endif
-#include <sys/ioctl.h>
 #include <sys/cpuset.h>
+#include <sys/syscall.h>
 
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <net/if_vpc.h>
 
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <md5.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <err.h>
 #include <sysexits.h>
+#include <uuid.h>
+#include <unistd.h>
 
 #include "bhyverun.h"
 #include "pci_emul.h"
@@ -93,17 +95,26 @@ __FBSDID("$FreeBSD$");
 #endif
 
 
+static int
+vpc_open(const vpc_id_t *vpc_id, vpc_type_t obj_type, vpc_flags_t flags)
+{
+	return syscall(SYS_vpc_open, vpc_id, obj_type, flags);
+}
+
+static int
+vpc_ctl(int vpcd, vpc_op_t op, size_t keylen, const void *key, size_t *vallen, void *buf)
+{
+	return syscall(SYS_vpc_ctl, op, keylen, key, vallen, buf);
+}
+
 #define VTNET_BE_REGSZ		(20 + 4 + 8)	/* virtio + MSI-x + config */
 
 struct vtnet_be_softc {
 	struct pci_devinst *vbs_pi;
-	uint8_t vbs_origmac[6];			/* original MAC address */
-	int vbs_fd;				/* socket descriptor for config */
-	int vbs_nqs;
-	int vbs_nvqs;
-	int vbs_mtu;
-	const char *vbs_vm_intf;
-	const char *vbs_port_intf;
+	int vbs_fd;				/* vpc descriptor for config */
+	uint16_t vbs_nqs;
+	uint16_t vbs_nvqs;
+	vpc_id_t vbs_id;
 };
 
 static void
@@ -111,7 +122,6 @@ vtnet_be_msix(struct vmctx *ctx, int vcpu, struct pci_devinst *pi, int on)
 {
 	struct vtnet_be_softc *vbs;
 	struct vb_msix *vmsix;
-	struct ifreq ifr;
 	int i, err, size, nvqs;
 
 	vbs = pi->pi_arg;
@@ -122,17 +132,14 @@ vtnet_be_msix(struct vmctx *ctx, int vcpu, struct pci_devinst *pi, int on)
 	vmsix->vm_status = on;
 	vmsix->vm_count = nvqs;
 	vmsix->vm_ioh.vih_magic = VB_MAGIC;
-	vmsix->vm_ioh.vih_type = VB_MSIX;
-	ifr.ifr_buffer.length = size;
-	ifr.ifr_buffer.buffer = vmsix;
-	strncpy(ifr.ifr_name, vbs->vbs_vm_intf, IFNAMSIZ-1);
 	if (on) {
 		for (i = 0; i < nvqs; i++) {
 			vmsix->vm_q[i].msg = pi->pi_msix.table[i].msg_data;
 			vmsix->vm_q[i].addr = pi->pi_msix.table[i].addr;
 		}
 	}
-	err = ioctl(vbs->vbs_fd, SIOCGPRIVATE_0, &ifr);
+	err = vpc_ctl(vbs->vbs_fd, VPC_OP_VMNIC_MSIX, size, vmsix, NULL, NULL);
+	free(vmsix);
 	assert(err == 0);
 }
 
@@ -155,75 +162,16 @@ vtnet_be_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 	vtnet_be_msix(ctx, vcpu, pi, 1);
 }
 
-static int
-vtnet_be_macaddr(struct vtnet_be_softc *vbs, char *macaddr)
-{
-	int err = 0;
-
-	if (macaddr != NULL) {
-		struct ether_addr *ea;
-		char zero_addr[ETHER_ADDR_LEN] = { 0, 0, 0, 0, 0, 0 };
-
-		err = 1;
-		if (macaddr != NULL) {
-			ea = ether_aton(macaddr);
-			if (ea == NULL || ETHER_IS_MULTICAST(ea->octet) ||
-			    !memcmp(ea->octet, zero_addr, ETHER_ADDR_LEN)) {
-				/* invalid MAC address */
-			} else {
-				err = 0;
-				memcpy(vbs->vbs_origmac, ea->octet,
-				    ETHER_ADDR_LEN);
-			}
-		}
-	} else if (vbs->vbs_vm_intf == NULL) {
-		MD5_CTX mdctx;
-		struct pci_devinst *pi;
-		char nstr[100];
-		unsigned char digest[16];
-
-		/*
-		 * Generate a pseudo-random, deterministic MAC
-		 * address based on the UUID (if passed),the VM name,
-		 * and the guest b/s/f.
-		 * The FreeBSD Foundation OUI of 58-9C-FC is used.
-		 */
-		pi = vbs->vbs_pi;
-		snprintf(nstr, sizeof(nstr), "%s: %d-%d-%d %s\n",
-		    guest_uuid_str ? guest_uuid_str : "no-guid",
-		    pi->pi_bus, pi->pi_slot, pi->pi_func,
-		    vmname);
-
-		MD5Init(&mdctx);
-                MD5Update(&mdctx, nstr, strlen(nstr));
-                MD5Final(digest, &mdctx);
-
-		vbs->vbs_origmac[0] = 0x58;
-		vbs->vbs_origmac[1] = 0x9C;
-		vbs->vbs_origmac[2] = 0xFC;
-		vbs->vbs_origmac[3] = digest[0];
-		vbs->vbs_origmac[4] = digest[1];
-		vbs->vbs_origmac[5] = digest[2];
-	}
-	/* else set elsewhere */
-	return (err);
-}
 struct token_value {
 	char *token;
 	int type;
 };
 
-#define KW_INTF 0x1
-#define KW_MAC 0x2
-#define KW_MTU 0x3
-#define KW_QUEUES 0x4
-#define KW_MAX KW_QUEUES
+#define KW_ID 0x1
+#define KW_MAX KW_ID
 
 struct token_value token_map[] = {
-	{"intf", KW_INTF},
-	{"mac", KW_MAC},
-	{"mtu", KW_MTU},
-	{"queues", KW_QUEUES},
+	{"id", KW_ID},
 };
 
 static int
@@ -249,97 +197,61 @@ static int
 vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 {
 	char *mac, *input, *token;
-	int id, nqs;
+	int id;
+	uint32_t status;
 
 	if (opts == NULL)
 		return (1);
 
 	mac = NULL;
-	vbs->vbs_vm_intf = vbs->vbs_port_intf = NULL;
-	vbs->vbs_nqs = 1;
-	vbs->vbs_nvqs = 3;
 	input = strdup(opts);
+	status =  uuid_s_bad_version;
 	while ((token = strsep(&input, ",")) != NULL) {
 		id = strtype(token);
 		switch(id) {
-			case KW_INTF:
-				vbs->vbs_port_intf = tokenval(token);
+			case KW_ID:
+				uuid_from_string(tokenval(token), &vbs->vbs_id, &status);
 				break;
-			case KW_MTU:
-				vbs->vbs_mtu = atoi(tokenval(token));
-				assert(vbs->vbs_mtu > 250 &&
-					   vbs->vbs_mtu < 16*1024);
-				break;
-			case KW_MAC:
-				mac = tokenval(token);
-				break;
-			case KW_QUEUES:
-				nqs = atoi(tokenval(token));
-				vbs->vbs_nqs = min(VB_QUEUES_MAX, max(1, nqs));
-				vbs->vbs_nvqs = 2*vbs->vbs_nqs + 1;
-				break;
+			default:
+				printf("bad value to kvirtio %s", token);
+				return (1);
 		}
 	}
-	if (vbs->vbs_port_intf == NULL)
-		return (1);
-	return (vtnet_be_macaddr(vbs, mac));
+	return (status != uuid_s_ok);
 }
 
 static int
 vtnet_be_clone(struct vtnet_be_softc *vbs)
 {
 	struct vb_vm_attach va;
-	struct ifreq ifr;
-	int i, s, flags, err;
+	int s;
+	size_t osize;
+	uint16_t nqs;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
-	cap_ioctl_t vb_ioctls[] = { SIOCGPRIVATE_0 };
 #endif
 
-	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP)) < 0) {
+	if ((s = vpc_open(&vbs->vbs_id, VPC_OBJ_VMNIC, VPC_F_OPEN)) < 0)
 		return (errno);
-	}
-	err = 0;
 	vbs->vbs_fd = s;
 	bzero(&va, sizeof(va));
-	ifr.ifr_data = (caddr_t)&va;
-
+	va.vva_ioh.vih_magic = VB_MAGIC;
 	va.vva_io_start = vbs->vbs_pi->pi_bar[0].addr;
 	va.vva_io_size = VTNET_BE_REGSZ;
-	va.vva_num_queues = vbs->vbs_nqs;
-	va.vva_mtu = vbs->vbs_mtu;
-	va.vva_queue_size = 0;	/* accept default */
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
-	strncpy(va.vva_ifparent, vbs->vbs_port_intf, IFNAMSIZ-1);
-	memcpy(va.vva_macaddr, vbs->vbs_origmac, ETHER_ADDR_LEN);
-	vbs->vbs_vm_intf = NULL;
-	for (i = 0; i < VB_VMNIC_MAX; i++) {
-		sprintf(ifr.ifr_name, "vmnic%d", i);
-		if (ioctl(s, SIOCIFCREATE2, &ifr) == 0) {
-			vbs->vbs_vm_intf = strdup(ifr.ifr_name);
-			break;
-		}
-	}
-	if (i == VB_VMNIC_MAX)
-		return (ENOSPC);
-
-	if (ioctl(s, SIOCGIFFLAGS, &ifr) < 0) {
-		perror("SIOCGIFFLAGS");
+	if (vpc_ctl(s, VPC_OP_VMNIC_NQUEUES_GET, 0, NULL, &osize, &nqs))
 		return (errno);
-	}
+	if (vpc_ctl(s, VPC_OP_VMNIC_ATTACH, sizeof(va), &va, NULL, NULL))
+		return (errno);
+	vbs->vbs_nqs = nqs;
+	vbs->vbs_nvqs = 2*nqs + 1;
 
-	flags = (ifr.ifr_flags & 0xffff) | (ifr.ifr_flagshigh << 16);
-	flags |= IFF_UP;
-	ifr.ifr_flags = flags & 0xffff;
-	ifr.ifr_flagshigh = flags >> 16;
 #ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_IOCTL);
+	cap_rights_init(&rights, CAP_VPC_CTL);
 	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
-	if (cap_ioctls_limit(s, vb_ioctls, nitems(vb_ioctls)) == -1 && errno != ENOSYS)
-		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
-	return (err);
+	return (0);
 }
 
 static int

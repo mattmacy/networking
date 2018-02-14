@@ -251,15 +251,16 @@ int vpcp_port_type_set(if_ctx_t ctx, if_t devifp, enum vpcp_port_type type);
 enum vpcp_port_type vpcp_port_type_get(if_ctx_t ctx);
 
 
-enum vpcp_if_type {
-	VPC_IF_INVALID = 0,
-	VPC_IF_SWITCH = 1,
-	VPC_IF_PORT = 2,
-	VPC_IF_ROUTER = 3,
-	VPC_IF_NAT = 4,
-	VPC_IF_LINK = 5,
-	VPC_IF_VMNIC = 6,
-	VPC_IF_MAX = 6,
+#endif
+enum vpcp_obj_type {
+	VPC_OBJ_INVALID = 0,
+	VPC_OBJ_SWITCH = 1,
+	VPC_OBJ_PORT = 2,
+	VPC_OBJ_ROUTER = 3,
+	VPC_OBJ_NAT = 4,
+	VPC_OBJ_LINK = 5,
+	VPC_OBJ_VMNIC = 6,
+	VPC_OBJ_MAX = 6,
 };
 
 
@@ -269,11 +270,16 @@ enum vpc_op_type {
 	VPC_OP_MAX = 1
 };
 
+enum vpc_vmnic_op_type {
+	VPC_OP_VMNIC_INVALID = 0,
+	VPC_OP_VMNIC_NQUEUES_GET =	1,
+	VPC_OP_VMNIC_NQUEUES_SET =	2,
+	VPC_OP_VMNIC_MAC_GET =		3,
+	VPC_OP_VMNIC_MAC_SET =		4,
+	VPC_OP_VMNIC_ATTACH =		5,
+	VPC_OP_VMNIC_MSIX =		6,
+};
 
-#define VPC_F_CREATE (1 << 1)
-#define VPC_F_OPEN (1 << 2)
-
-
-#endif
-
+#define VPC_F_CREATE (1ULL << 1)
+#define VPC_F_OPEN (1ULL << 2)
 #endif

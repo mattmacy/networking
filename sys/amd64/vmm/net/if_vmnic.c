@@ -960,6 +960,7 @@ vb_status_change(struct vb_softc *vs, uint32_t val)
 	vs->vs_status = val | VIRTIO_CONFIG_STATUS_FEATURES_OK;
 }
 
+
 /*
  * Virtio register-handling code
  */
@@ -1468,123 +1469,16 @@ vb_txq_init(struct vb_softc *vs, struct vb_txq *txq, int idx)
 	txq->vt_vs = vs;
 	txq->vt_cidx = 0;
 }
-
-static int
-vb_if_attach(struct vb_softc *vs, struct vb_vm_attach *via)
-{
-	struct ifnet *ifp;
-
-	if ((ifp = ifunit_ref(via->vva_ifparent)) == NULL) {
-		printf("ifunit_ref failed\n");
-		return (ENXIO);
-	}
-
-	/* Verify ifnet not already in use */
-	if (vb_ifnet_inuse(ifp)) {
-		via->vva_ifparent[IFNAMSIZ-1] = '\0';
-		printf("vtnet_be: ifp %s in use\n", via->vva_ifparent);
-		if_rele(ifp);
-		return (EBUSY);
-	}
-	vs->vs_ifparent = ifp;
-
-	/* Add additional capabilities based on underlying ifnet */
-	if (ifp->if_capabilities & IFCAP_TXCSUM)
-		vs->vs_hv_caps |= VIRTIO_NET_F_CSUM;
-	if (ifp->if_capabilities & IFCAP_TSO4)
-		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO4;
-	if (ifp->if_capabilities & IFCAP_TSO6)
-		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO6;
-	if ((ifp->if_capabilities & (IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6)) ==
-		(IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6))
-		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_CSUM;
-	if (ifp->if_capabilities & IFCAP_LRO)
-		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6;
-	printf("caps: %016lx encaps: %016lx hv_caps: %08x\n",
-		   ifp->if_capabilities, ifp->if_capenable, vs->vs_hv_caps);
-	return (0);
-}
-
-static int
-vb_vm_attach(struct vb_softc *vs, struct vb_vm_attach *vva)
-{
-	struct vtnet_be *vb;
-	int rc;
-
-	vva->vva_vmparent[VMNAMSIZ-1] = '\0';
-	if (strlen(vva->vva_ifparent)) {
-		if ((rc = vb_if_attach(vs, vva)))
-			return (rc);
-	}
-
-	/* Locate VM */
-	vb = vb_find_vmname(vva->vva_vmparent);
-	if (vb == NULL) {
-		printf("vtnet_be: vmname %s doesn't exist\n", vva->vva_vmparent);
-		return (ENOENT);
-	}
-	vs->vs_vn = vb;
-	vs->vs_nqs_max = min(VB_QUEUES_MAX, max(1, vva->vva_num_queues));
-	vs->vs_nvqs_max = 2*vs->vs_nqs_max + 1;
-	/* XXX --- this won't work if the guest doesn't know to negotiate the number of queues */
-	vs->vs_nqs = vs->vs_nqs_max;
-	vs->vs_nvqs = vs->vs_nvqs_max;
-
-	vs->vs_proc = curproc;
-	vs->vs_io_start = vva->vva_io_start;
-	vs->vs_io_size = vva->vva_io_size;
-
-	memcpy(vs->vs_cfg.mac, vva->vva_macaddr, 6);
-	vs->vs_cfg.status = VIRTIO_NET_S_LINK_UP;
-	vs->vs_cfg.max_virtqueue_pairs = vs->vs_nqs_max;
-	if (vva->vva_mtu)
-		vs->vs_cfg.mtu = vva->vva_mtu;
-	else
-		vs->vs_cfg.mtu = ETHERMTU - 50;
-	/* Register the memory region with the VM */
-	rc = vm_register_ioport(vs->vs_vn->vm, vb_handle, vs,
-	          vs->vs_io_start, vs->vs_io_size);
-
-	if (rc) {
-		printf("vm_register_ioport failed: %d\n", rc);
-		vs->vs_proc = NULL;
-		return (rc);
-	}
-	VB_LOCK;
-	SLIST_INSERT_HEAD(&vb->dev, vs, vs_next);
-	VB_UNLOCK;
-	vs->vs_flags |= VS_ENQUEUED;
-
-	return (0);
-}
-
 static int
 vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
 	struct vb_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
-	struct vb_vm_attach va;
-	int rc;
 
-	if (params != NULL) {
-		if ((rc = copyin(params, &va, sizeof(va)))) {
-			printf("param copyin failed: %d\n", rc);
-			return (rc);
-		}
-		if ((rc = vb_vm_attach(vs, &va))) {
-			printf("vb_vm_attach failed %d\n", rc);
-			return (rc);
-		}
-		vs->vs_flags |= VS_OWNED;
-	} else {
-		/* XXX --- fix me */
-		vs->vs_nqs_max = 1;
-		vs->vs_nvqs_max = 3;
-	}
-
+	vs->vs_nqs_max = 1;
+	vs->vs_nvqs_max = 3;
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	vs->vs_ctx = ctx;
-
 	vs->vs_gpa_hint = 0;
 
 	scctx->isc_tx_nsegments = VB_MAX_SCATTER;
@@ -1605,8 +1499,6 @@ vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t par
 	vs->vs_hv_caps |= VIRTIO_NET_F_MAC | VIRTIO_NET_F_MRG_RXBUF |
 		VIRTIO_NET_F_STATUS | VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_CTRL_VQ |	\
 		VIRTIO_NET_F_MQ;
-	if (vs->vs_cfg.mtu)
-		vs->vs_hv_caps |= VIRTIO_NET_F_MTU;
 	return (0);
 }
 
@@ -1649,10 +1541,114 @@ vb_attach_post(if_ctx_t ctx)
 	 */
 	ifp = iflib_get_ifp(ctx);
 	ifp->if_input = vb_if_input;
-	iflib_set_mac(ctx, vs->vs_origmac);
 	return (0);
 }
 
+static int
+vb_if_attach(struct vb_softc *vs, struct ifnet *ifp)
+{
+	/* Verify ifnet not already in use */
+	if (vb_ifnet_inuse(ifp))
+		return (EBUSY);
+	vs->vs_ifparent = ifp;
+
+	/* Add additional capabilities based on underlying ifnet */
+	if (ifp->if_capabilities & IFCAP_TXCSUM)
+		vs->vs_hv_caps |= VIRTIO_NET_F_CSUM;
+	if (ifp->if_capabilities & IFCAP_TSO4)
+		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO4;
+	if (ifp->if_capabilities & IFCAP_TSO6)
+		vs->vs_hv_caps |= VIRTIO_NET_F_HOST_TSO6;
+	if ((ifp->if_capabilities & (IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6)) ==
+		(IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6))
+		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_CSUM;
+	if (ifp->if_capabilities & IFCAP_LRO)
+		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6;
+	printf("caps: %016lx encaps: %016lx hv_caps: %08x\n",
+		   ifp->if_capabilities, ifp->if_capenable, vs->vs_hv_caps);
+	return (0);
+}
+
+static int
+vb_vm_attach(struct vb_softc *vs, struct vb_vm_attach *vva)
+{
+	struct vtnet_be *vb;
+	int rc;
+
+	vva->vva_vmparent[VMNAMSIZ-1] = '\0';
+
+	/* Locate VM */
+	vb = vb_find_vmname(vva->vva_vmparent);
+	if (vb == NULL) {
+		printf("vtnet_be: vmname %s doesn't exist\n", vva->vva_vmparent);
+		return (ENOENT);
+	}
+	vs->vs_vn = vb;
+#ifdef notyet
+	/* XXX */
+	vs->vs_nqs_max = min(VB_QUEUES_MAX, max(1, vva->vva_num_queues));
+#endif
+	vs->vs_nvqs_max = 2*vs->vs_nqs_max + 1;
+	/* XXX --- this won't work if the guest doesn't know to negotiate the number of queues */
+	vs->vs_nqs = vs->vs_nqs_max;
+	vs->vs_nvqs = vs->vs_nvqs_max;
+
+	vs->vs_proc = curproc;
+	vs->vs_io_start = vva->vva_io_start;
+	vs->vs_io_size = vva->vva_io_size;
+#ifdef notyet
+	/* XXX */
+	memcpy(vs->vs_cfg.mac, vva->vva_macaddr, 6);
+#endif
+	vs->vs_cfg.status = VIRTIO_NET_S_LINK_UP;
+	vs->vs_cfg.max_virtqueue_pairs = vs->vs_nqs_max;
+#ifdef notyet
+	/* XXX */
+	if (vva->vva_mtu)
+		vs->vs_cfg.mtu = vva->vva_mtu;
+	else
+#endif
+		vs->vs_cfg.mtu = ETHERMTU - 50;
+	/* Register the memory region with the VM */
+	rc = vm_register_ioport(vs->vs_vn->vm, vb_handle, vs,
+	          vs->vs_io_start, vs->vs_io_size);
+
+	if (rc) {
+		printf("vm_register_ioport failed: %d\n", rc);
+		vs->vs_proc = NULL;
+		return (rc);
+	}
+	VB_LOCK;
+	SLIST_INSERT_HEAD(&vb->dev, vs, vs_next);
+	VB_UNLOCK;
+	vs->vs_flags |= VS_ENQUEUED;
+
+	return (0);
+}
+
+/* reset queue sizes and redrive attach */
+static int
+vb_vm_deferred_attach(struct vb_softc *vs, if_ctx_t ctx)
+{
+	struct vb_vm_attach va;
+	int rc;
+
+	if ((rc = vb_vm_attach(vs, &va))) {
+		printf("vb_vm_attach failed %d\n", rc);
+		return (rc);
+	}
+#ifdef notyet
+	/* port doesn't need to be bound at this point */
+	if (strlen(vva->vva_vmparent)) {
+		if ((rc = vb_if_attach(vs, vva)))
+			return (rc);
+	}
+#endif
+	if (vs->vs_cfg.mtu)
+		vs->vs_hv_caps |= VIRTIO_NET_F_MTU;
+	iflib_set_mac(ctx, vs->vs_origmac);
+	return (rc);
+}
 
 static int
 vb_detach(if_ctx_t ctx)
@@ -1714,38 +1710,20 @@ vb_rx_clset(if_ctx_t ctx, uint16_t fl __unused, uint16_t qidx,
 	vs->vs_rx_queues[qidx].vr_sdcl = sdcl;
 }
 
-static int
-vb_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
+int
+vmnic_ctl(if_ctx_t ctx, u_long command, size_t size, caddr_t data)
 {
 	struct vb_softc *sc = iflib_get_softc(ctx);
-	struct ifreq *ifr = (struct ifreq *)data;
-	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
-	struct vb_ioctl_header *ioh =
-	    (struct vb_ioctl_header *)(ifbuf->buffer);
-	int rc = ENOTSUP;
-	struct vb_ioctl_data *iod = NULL;
+	int rc;
 
-	if (command != SIOCGPRIVATE_0)
-		return (EINVAL);
-
-	if ((rc = priv_check(curthread, PRIV_DRIVER)) != 0)
-		return (rc);
-#ifdef notyet
-	/* need sx lock for iflib context */
-	iod = malloc(ifbuf->length, M_VTNETBE, M_WAITOK | M_ZERO);
-#endif
-	iod = malloc(ifbuf->length, M_VTNETBE, M_NOWAIT | M_ZERO);
-	copyin(ioh, iod, ifbuf->length);
-
-	switch (ioh->vih_type) {
-		case VB_MSIX:
-			rc = vb_dev_msix(sc, (struct vb_msix *)iod, ifbuf->length);
+	switch (command) {
+		case VPC_OP_VMNIC_MSIX:
+			rc = vb_dev_msix(sc, (struct vb_msix *)data, size);
 			break;
 		default:
 			rc = ENOIOCTL;
 			break;
 	}
-	free(iod, M_VTNETBE);
 	return (rc);
 }
 
@@ -1884,7 +1862,6 @@ static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_detach, vb_detach),
 	DEVMETHOD(ifdi_init, vb_init),
 	DEVMETHOD(ifdi_stop, vb_stop),
-	DEVMETHOD(ifdi_priv_ioctl, vb_priv_ioctl),
 	DEVMETHOD(ifdi_rx_clset, vb_rx_clset),
 	DEVMETHOD(ifdi_update_admin_status, vb_update_admin_status),
 	DEVMETHOD_END

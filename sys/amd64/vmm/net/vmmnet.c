@@ -191,7 +191,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	int rc, fflags, fd;
 
 	type = (vpc_handle_type_t*)&obj_type;
-	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_IF_MAX)
+	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_MAX)
 		return (EINVAL);
 
 	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
