@@ -215,8 +215,10 @@
 /* All used bits for index 0. */
 #define	CAP_ALL0		CAPRIGHT(0, 0x000007FFFFFFFFFFULL)
 
+/* VPC descriptor configuration rights */
+#define	CAP_VPC_CTL		CAPRIGHT(0, 0x0000080000000000ULL)
 /* Available bits for index 0. */
-#define	CAP_UNUSED0_44		CAPRIGHT(0, 0x0000080000000000ULL)
+#define	CAP_UNUSED0_45		CAPRIGHT(0, 0x0000100000000000ULL)
 /* ... */
 #define	CAP_UNUSED0_57		CAPRIGHT(0, 0x0100000000000000ULL)
 
