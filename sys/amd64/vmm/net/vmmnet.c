@@ -200,6 +200,7 @@ vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type)
 	VMMNET_UNLOCK();
 	return (0);
 }
+
 struct ifnet *
 vmmnet_lookup(const vpc_id_t *id)
 {
@@ -296,13 +297,6 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
  unlock:
 	VMMNET_UNLOCK();
 	return (rc);
-}
-
-static int
-vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
-				 size_t *outlen, void **outdata)
-{
-	return (EOPNOTSUPP);
 }
 
 static int
