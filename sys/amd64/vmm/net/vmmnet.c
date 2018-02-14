@@ -34,6 +34,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/bus.h>
+#include <sys/capsicum.h>
 #include <sys/conf.h>
 #include <sys/eventhandler.h>
 #include <sys/sockio.h>
@@ -89,10 +90,13 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 #define VMMNET_LOCK() sx_xlock(&vmmnet_lock)
 #define VMMNET_UNLOCK() sx_xunlock(&vmmnet_lock)
 
+#define VPC_CTX_F_DESTROYED 0x1
+
 struct vpcctx {
 	struct ifnet *v_ifp;
 	vpc_id_t v_id;
 	volatile u_int v_refcnt;
+	uint32_t v_flags;
 };
 typedef struct {
 	uint64_t vht_version:4;
@@ -253,7 +257,35 @@ static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
 			 const void *key, size_t *vallen, void **buf, bool *docopy)
 {
-	return (ENOSYS);
+	cap_rights_t rights;
+	struct file *fp;
+	struct vpcctx *ctx;
+	int rc;
+
+	if (op == 0 || op > VPC_OP_MAX)
+		return (EOPNOTSUPP);
+
+	if (fget(td, vpcd, cap_rights_init(&rights, CAP_VPC_CTL), &fp) != 0)
+		return (EBADF);
+	if ((fp->f_type != DTYPE_VPCFD) ||
+		(fp->f_data == NULL)) {
+		fdrop(fp, td);
+		return (EBADF);
+	}
+	ctx = fp->f_data;
+	rc = 0;
+	switch (op) {
+		case VPC_OP_DESTROY:
+			ctx->v_flags |= VPC_CTX_F_DESTROYED;
+			refcount_release(&ctx->v_refcnt);
+			break;
+		case VPC_OP_INVALID:
+		default:
+			rc = ENOTSUP;
+			break;
+	}
+
+	return (rc);
 }
 
 #ifndef _SYS_SYSPROTO_H_
