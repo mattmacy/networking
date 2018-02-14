@@ -259,15 +259,15 @@ enum vpc_obj_type {
 	VPC_OBJ_NAT = 4,
 	VPC_OBJ_LINK = 5,
 	VPC_OBJ_VMNIC = 6,
-	VPC_OBJ_META = 7,
+	VPC_OBJ_MGMT = 7,
 	VPC_OBJ_PHYS = 8,
 	VPC_OBJ_TYPE_MAX = 8,
 };
 
 
-enum vpc_obj_op_type {
+enum vpc_meta_op_type {
 	VPC_OBJ_DESTROY = 1,
-	VPC_OBJ_OP_TYPE_MAX = 1
+	VPC_META_OP_TYPE_MAX = 1
 };
 
 enum vpc_vmnic_op_type {
@@ -286,8 +286,9 @@ enum vpc_vpcsw_op_type {
 	VPC_VPCSW_INVALID = 0,
 	VPC_VPCSW_PORT_ADD =		1,
 	VPC_VPCSW_PORT_DEL =		2,
-	VPC_VPCSW_PORT_UPLINK =		3,
-	VPC_VPCSW_OP_TYPE_MAX =			3,
+	VPC_VPCSW_PORT_UPLINK_SET =		3,
+	VPC_VPCSW_PORT_UPLINK_GET =		4,
+	VPC_VPCSW_OP_TYPE_MAX =			4,
 };
 
 enum vpc_vpcp_op_type {
@@ -309,37 +310,54 @@ enum vpc_phys_op_type {
 	VPC_PHYS_MAX = 1,
 };
 
+#define IOC_MUT IOC_VOID
 #define VPC_OP(objtype, op) (((objtype) << 16)| (op))
-#define VPC_OP_R(objtype, op) (IOC_OUT | ((objtype) << 16)| (op))
-#define VPC_OP_W(objtype, op) (IOC_IN | ((objtype) << 16)| (op))
-#define VPC_OP_RW(objtype, op) ((IOC_IN|IOC_OUT) | ((objtype) << 16)| (op))
+/* Modify state based on operation only -- userspace: VPC_OP_WR */
+#define VPC_OP_M(objtype, op) (IOC_MUT | ((objtype) << 16)| (op))
+/* Read state based on operation only -- userspace: VPC_OP_RD */
+#define VPC_OP_O(objtype, op) (IOC_OUT | ((objtype) << 16)| (op))
+#define VPC_OP_OM(objtype, op) (IOC_OUT | IOC_MUT | ((objtype) << 16)| (op))
+#define VPC_OP_I(objtype, op) (IOC_IN | ((objtype) << 16)| (op))
+/* Modify state based on operation and passed data -- userspace: VPC_OP_WR_KEY */
+#define VPC_OP_IM(objtype, op) (IOC_IN|IOC_MUT | ((objtype) << 16)| (op))
+#define VPC_OP_IO(objtype, op) ((IOC_IN|IOC_OUT) | ((objtype) << 16)| (op))
+/* Modify state based on operation and passed data and read back results -- userspace: VPC_OP_RDWR_KEY_VAL */
+#define VPC_OP_IOM(objtype, op) ((IOC_IN|IOC_OUT|IOC_MUT) | ((objtype) << 16)| (op))
 
-#define VPC_OBJ_TYPE(op) ((op & ~(IOC_OUT|IOC_IN)) >> 16)
+#define VPC_OBJ_TYPE(op) ((op & ~(IOC_OUT|IOC_IN|IOC_MUT)) >> 16)
 #define VPC_OBJ_OP(op) ((op) & ((1<<16)-1))
 
-#define VPC_OBJ_OP_DESTROY VPC_OP(VPC_OBJ_META, VPC_OBJ_DESTROY)
+#define VPC_OBJ_OP_DESTROY VPC_OP_M(VPC_OBJ_MGMT, VPC_OBJ_DESTROY)
 
-#define VPC_VMNIC_OP_NQUEUES_GET VPC_OP_R(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_GET)
-#define VPC_VMNIC_OP_NQUEUES_SET VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_SET)
-#define VPC_VMNIC_OP_MAC_GET VPC_OP_R(VPC_OBJ_VMNIC, VPC_VMNIC_MAC_GET)
-#define VPC_VMNIC_OP_MAC_SET VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_MAC_SET)
-#define VPC_VMNIC_OP_ATTACH VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_ATTACH)
-#define VPC_VMNIC_OP_MSIX VPC_OP_W(VPC_OBJ_VMNIC, VPC_VMNIC_MSIX)
-#define VPC_VMNIC_OP_FREEZE VPC_OP(VPC_OBJ_VMNIC, VPC_VMNIC_FREEZE)
+#define VPC_VPCSW_OP_PORT_ADD VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_ADD)
+#define VPC_VPCSW_OP_PORT_DEL VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_DEL)
+#define VPC_VPCSW_OP_PORT_UPLINK_GET VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_UPLINK_GET)
+#define VPC_VPCSW_OP_PORT_UPLINK_SET VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_UPLINK_SET)
 
-#define VPC_VPCP_OP_CONNECT VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
-#define VPC_VPCP_OP_DISCONNECT VPC_OP(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
-#define VPC_VPCP_OP_VNI_GET VPC_OP_R(VPC_OBJ_VPCP, VPC_VPCP_VNI_GET)
-#define VPC_VPCP_OP_VNI_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_VNI_SET)
-#define VPC_VPCP_OP_VTAG_GET VPC_OP_R(VPC_OBJ_VPCP, VPC_VPCP_VTAG_GET)
-#define VPC_VPCP_OP_VTAG_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_VTAG_SET)
-#define VPC_VPCP_OP_MAC_GET VPC_OP_R(VPC_OBJ_VPCP, VPC_VPCP_MAC_GET)
-#define VPC_VPCP_OP_MAC_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_MAC_SET)
+#define VPC_VMNIC_OP_NQUEUES_GET VPC_OP_O(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_GET)
+#define VPC_VMNIC_OP_NQUEUES_SET VPC_OP_IM(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_SET)
+#define VPC_VMNIC_OP_MAC_GET VPC_OP_I(VPC_OBJ_VMNIC, VPC_VMNIC_MAC_GET)
+#define VPC_VMNIC_OP_MAC_SET VPC_OP_IM(VPC_OBJ_VMNIC, VPC_VMNIC_MAC_SET)
+#define VPC_VMNIC_OP_ATTACH VPC_OP_IM(VPC_OBJ_VMNIC, VPC_VMNIC_ATTACH)
+#define VPC_VMNIC_OP_MSIX VPC_OP_IM(VPC_OBJ_VMNIC, VPC_VMNIC_MSIX)
+#define VPC_VMNIC_OP_FREEZE VPC_OP_M(VPC_OBJ_VMNIC, VPC_VMNIC_FREEZE)
 
-#define VPC_PHYS_OP_ATTACH VPC_OP_W(VPC_OBJ_PHYS, VPC_PHYS_ATTACH)
+#define VPC_VPCP_OP_CONNECT VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
+#define VPC_VPCP_OP_DISCONNECT VPC_OP_M(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
+#define VPC_VPCP_OP_VNI_GET VPC_OP_O(VPC_OBJ_VPCP, VPC_VPCP_VNI_GET)
+#define VPC_VPCP_OP_VNI_SET VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_VNI_SET)
+#define VPC_VPCP_OP_VTAG_GET VPC_OP_O(VPC_OBJ_VPCP, VPC_VPCP_VTAG_GET)
+#define VPC_VPCP_OP_VTAG_SET VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_VTAG_SET)
+#define VPC_VPCP_OP_MAC_GET VPC_OP_O(VPC_OBJ_VPCP, VPC_VPCP_MAC_GET)
+#define VPC_VPCP_OP_MAC_SET VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_MAC_SET)
+
+#define VPC_PHYS_OP_ATTACH VPC_OP_IM(VPC_OBJ_PHYS, VPC_PHYS_ATTACH)
 
 #define VPC_F_CREATE (1ULL << 1)
 #define VPC_F_OPEN (1ULL << 2)
+#define VPC_F_READ (1ULL << 3)
+#define VPC_F_WRITE (1ULL << 4)
+
 
 int vmnic_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
 			  size_t *outlen, void **outdata);

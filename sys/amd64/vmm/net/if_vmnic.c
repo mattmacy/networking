@@ -1718,7 +1718,7 @@ vmnic_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	int rc;
 
 	switch (op) {
-		case VPC_VMNIC_MSIX:
+		case VPC_VMNIC_OP_MSIX:
 			rc = vb_dev_msix(sc, (const struct vb_msix *)in, inlen);
 			break;
 		default:

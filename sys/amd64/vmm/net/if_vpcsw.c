@@ -116,52 +116,17 @@ struct vpcsw_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	if_t vs_ifp;
-	struct cdev *vs_vpcswctldev;
 	volatile int32_t vs_refcnt;
 	struct mtx vs_lock;
 
 	struct vpcsw_mcast_queue vs_vmq;
 	art_tree *vs_ftable_ro;
 	art_tree *vs_ftable_rw;
-	void (*vs_oinput)(struct ifnet *, struct mbuf *);
 	struct ifnet *vs_ifdefault;
+	vpc_id_t vs_uplink_id;
 };
 
-static d_ioctl_t vpcswctl_ioctl;
-static d_open_t vpcswctl_open;
-static d_close_t vpcswctl_close;
-
-static struct cdevsw vpcswctl_cdevsw = {
-       .d_version =    D_VERSION,
-       .d_flags =      0,
-       .d_open =       vpcswctl_open,
-       .d_close =      vpcswctl_close,
-       .d_ioctl =      vpcswctl_ioctl,
-       .d_name =       "vpcswctl",
-};
-
-static int
-vpcswctl_open(struct cdev *dev, int flags, int fmp, struct thread *td)
-{
-	struct vpcsw_softc *vs;
-
-	vs = dev->si_drv1;
-	refcount_acquire(&vs->vs_refcnt);
-	refcount_acquire(&modrefcnt);
-	return (0);
-}
-
-static int
-vpcswctl_close(struct cdev *dev, int flags, int fmt, struct thread *td)
-{
-	struct vpcsw_softc *vs;
-
-	vs = dev->si_drv1;
-	refcount_release(&vs->vs_refcnt);
-	refcount_release(&modrefcnt);
-	return (0);
-}
-
+#ifdef notyet
 static const char *opcode_map[] = {
 	"",
 	"VPCSW_REQ_NDv4",
@@ -272,29 +237,7 @@ vpcsw_response_dispatch(struct vpcsw_softc *vs, unsigned long cmd, struct vpcsw_
 	}
 	return (0);
 }
-
-static int
-vpcswctl_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
-    int fflag, struct thread *td)
-{
-	struct vpcsw_softc *vs;
-
-	vs = dev->si_drv1;
-	switch (cmd) {
-		case VPCSW_POLL:
-			return (vpcsw_poll_dispatch(vs, (struct vpcsw_request *)data));
-			break;
-		case VPCSW_RESPONSE_NDv4:
-		case VPCSW_RESPONSE_NDv6:
-		case VPCSW_RESPONSE_DHCPv4:
-		case VPCSW_RESPONSE_DHCPv6:
-			return (vpcsw_response_dispatch(vs, cmd, (struct vpcsw_response *)data));
-			break;
-		default:
-			return (ENOIOCTL);
-	}
-	return (0);
-}
+#endif
 
 static __inline int
 hdrcmp(struct vpcsw_source *vlhs, struct vpcsw_source *vrhs)
@@ -602,17 +545,13 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 
 	dev = iflib_get_dev(ctx);
 	unitno = device_get_unit(dev);
-	vs->vs_vpcswctldev = make_dev(&vpcswctl_cdevsw, unitno,
-								 UID_ROOT, GID_VPC, 0660, "vpcswctl");
-	if (vs->vs_vpcswctldev == NULL)
-		return (ENOMEM);
+
 	refcount_acquire(&modrefcnt);
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	vs->vs_ctx = ctx;
 	vs->vs_ifp = iflib_get_ifp(ctx);
 	refcount_init(&vs->vs_refcnt, 0);
-	vs->vs_vpcswctldev->si_drv1 = vs;
 	mtx_init(&vs->vs_lock, "vpcsw softc", NULL, MTX_DEF);
 	vs->vs_ftable_ro = malloc(sizeof(art_tree), M_VPCSW, M_WAITOK|M_ZERO);
 	vs->vs_ftable_rw = malloc(sizeof(art_tree), M_VPCSW, M_WAITOK|M_ZERO);
@@ -727,7 +666,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 }
 
 static int
-vpcsw_port_uplink(struct vpcsw_softc *vs, const struct vpcsw_port *port)
+vpcsw_port_uplink_create(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 {
 	struct ifnet *ifp;
 	void *cache;
@@ -735,26 +674,37 @@ vpcsw_port_uplink(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	struct ifreq ifr;
 	int rc;
 
+	if (vs->vs_ifdefault != NULL)
+		return (EEXIST);
+	if (vmmnet_lookup(&port->vp_id) != NULL)
+		return (EEXIST);
+
 	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp");
 	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
 		return (rc);
 	if ((ifp = ifunit_ref(ifr.ifr_name)) == NULL) {
 		if (bootverbose)
 			printf("couldn't reference %s\n", ifr.ifr_name);
+		if_clone_destroy(ifr.ifr_name);
 		return (ENXIO);
 	}
-	if (vs->vs_ifdefault != NULL) {
-		if_rele(vs->vs_ifdefault);
-		if_clone_destroy(ifr.ifr_name);
-	}
 	rc = vmmnet_insert(&port->vp_id, ifp, VPC_OBJ_PORT);
-	if (rc)
+	if (rc) {
+		if_rele(ifp);
+		if_clone_destroy(ifr.ifr_name);
 		return (rc);
+	}
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
 	iflib_set_pcpu_cache(ctx, cache);
 	vs->vs_ifdefault = ifp;
 	return (0);
+}
+
+static int
+vpcsw_port_uplink_get(struct vpcsw_softc *vs, const struct vpcsw_port *port)
+{
+	return (ENOTSUP);
 }
 
 int
@@ -765,14 +715,17 @@ vpcsw_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	int rc;
 
 	switch (op) {
-		case VPC_VPCSW_PORT_ADD:
+		case VPC_VPCSW_OP_PORT_ADD:
 			rc = vpcsw_port_add(vs, (const struct vpcsw_port *)in);
 			break;
-		case VPC_VPCSW_PORT_DEL:
+		case VPC_VPCSW_OP_PORT_DEL:
 			rc = vpcsw_port_delete(vs, (const struct vpcsw_port *)in);
 			break;
-		case VPC_VPCSW_PORT_UPLINK:
-			rc = vpcsw_port_uplink(vs, (const struct vpcsw_port *)in);
+		case VPC_VPCSW_OP_PORT_UPLINK_SET:
+			rc = vpcsw_port_uplink_create(vs, (const struct vpcsw_port *)in);
+			break;
+		case VPC_VPCSW_OP_PORT_UPLINK_GET:
+			rc = vpcsw_port_uplink_get(vs, (const struct vpcsw_port *)in);
 			break;
 		default:
 			rc = ENOTSUP;
@@ -834,16 +787,11 @@ vpcsw_detach(if_ctx_t ctx)
 		vmq->vmq_mh = m->m_nextpkt;
 		m_freem(m);
 	}
-	if (vs->vs_ifdefault != NULL) {
-		vs->vs_ifdefault->if_input = vs->vs_oinput;
-		if_rele(vs->vs_ifdefault);
-	}
 
 	art_iter(vs->vs_ftable_rw, clear_bridge, NULL);
 	mtx_destroy(&vs->vs_lock);
 	vpc_art_free(vs->vs_ftable_ro, M_VPCSW);
 	vpc_art_free(vs->vs_ftable_rw, M_VPCSW);
-	destroy_dev(vs->vs_vpcswctldev);
 	refcount_release(&modrefcnt);
 	return (0);
 }
