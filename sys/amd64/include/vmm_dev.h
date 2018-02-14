@@ -396,13 +396,10 @@ enum {
 
 /* Maximum queues per VM */
 #define VB_QUEUES_MAX VM_MAXCPU
-/* Maximum vmnics per CN */
-#define VB_VMNIC_MAX 1024
 /* Version identifier */
 #define VB_MAGIC 0x20171202
 struct vb_ioctl_header {
 	uint64_t vih_magic;
-	uint64_t vih_type;
 };
 
 struct vb_msix_vector {
@@ -419,29 +416,15 @@ struct vb_msix {
 
 struct vb_vm_attach {
 	struct vb_ioctl_header vva_ioh;
-	char vva_ifparent[IFNAMSIZ];
 	char vva_vmparent[VMNAMSIZ];
 	uint16_t	vva_io_start;
 	uint16_t	vva_io_size;
-	uint8_t		vva_num_queues;
-	uint16_t	vva_queue_size;
-	uint8_t		vva_macaddr[6];
-	uint16_t	vva_mtu;
 };
 
 struct vb_macaddr {
 	struct vb_ioctl_header vm_ioh;
 	uint8_t		vm_macaddr[6];
 };
-
-#define VB_MSIX									\
-	_IOW('k', 1, struct vb_msix)
-#define VB_VM_ATTACH							\
-	_IOW('k', 2, struct vb_vm_attach)
-#define VB_MACADDR_SET							\
-	_IOW('k', 5, struct vb_macaddr)
-
-
 
 #define	VM_SET_INTINFO	\
 	_IOW('v', IOCNUM_SET_INTINFO, struct vm_intinfo)
