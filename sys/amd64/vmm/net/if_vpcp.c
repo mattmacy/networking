@@ -330,6 +330,14 @@ vpcp_port_type_set(if_ctx_t portctx, struct ifnet *devifp, enum vpcp_port_type t
 	return (rc);
 }
 
+int
+vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
+{
+	return (EOPNOTSUPP);
+}
+
+
 enum vpcp_port_type
 vpcp_port_type_get(if_ctx_t ctx)
 {
