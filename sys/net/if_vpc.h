@@ -260,7 +260,8 @@ enum vpc_obj_type {
 	VPC_OBJ_LINK = 5,
 	VPC_OBJ_VMNIC = 6,
 	VPC_OBJ_META = 7,
-	VPC_OBJ_TYPE_MAX = 7,
+	VPC_OBJ_PHYS = 8,
+	VPC_OBJ_TYPE_MAX = 8,
 };
 
 
@@ -302,6 +303,11 @@ enum vpc_vpcp_op_type {
 	VPC_VPCP_MAX = 8,
 };
 
+enum vpc_phys_op_type {
+	VPC_PHYS_INVALID = 0,
+	VPC_PHYS_ATTACH = 1,
+	VPC_PHYS_MAX = 1,
+};
 
 #define VPC_OP(objtype, op) (((objtype) << 16)| (op))
 #define VPC_OP_R(objtype, op) (IOC_OUT | ((objtype) << 16)| (op))
@@ -329,6 +335,8 @@ enum vpc_vpcp_op_type {
 #define VPC_VPCP_OP_VTAG_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_VTAG_SET)
 #define VPC_VPCP_OP_MAC_GET VPC_OP_R(VPC_OBJ_VPCP, VPC_VPCP_MAC_GET)
 #define VPC_VPCP_OP_MAC_SET VPC_OP_W(VPC_OBJ_VPCP, VPC_VPCP_MAC_SET)
+
+#define VPC_PHYS_OP_ATTACH VPC_OP_W(VPC_OBJ_PHYS, VPC_PHYS_ATTACH)
 
 #define VPC_F_CREATE (1ULL << 1)
 #define VPC_F_OPEN (1ULL << 2)
