@@ -91,6 +91,7 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 
 struct vpcctx {
 	struct ifnet *v_ifp;
+	vpc_id_t v_id;
 	volatile u_int v_refcnt;
 };
 typedef struct {
@@ -119,7 +120,19 @@ struct fileops vpcd_fileops  = {
 static int
 vpcd_close(struct file *fp, struct thread *td)
 {
-	return (ENXIO);
+	struct vpcctx *ctx;
+
+	if ((ctx = fp->f_data) == NULL)
+		return (0);
+	if (refcount_release(&ctx->v_refcnt) == 0) {
+		VMMNET_LOCK();
+		art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
+		VMMNET_UNLOCK();
+		if_rele(ctx->v_ifp);
+		if_clone_destroy(ctx->v_ifp->if_xname);
+		free(ctx, M_VMMNET);
+	}
+	return (0);
 }
 
 static int
@@ -206,8 +219,12 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			rc = ENXIO;
 			goto unlock;
 		}
-		refcount_init(&ctx->v_refcnt, 1);
+		/*
+		 * One reference for ART and one for descriptor
+		 */
+		refcount_init(&ctx->v_refcnt, 2);
 		ctx->v_ifp = ifp;
+		memcpy(&ctx->v_id, vpc_id, sizeof(*vpc_id));
 		art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
 	}
 
