@@ -134,8 +134,10 @@ vpcd_close(struct file *fp, struct thread *td)
 		art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
 		VMMNET_UNLOCK();
 		/* run object dtor */
-		if_rele(ctx->v_ifp);
-		if_clone_destroy(ctx->v_ifp->if_xname);
+		if (ctx->v_ifp != NULL)
+			if_rele(ctx->v_ifp);
+		if (ctx->v_obj_type != VPC_OBJ_PHYS)
+			if_clone_destroy(ctx->v_ifp->if_xname);
 		free(ctx, M_VMMNET);
 	}
 	return (0);
@@ -232,7 +234,9 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	int rc, fflags, fd;
 
 	type = (vpc_handle_type_t*)&obj_type;
-	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX)
+	ifp = NULL;
+	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX ||
+		type->vht_obj_type == VPC_OBJ_META)
 		return (EINVAL);
 
 	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
@@ -258,15 +262,17 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	} else {
 		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
 		strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
-		rc = if_clone_create(buf, sizeof(buf), NULL);
-		if (rc)
-			goto unlock;
-		if ((ifp = ifunit_ref(buf)) == NULL) {
-			if (bootverbose)
-				printf("couldn't reference %s\n", buf);
-			if_clone_destroy(buf);
-			rc = ENXIO;
-			goto unlock;
+		if (type->vht_obj_type != VPC_OBJ_PHYS) {
+			rc = if_clone_create(buf, sizeof(buf), NULL);
+			if (rc)
+				goto unlock;
+			if ((ifp = ifunit_ref(buf)) == NULL) {
+				if (bootverbose)
+					printf("couldn't reference %s\n", buf);
+				if_clone_destroy(buf);
+				rc = ENXIO;
+				goto unlock;
+			}
 		}
 		/*
 		 * One reference for ART and one for descriptor
@@ -320,6 +326,13 @@ vpclink_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	return (EOPNOTSUPP);
 }
 
+static int
+phys_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
+{
+	return (EOPNOTSUPP);
+}
+
 static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	NULL,
 	vpcsw_ctl,
@@ -328,6 +341,7 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	vpcnat_ctl,
 	vpclink_ctl,
 	vmnic_ctl,
+	phys_ctl
 };
 static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t keylen,
