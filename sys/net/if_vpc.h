@@ -262,6 +262,14 @@ enum vpcp_if_type {
 	VPC_IF_MAX = 6,
 };
 
+
+enum vpc_op_type {
+	VPC_OP_INVALID = 0,
+	VPC_OP_DESTROY = 1,
+	VPC_OP_MAX = 1
+};
+
+
 #define VPC_F_CREATE (1 << 1)
 #define VPC_F_OPEN (1 << 2)
 
