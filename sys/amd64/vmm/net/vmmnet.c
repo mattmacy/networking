@@ -211,7 +211,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
 		rc = if_clone_create(buf, sizeof(buf), NULL);
 		if (rc)
-			return (rc);
+			goto unlock;
 		if ((ifp = ifunit_ref(buf)) == NULL) {
 			if (bootverbose)
 				printf("couldn't reference %s\n", buf);
