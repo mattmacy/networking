@@ -232,12 +232,13 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	fdp = td->td_proc->p_fd;
 	rc = falloc(td, &fp, &fd, fflags);
 	if (rc) {
-		if (flags & VPC_F_OPEN) {
+		if (flags & VPC_F_CREATE) {
 			if_rele(ifp);
 			if_clone_destroy(buf);
 			art_delete(&vpc_uuid_table, (const char *)vpc_id);
 			free(ctx, M_VMMNET);
-		}
+		} else
+			refcount_release(&ctx->v_refcnt);
 		goto unlock;
 	}
 	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
