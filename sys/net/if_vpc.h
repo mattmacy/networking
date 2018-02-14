@@ -264,10 +264,10 @@ enum vpcp_obj_type {
 };
 
 
-enum vpc_op_type {
-	VPC_OP_INVALID = 0,
-	VPC_OP_DESTROY = 1,
-	VPC_OP_MAX = 1
+enum vpc_obj_op_type {
+	VPC_OP_OBJ_INVALID = 0,
+	VPC_OP_OBJ_DESTROY = 1,
+	VPC_OP_OBJ_MAX = 1
 };
 
 enum vpc_vmnic_op_type {
