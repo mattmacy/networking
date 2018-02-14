@@ -172,8 +172,6 @@ SUBDIR=	\
 	if_tap \
 	if_tun \
 	if_vlan \
-	if_vpcbctl \
-	if_vpci \
 	if_vxlan \
 	${_iir} \
 	imgact_binmisc \
