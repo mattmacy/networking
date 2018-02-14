@@ -26,23 +26,18 @@
  */
 
 /*
- * Proxy for the kernel vtnet_be pseudo device
+ * Proxy for the kernel vmnic pseudo device
  *
  * Configuration is
  *
- *  -s <bsd>,kvirtio-net,intf=vpcp<unit>[,mac=x:x:x:x:x:x][,mtu=<n>][,queues=<nq>]
+ *  -s <bsd>,kvirtio-net,id=<uuid>
  *
- *    e.g.   -s  2:3:0,kvirtio-net,intf=vpcp1,mac=00:bd:5d:32:00:e7,mtu=1450,queues=8
+ *    e.g.   -s  2:3:0,kvirtio-net,id=01234567-89ab-cdef-0123-456789abcdef
  *
- *
- * If mac is not specified it will be synthesized and will be unique for a given 
- * guest b/s/f, vm name, and host UUID.
- *
- * nq: Can be 1 - VM_MAXCPU, if not specified defaults to 1
- *
- * Communication with the kernel module is via ioctls to the cloned interface
- * named:
- *  vmnic<unit>
+ * Where uuid is a value associated with host side network object from a
+ * previous vpc_open. The attach will fail if the host side network object
+ * has not been marked as 'immutable' indicating that the required configuration
+ * parameters have been set.
  *
  *   NB:
  *   - MSI-x is always used
