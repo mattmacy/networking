@@ -184,6 +184,29 @@ vmi_input(if_t ifp, struct mbuf *m)
 	BRIDGE_OUTPUT(vs->vs_ifport, m, rc);
 }
 
+
+static int
+vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
+{
+	struct vpcp_softc *vs;
+	struct ifnet *ifswitch;
+
+	vs = ifp->if_bridge;
+	ifswitch = vs->vs_ifswitch;
+
+	ifswitch->if_transmit_txq(ifswitch, m);
+	return (0);
+}
+
+/*
+ * Ingress -- from NIC
+ */
+static struct mbuf *
+vmi_bridge_input(if_t ifp, struct mbuf *m)
+{
+	panic("%s should not be called\n", __func__);
+}
+
 static int
 phys_transmit(if_t ifp __unused, struct mbuf *m)
 {
@@ -338,6 +361,9 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 			if_settransmitfn(ifp, vmi_transmit);
 			if_settransmittxqfn(ifp, vmi_transmit);
 			ifp->if_input = vmi_input;
+			ifdev->if_bridge = vs;
+			ifdev->if_bridge_input = vmi_bridge_input;
+			ifdev->if_bridge_output = vmi_bridge_output;
 			break;
 		case VPCP_TYPE_PHYS:
 			if_settransmitfn(ifp, phys_transmit);
@@ -457,7 +483,7 @@ vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				goto fail;
 			vpcp_mac_set(ctx, in);
 			break;
-		case VPC_VPCP_OP_DEV_GET: {
+		case VPC_VPCP_OP_PEER_ID_GET: {
 			vpc_id_t *id;
 
 			if (vs->vs_type == VPCP_TYPE_NONE)
