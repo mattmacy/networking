@@ -591,6 +591,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
 	iflib_set_pcpu_cache(ctx, cache);
+	vpcp_set_ifswitch(ctx, iflib_get_ifp(vs->vs_ctx));
 	ifp->if_bridge = vs;
 	ifp->if_bridge_input = vpcsw_bridge_input;
 	ifp->if_bridge_output = vpcsw_bridge_output;
@@ -621,14 +622,16 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	struct sockaddr_dl *sdl;
 	art_tree *newftable, *oldftable;
 	if_ctx_t ctx;
+	vpc_ctx_t vctx;
 	void *cache;
 	uint16_t *ifindexp;
 	struct ifreq ifr;
 	int rc;
 
-	ifp = vmmnet_lookup(&port->vp_id);
-	if (ifp == NULL)
+	vctx = vmmnet_lookup(&port->vp_id);
+	if (vctx == NULL)
 		return (ENOENT);
+	ifp = vctx->v_ifp;
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 	if (sdl->sdl_type != IFT_ETHER) {
 		if_rele(ifp);
@@ -653,6 +656,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	ctx = ifp->if_softc;
 	cache = iflib_get_pcpu_cache(ctx);
 	free(cache, M_VPCSW);
+	vpcp_clear_ifswitch(ctx);
 	ifp->if_bridge = NULL;
 	ifp->if_bridge_input = NULL;
 	ifp->if_bridge_output = NULL;
@@ -697,6 +701,7 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
 	iflib_set_pcpu_cache(ctx, cache);
+	vpcp_set_ifswitch(ctx, iflib_get_ifp(vs->vs_ctx));
 	vs->vs_ifdefault = ifp;
 	memcpy(&vs->vs_uplink_id, &port->vp_id, sizeof(vpc_id_t));
 	return (0);
