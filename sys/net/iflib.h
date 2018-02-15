@@ -403,6 +403,7 @@ int iflib_device_iov_add_vf(device_t, uint16_t, const nvlist_t *);
  */
 int iflib_device_register(device_t dev, void *softc, if_shared_ctx_t sctx, if_ctx_t *ctxp);
 int iflib_device_deregister(if_ctx_t);
+int iflib_device_reinit(if_ctx_t);
 
 
 
