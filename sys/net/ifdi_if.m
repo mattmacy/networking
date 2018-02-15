@@ -152,6 +152,14 @@ METHOD int attach_post {
 	if_ctx_t _ctx;
 } DEFAULT null_int_op;
 
+METHOD int reinit_pre {
+	if_ctx_t _ctx;
+} DEFAULT null_int_op;
+
+METHOD int reinit_post {
+	if_ctx_t _ctx;
+} DEFAULT null_int_op;
+
 METHOD int cloneattach {
 	if_ctx_t _ctx;
 	struct if_clone *_ifc;

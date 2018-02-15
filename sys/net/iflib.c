@@ -4770,39 +4770,16 @@ iflib_device_probe(device_t dev)
 	return (ENXIO);
 }
 
-int
-iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ctxp)
+static void
+iflib_reset_qvalues(if_ctx_t ctx)
 {
-	int err, rid, msix, msix_bar;
-	if_ctx_t ctx;
-	if_t ifp;
-	if_softc_ctx_t scctx;
-	int i;
-	uint16_t main_txq;
-	uint16_t main_rxq;
+	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
+	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	device_t dev = ctx->ifc_dev;
+	int i, main_txq, main_rxq;
 
-
-	ctx = malloc(sizeof(* ctx), M_IFLIB, M_WAITOK|M_ZERO);
-
-	if (sc == NULL) {
-		sc = malloc(sctx->isc_driver->size, M_IFLIB, M_WAITOK|M_ZERO);
-		device_set_softc(dev, ctx);
-		ctx->ifc_flags |= IFC_SC_ALLOCATED;
-	}
-
-	ctx->ifc_sctx = sctx;
-	ctx->ifc_dev = dev;
-	ctx->ifc_softc = sc;
-
-	if ((err = iflib_register(ctx)) != 0) {
-		device_printf(dev, "iflib_register failed %d\n", err);
-		return (err);
-	}
-	iflib_add_device_sysctl_pre(ctx);
-
-	scctx = &ctx->ifc_softc_ctx;
-	ifp = ctx->ifc_ifp;
-
+	main_txq = (sctx->isc_flags & IFLIB_HAS_TXCQ) ? 1 : 0;
+	main_rxq = (sctx->isc_flags & IFLIB_HAS_RXCQ) ? 1 : 0;
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */
@@ -4850,6 +4827,42 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 			scctx->isc_ntxd[i] = sctx->isc_ntxd_max[i];
 		}
 	}
+}
+
+int
+iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ctxp)
+{
+	int err, rid, msix, msix_bar;
+	if_ctx_t ctx;
+	if_softc_ctx_t scctx;
+	if_t ifp;
+	int i;
+	uint16_t main_txq;
+	uint16_t main_rxq;
+
+
+	ctx = malloc(sizeof(* ctx), M_IFLIB, M_WAITOK|M_ZERO);
+
+	if (sc == NULL) {
+		sc = malloc(sctx->isc_driver->size, M_IFLIB, M_WAITOK|M_ZERO);
+		device_set_softc(dev, ctx);
+		ctx->ifc_flags |= IFC_SC_ALLOCATED;
+	}
+
+	ctx->ifc_sctx = sctx;
+	ctx->ifc_dev = dev;
+	ctx->ifc_softc = sc;
+
+	if ((err = iflib_register(ctx)) != 0) {
+		device_printf(dev, "iflib_register failed %d\n", err);
+		return (err);
+	}
+	iflib_add_device_sysctl_pre(ctx);
+
+	scctx = &ctx->ifc_softc_ctx;
+	ifp = ctx->ifc_ifp;
+
+	iflib_reset_qvalues(ctx);
 
 	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
 		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
@@ -5063,50 +5076,7 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */
-	if (ctx->ifc_sysctl_ntxqs != 0)
-		scctx->isc_ntxqsets = ctx->ifc_sysctl_ntxqs;
-	if (ctx->ifc_sysctl_nrxqs != 0)
-		scctx->isc_nrxqsets = ctx->ifc_sysctl_nrxqs;
-
-	for (i = 0; i < sctx->isc_ntxqs; i++) {
-		if (ctx->ifc_sysctl_ntxds[i] != 0)
-			scctx->isc_ntxd[i] = ctx->ifc_sysctl_ntxds[i];
-		else
-			scctx->isc_ntxd[i] = sctx->isc_ntxd_default[i];
-	}
-
-	for (i = 0; i < sctx->isc_nrxqs; i++) {
-		if (ctx->ifc_sysctl_nrxds[i] != 0)
-			scctx->isc_nrxd[i] = ctx->ifc_sysctl_nrxds[i];
-		else
-			scctx->isc_nrxd[i] = sctx->isc_nrxd_default[i];
-	}
-
-	for (i = 0; i < sctx->isc_nrxqs; i++) {
-		if (scctx->isc_nrxd[i] < sctx->isc_nrxd_min[i]) {
-			device_printf(dev, "nrxd%d: %d less than nrxd_min %d - resetting to min\n",
-				      i, scctx->isc_nrxd[i], sctx->isc_nrxd_min[i]);
-			scctx->isc_nrxd[i] = sctx->isc_nrxd_min[i];
-		}
-		if (scctx->isc_nrxd[i] > sctx->isc_nrxd_max[i]) {
-			device_printf(dev, "nrxd%d: %d greater than nrxd_max %d - resetting to max\n",
-				      i, scctx->isc_nrxd[i], sctx->isc_nrxd_max[i]);
-			scctx->isc_nrxd[i] = sctx->isc_nrxd_max[i];
-		}
-	}
-
-	for (i = 0; i < sctx->isc_ntxqs; i++) {
-		if (scctx->isc_ntxd[i] < sctx->isc_ntxd_min[i]) {
-			device_printf(dev, "ntxd%d: %d less than ntxd_min %d - resetting to min\n",
-				      i, scctx->isc_ntxd[i], sctx->isc_ntxd_min[i]);
-			scctx->isc_ntxd[i] = sctx->isc_ntxd_min[i];
-		}
-		if (scctx->isc_ntxd[i] > sctx->isc_ntxd_max[i]) {
-			device_printf(dev, "ntxd%d: %d greater than ntxd_max %d - resetting to max\n",
-				      i, scctx->isc_ntxd[i], sctx->isc_ntxd_max[i]);
-			scctx->isc_ntxd[i] = sctx->isc_ntxd_max[i];
-		}
-	}
+	iflib_reset_qvalues(ctx);
 
 	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
 		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
@@ -5238,7 +5208,94 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 fail_detach:
 	ether_ifdetach(ctx->ifc_ifp);
 fail_queues:
-	/* XXX free queues */
+	iflib_tx_structures_free(ctx);
+	iflib_rx_structures_free(ctx);
+fail:
+	IFDI_DETACH(ctx);
+	return (err);
+}
+
+int
+iflib_device_reinit(if_ctx_t ctx)
+{
+	if_softc_ctx_t scctx;
+	if_shared_ctx_t sctx;
+	struct ifnet *ifp;
+	device_t dev;
+	int i, err, main_txq, main_rxq;
+
+	scctx = &ctx->ifc_softc_ctx;
+	sctx = ctx->ifc_sctx;
+	ifp = ctx->ifc_ifp;
+	dev = ctx->ifc_dev;
+	main_txq = (sctx->isc_flags & IFLIB_HAS_TXCQ) ? 1 : 0;
+	main_rxq = (sctx->isc_flags & IFLIB_HAS_RXCQ) ? 1 : 0;
+	iflib_reset_qvalues(ctx);
+
+	if ((err = IFDI_REINIT_PRE(ctx)) != 0) {
+		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
+		return (err);
+	}
+
+	if (scctx->isc_ntxqsets == 0 || (scctx->isc_ntxqsets_max && scctx->isc_ntxqsets_max < scctx->isc_ntxqsets))
+		scctx->isc_ntxqsets = scctx->isc_ntxqsets_max;
+	if (scctx->isc_nrxqsets == 0 || (scctx->isc_nrxqsets_max && scctx->isc_nrxqsets_max < scctx->isc_nrxqsets))
+		scctx->isc_nrxqsets = scctx->isc_nrxqsets_max;
+	/* XXX change for per-queue sizes */
+	device_printf(dev, "using %d tx descriptors and %d rx descriptors\n",
+		      scctx->isc_ntxd[main_txq], scctx->isc_nrxd[main_rxq]);
+	for (i = 0; i < sctx->isc_nrxqs; i++) {
+		if (!powerof2(scctx->isc_nrxd[i])) {
+			/* round down instead? */
+			device_printf(dev, "# rx descriptors must be a power of 2\n");
+			err = EINVAL;
+			goto fail;
+		}
+	}
+	for (i = 0; i < sctx->isc_ntxqs; i++) {
+		if (!powerof2(scctx->isc_ntxd[i])) {
+			device_printf(dev,
+			    "# tx descriptors must be a power of 2");
+			err = EINVAL;
+			goto fail;
+		}
+	}
+
+	if (scctx->isc_tx_nsegments > scctx->isc_ntxd[main_txq] /
+	    MAX_SINGLE_PACKET_FRACTION)
+		scctx->isc_tx_nsegments = max(1, scctx->isc_ntxd[main_txq] /
+		    MAX_SINGLE_PACKET_FRACTION);
+	if (scctx->isc_tx_tso_segments_max > scctx->isc_ntxd[main_txq] /
+	    MAX_SINGLE_PACKET_FRACTION)
+		scctx->isc_tx_tso_segments_max = max(1,
+		    scctx->isc_ntxd[main_txq] / MAX_SINGLE_PACKET_FRACTION);
+
+	iflib_tx_structures_free(ctx);
+	iflib_rx_structures_free(ctx);
+	/* Get memory for the station queues */
+	if ((err = iflib_queues_alloc(ctx))) {
+		device_printf(dev, "Unable to allocate queue memory\n");
+		goto fail;
+	}
+
+	if ((err = iflib_qset_structures_setup(ctx))) {
+		device_printf(dev, "qset structure setup failed %d\n", err);
+		goto fail_queues;
+	}
+	if ((err = IFDI_REINIT_POST(ctx)) != 0) {
+		device_printf(dev, "IFDI_REINIT_POST failed %d\n", err);
+		goto fail_detach;
+	}
+	/* XXX handle more than one queue */
+	for (i = 0; i < scctx->isc_nrxqsets; i++)
+		IFDI_RX_CLSET(ctx, 0, i, ctx->ifc_rxqs[i].ifr_fl[0].ifl_sds.ifsd_cl);
+
+	return (0);
+ fail_detach:
+	ether_ifdetach(ctx->ifc_ifp);
+fail_queues:
+	iflib_tx_structures_free(ctx);
+	iflib_rx_structures_free(ctx);
 fail:
 	IFDI_DETACH(ctx);
 	return (err);
