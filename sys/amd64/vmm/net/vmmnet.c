@@ -94,11 +94,13 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 
 struct vpcctx {
 	struct ifnet *v_ifp;
-	vpc_id_t v_id;
 	vpc_type_t v_obj_type;
+	vpc_id_t v_id;
+
 	volatile u_int v_refcnt;
 	uint32_t v_flags;
 };
+
 typedef struct {
 	uint64_t vht_version:4;
 	uint64_t vht_pad1:4;
@@ -203,21 +205,12 @@ vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type)
 	return (0);
 }
 
-struct ifnet *
+vpc_ctx_t
 vmmnet_lookup(const vpc_id_t *id)
 {
-	struct vpcctx *ctx;
-	struct ifnet *ifp;
 
-	ifp = NULL;
-	VMMNET_LOCK();
-	ctx = art_search(&vpc_uuid_table, (const char*)id);
-	if (ctx == NULL)
-		goto unlock;
-	ifp = ctx->v_ifp;
- unlock:
-	VMMNET_UNLOCK();
-	return (ifp);
+	sx_assert(&vmmnet_lock, SA_XLOCKED);
+	return ((vpc_ctx_t)art_search(&vpc_uuid_table, (const char*)id));
 }
 
 static int

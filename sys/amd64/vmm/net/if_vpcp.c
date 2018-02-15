@@ -85,13 +85,23 @@ ctx_to_vs(if_ctx_t ctx)
 struct vpcp_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
-	struct ifnet *vs_ifparent;
 	struct ifnet *vs_ifswitch;
+	struct ifnet *vs_ifdev;
+	struct ifnet *vs_ifport;
 	uint32_t vs_mflags;
 	uint32_t vs_vxlanid;
 	uint16_t vs_vlanid;
+	vpc_id_t vs_devid;
 	enum vpcp_port_type vs_type;
 };
+
+static void vpcp_vxlanid_set(if_ctx_t ctx, uint32_t vxlanid);
+static uint32_t vpcp_vxlanid_get(if_ctx_t ctx);
+static void vpcp_vlanid_set(if_ctx_t ctx, uint16_t vlanid);
+static uint16_t vpcp_vlanid_get(if_ctx_t ctx);
+static int vpcp_port_type_set(if_ctx_t ctx, vpc_ctx_t vctx, enum vpcp_port_type type);
+static void vpcp_mac_set(if_ctx_t ctx, const uint8_t *mac);
+static void vpcp_mac_get(if_ctx_t ctx, uint8_t *mac);
 
 static int clone_count;
 
@@ -167,10 +177,11 @@ static void
 vmi_input(if_t ifp, struct mbuf *m)
 {
 	struct vpcp_softc *vs;
+	int rc;
 
 	vmi_input_process(ifp, m, false);
 	vs = iflib_get_softc((if_ctx_t)ifp->if_softc);
-	(void)vs->vs_ifparent->if_transmit_txq(vs->vs_ifparent, m);
+	BRIDGE_OUTPUT(vs->vs_ifport, m, rc);
 }
 
 static int
@@ -189,27 +200,27 @@ phys_input(struct ifnet *ifport, struct mbuf *m)
 {
 	if_ctx_t ctx = ifport->if_softc;
 	struct vpcp_softc *vs = iflib_get_softc(ctx);
-	struct ifnet *ifparent = vs->vs_ifparent;
+	struct ifnet *ifdev = vs->vs_ifdev;
 	struct mbuf *mp, *mnext;
 	int qid;
 	bool batch;
 
 	mp = m->m_nextpkt;
-	qid = ifparent->if_mbuf_to_qid(ifparent, m);
+	qid = ifdev->if_mbuf_to_qid(ifdev, m);
 	batch = true;
 	while (mp) {
 		mp->m_pkthdr.rcvif = NULL;
-		if (ifparent->if_mbuf_to_qid(ifparent, m) != qid)
+		if (ifdev->if_mbuf_to_qid(ifdev, m) != qid)
 			batch = false;
 	}
 	if (__predict_true(batch)) {
-		vs->vs_ifparent->if_transmit_txq(vs->vs_ifparent, m);
+		ifdev->if_transmit_txq(ifdev, m);
 	} else {
 		mp = m;
 		do {
 			mnext = mp->m_nextpkt;
 			mp->m_nextpkt = NULL;
-			vs->vs_ifparent->if_transmit_txq(vs->vs_ifparent, mp);
+			ifdev->if_transmit_txq(ifdev, mp);
 			mp = mnext;
 		} while (mp);
 	}
@@ -272,41 +283,56 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 	return (mret);
 }
 
-int
-vpcp_port_type_set(if_ctx_t portctx, struct ifnet *devifp, enum vpcp_port_type type)
+static int
+vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 {
-	struct ifnet *ifp;
+	struct ifnet *ifp, *ifdev;
 	struct vpcp_softc *vs;
 	enum vpcp_port_type prevtype;
+	uint64_t baudrate;
 	int rc;
-
-#ifdef INVARIANTS
-	if (type == VPCP_TYPE_NONE)
-		MPASS(devifp == NULL);
-	else
-		MPASS(devifp != NULL);
-#endif
 
 	ifp = iflib_get_ifp(portctx);
 	vs = iflib_get_softc(portctx);
-	vs->vs_ifparent = devifp;
+	ifdev = NULL;
+	baudrate = 0;
+
+	if (vs->vs_type != VPCP_TYPE_NONE)
+		return (EEXIST);
+
+	if (type != VPCP_TYPE_NONE) {
+		MPASS(vctx != NULL);
+
+		ifdev = vctx->v_ifp;
+		if (ifdev->if_bridge != NULL) {
+			printf("%s in use\n", ifdev->if_xname);
+			return (EINVAL);
+		}
+		ifdev->if_bridge = NULL;
+		ifdev->if_bridge_input = NULL;
+		ifdev->if_bridge_output = NULL;
+		iflib_get_ifp(vs->vs_ctx)->if_mtu = ifdev->if_mtu;
+		baudrate = ifdev->if_baudrate;
+	} else
+		MPASS(vctx == NULL);
+
+	vs->vs_ifdev = ifdev;
 	prevtype = vs->vs_type;
 	vs->vs_type = type;
 	rc = 0;
-
-	if (devifp->if_bridge != NULL) {
-		printf("%s in use\n", devifp->if_xname);
-		return (EINVAL);
-	}
-	devifp->if_bridge = NULL;
-	devifp->if_bridge_input = NULL;
-	devifp->if_bridge_output = NULL;
 
 	switch (type) {
 		case VPCP_TYPE_NONE:
 			if_settransmitfn(ifp, vpcp_stub_transmit);
 			if_settransmittxqfn(ifp, vpcp_stub_transmit);
 			ifp->if_input = vpcp_stub_input;
+			if (vs->vs_ifdev) {
+				vs->vs_ifdev->if_bridge = NULL;
+				vs->vs_ifdev->if_bridge_input = NULL;
+				vs->vs_ifdev->if_bridge_output = NULL;
+				if_rele(vs->vs_ifdev);
+				vs->vs_ifdev = NULL;
+			}
 			break;
 		case VPCP_TYPE_VMI:
 			if_settransmitfn(ifp, vmi_transmit);
@@ -318,33 +344,133 @@ vpcp_port_type_set(if_ctx_t portctx, struct ifnet *devifp, enum vpcp_port_type t
 			if_settransmittxqfn(ifp, phys_transmit);
 			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);
 			ifp->if_input = phys_input;
-			devifp->if_bridge = vs;
-			devifp->if_bridge_input = phys_bridge_input;
-			devifp->if_bridge_output = phys_bridge_output;
+			ifdev->if_bridge = vs;
+			ifdev->if_bridge_input = phys_bridge_input;
+			ifdev->if_bridge_output = phys_bridge_output;
 			break;
 		default:
 			vs->vs_type = prevtype;
 			device_printf(iflib_get_dev(portctx), "unknown port type %d\n", type);
 			rc = EINVAL;
 	}
+	if (!rc) {
+		if (type == VPCP_TYPE_NONE)
+			iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(100));
+		else {
+			iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, baudrate);
+			if_ref(ifdev);
+			vs->vs_ifdev = ifdev;
+			memcpy(&vs->vs_devid, &vctx->v_id, sizeof(vpc_id_t));
+		}
+	}
 	return (rc);
+}
+
+static int
+vpcp_port_connect(if_ctx_t ctx, const vpc_id_t *id)
+{
+	vpc_ctx_t vctx;
+
+	vctx = vmmnet_lookup(id);
+	if (vctx != NULL)
+		return (ENOENT);
+	if (vctx->v_ifp == NULL)
+		return (ENXIO);
+	return (vpcp_port_type_set(ctx, vctx, vctx->v_obj_type));
+}
+
+static int
+vpcp_port_disconnect(if_ctx_t ctx)
+{
+	return (vpcp_port_type_set(ctx, NULL, VPCP_TYPE_NONE));
 }
 
 int
 vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
-	return (EOPNOTSUPP);
-}
-
-
-enum vpcp_port_type
-vpcp_port_type_get(if_ctx_t ctx)
-{
 	struct vpcp_softc *vs;
+	int rc;
 
+	rc = 0;
 	vs = iflib_get_softc(ctx);
-	return (vs->vs_type);
+	switch (op) {
+		case VPC_VPCP_OP_CONNECT:
+			if (inlen != sizeof(vpc_id_t))
+				goto fail;
+			rc = vpcp_port_connect(ctx, in);
+			break;
+		case VPC_VPCP_OP_DISCONNECT:
+			rc = vpcp_port_disconnect(ctx);
+			break;
+		case VPC_VPCP_OP_VNI_GET: {
+			uint32_t *out;
+
+			out = malloc(sizeof(uint32_t), M_TEMP, M_WAITOK);
+			*outlen = sizeof(uint32_t);
+			*out = vpcp_vxlanid_get(ctx);
+			*outdata = out;
+			break;
+		}
+		case VPC_VPCP_OP_VNI_SET: {
+			uint32_t vni;
+
+			if (inlen != sizeof(uint32_t))
+				goto fail;
+			vni = *(const uint32_t *)in;
+			if (vni > ((1<<24)-1))
+				goto fail;
+			vpcp_vxlanid_set(ctx, vni);
+			break;
+		}
+		case VPC_VPCP_OP_VTAG_GET: {
+			uint16_t *out;
+
+			out = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
+			*outlen = sizeof(uint16_t);
+			*out = vpcp_vlanid_get(ctx);
+			*outdata = out;
+			break;
+		}
+		case VPC_VPCP_OP_VTAG_SET: {
+			uint16_t vtag;
+
+			if (inlen != sizeof(uint16_t))
+				goto fail;
+			vtag = *(const uint16_t *)in;
+			if (vtag > ((1<<12)-1))
+				goto fail;
+			vpcp_vlanid_set(ctx, vtag);
+			break;
+		}
+		case VPC_VPCP_OP_MAC_GET: {
+			uint8_t *mac;
+
+			*outlen = ETHER_ADDR_LEN;
+			mac = malloc(ETHER_ADDR_LEN, M_TEMP, M_WAITOK);
+			vpcp_mac_get(ctx, mac);
+			*outdata = mac;
+			break;
+		}
+		case VPC_VPCP_OP_MAC_SET:
+			if (inlen != ETHER_ADDR_LEN)
+				goto fail;
+			vpcp_mac_set(ctx, in);
+			break;
+		case VPC_VPCP_OP_DEV_GET: {
+			vpc_id_t *id;
+
+			if (vs->vs_type == VPCP_TYPE_NONE)
+				return (ENXIO);
+			*outlen = sizeof(vpc_id_t);
+			id = malloc(*outlen, M_TEMP, M_WAITOK);
+			memcpy(id, &vs->vs_devid, *outlen);
+			break;
+		}
+	}
+	return (rc);
+ fail:
+	return (EINVAL);
 }
 
 #define VPCP_CAPS														\
@@ -360,7 +486,7 @@ vpcp_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t p
 
 	atomic_add_int(&clone_count, 1);
 	vs->vs_ctx = ctx;
-
+	vs->vs_ifport = iflib_get_ifp(ctx);
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	scctx->isc_capenable = VPCP_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
@@ -386,8 +512,10 @@ vpcp_detach(if_ctx_t ctx)
 {
 	struct vpcp_softc *vs = iflib_get_softc(ctx);
 
-	if (vs->vs_ifparent != NULL)
-		if_rele(vs->vs_ifparent);
+	if (vs->vs_ifdev != NULL)
+		vpcp_port_disconnect(ctx);
+	if (vs->vs_ifswitch != NULL)
+		if_rele(vs->vs_ifswitch);
 	atomic_add_int(&clone_count, -1);
 
 	return (0);
@@ -403,42 +531,40 @@ vpcp_stop(if_ctx_t ctx)
 {
 }
 
-void
-vpcp_set_ifparent(if_ctx_t ctx, if_t ifp)
+int
+vpcp_set_ifswitch(if_ctx_t ctx, if_t ifswitch)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
-	if (ifp != vs->vs_ifparent) {
-		if_rele(vs->vs_ifparent);
-		if_ref(ifp);
-	}
-	vs->vs_ifparent = ifp;
-	iflib_get_ifp(vs->vs_ctx)->if_mtu = ifp->if_mtu;
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(50));
+	if (vs->vs_ifswitch != NULL)
+		return (EEXIST);
+	if_ref(ifswitch);
+
+	vs->vs_ifswitch = ifswitch;
+	return (0);
 }
 
 if_t
-vpcp_get_ifparent(if_ctx_t ctx)
+vpcp_get_ifswitch(if_ctx_t ctx)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
-	return (vs->vs_ifparent);
+	return (vs->vs_ifswitch);
 }
 
 void
-vpcp_clear_ifparent(if_ctx_t ctx)
+vpcp_clear_ifswitch(if_ctx_t ctx)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
-	if (vs->vs_ifparent == NULL)
+	if (vs->vs_ifswitch == NULL)
 		return;
-	if_rele(vs->vs_ifparent);
-	vs->vs_ifparent = NULL;
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, 0);
+	if_rele(vs->vs_ifswitch);
+	vs->vs_ifswitch = NULL;
 }
 
-void
-vpcp_set_vxlanid(if_ctx_t ctx, uint32_t vxlanid)
+static void
+vpcp_vxlanid_set(if_ctx_t ctx, uint32_t vxlanid)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
@@ -447,16 +573,16 @@ vpcp_set_vxlanid(if_ctx_t ctx, uint32_t vxlanid)
 	vs->vs_vxlanid = vxlanid;
 }
 
-uint32_t
-vpcp_get_vxlanid(if_ctx_t ctx)
+static uint32_t
+vpcp_vxlanid_get(if_ctx_t ctx)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
 	return (vs->vs_vxlanid);
 }
 
-void
-vpcp_set_vlanid(if_ctx_t ctx, uint16_t vlanid)
+static void
+vpcp_vlanid_set(if_ctx_t ctx, uint16_t vlanid)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
@@ -465,13 +591,36 @@ vpcp_set_vlanid(if_ctx_t ctx, uint16_t vlanid)
 	vs->vs_vlanid = vlanid;
 }
 
-uint16_t
-vpcp_get_vlanid(if_ctx_t ctx)
+static uint16_t
+vpcp_vlanid_get(if_ctx_t ctx)
 {
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
 	return (vs->vs_vlanid);
 }
+
+static void
+vpcp_mac_get(if_ctx_t ctx, uint8_t *mac)
+{
+	struct sockaddr_dl *sdl;
+	struct ifnet *ifp = iflib_get_ifp(ctx);
+
+	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+	MPASS(sdl->sdl_type == IFT_ETHER);
+	memcpy(mac, LLADDR(sdl), ETHER_ADDR_LEN);
+}
+
+static void
+vpcp_mac_set(if_ctx_t ctx, const uint8_t *mac)
+{
+	struct sockaddr_dl *sdl;
+	struct ifnet *ifp = iflib_get_ifp(ctx);
+
+	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+	MPASS(sdl->sdl_type == IFT_ETHER);
+	memcpy(LLADDR(sdl), mac, ETHER_ADDR_LEN);
+}
+
 
 static device_method_t vpcp_if_methods[] = {
 	DEVMETHOD(ifdi_cloneattach, vpcp_cloneattach),

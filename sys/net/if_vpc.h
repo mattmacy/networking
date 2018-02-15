@@ -233,22 +233,21 @@ enum vpcp_port_type {
 	VPCP_TYPE_PHYS
 };
 
-void vpcp_set_ifparent(if_ctx_t ctx, if_t ifp);
-if_t vpcp_get_ifparent(if_ctx_t ctx);
-void vpcp_clear_ifparent(if_ctx_t ctx);
-void vpcp_set_vxlanid(if_ctx_t ctx, uint32_t vxlanid);
-uint32_t vpcp_get_vxlanid(if_ctx_t ctx);
-void vpcp_set_vlanid(if_ctx_t ctx, uint16_t vlanid);
-uint16_t vpcp_get_vlanid(if_ctx_t ctx);
-int vpcp_port_type_set(if_ctx_t ctx, if_t devifp, enum vpcp_port_type type);
-enum vpcp_port_type vpcp_port_type_get(if_ctx_t ctx);
+int vpcp_set_ifswitch(if_ctx_t ctx, if_t ifp);
+if_t vpcp_get_ifswitch(if_ctx_t ctx);
+void vpcp_clear_ifswitch(if_ctx_t ctx);
 
 typedef int (*vpc_ctl_fn) (if_ctx_t ctx, vpc_op_t op, size_t keylen,
 				   const void *key, size_t *vallen, void **buf);
 
+typedef struct vpcctx_public {
+	struct ifnet *v_ifp;
+	vpc_type_t v_obj_type;
+	vpc_id_t v_id;
+} *vpc_ctx_t;
 
 int vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type);
-struct ifnet *vmmnet_lookup(const vpc_id_t *id);
+vpc_ctx_t vmmnet_lookup(const vpc_id_t *id);
 
 #endif
 enum vpc_obj_type {
@@ -267,7 +266,8 @@ enum vpc_obj_type {
 
 enum vpc_meta_op_type {
 	VPC_OBJ_DESTROY = 1,
-	VPC_META_OP_TYPE_MAX = 1
+	VPC_OBJ_TYPE_GET = 2,
+	VPC_META_OP_TYPE_MAX = 2
 };
 
 enum vpc_vmnic_op_type {
@@ -301,7 +301,8 @@ enum vpc_vpcp_op_type {
 	VPC_VPCP_VTAG_SET = 6,
 	VPC_VPCP_MAC_GET = 7,
 	VPC_VPCP_MAC_SET = 8,
-	VPC_VPCP_MAX = 8,
+	VPC_VPCP_DEV_GET = 9,
+	VPC_VPCP_MAX = 9,
 };
 
 enum vpc_phys_op_type {
@@ -328,10 +329,11 @@ enum vpc_phys_op_type {
 #define VPC_OBJ_OP(op) ((op) & ((1<<16)-1))
 
 #define VPC_OBJ_OP_DESTROY VPC_OP_M(VPC_OBJ_MGMT, VPC_OBJ_DESTROY)
+#define VPC_OBJ_OP_TYPE_GET VPC_OP_O(VPC_OBJ_MGMT, VPC_OBJ_TYPE_GET)
 
 #define VPC_VPCSW_OP_PORT_ADD VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_ADD)
 #define VPC_VPCSW_OP_PORT_DEL VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_DEL)
-#define VPC_VPCSW_OP_PORT_UPLINK_GET VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_UPLINK_GET)
+#define VPC_VPCSW_OP_PORT_UPLINK_GET VPC_OP_O(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_UPLINK_GET)
 #define VPC_VPCSW_OP_PORT_UPLINK_SET VPC_OP_IM(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_UPLINK_SET)
 
 #define VPC_VMNIC_OP_NQUEUES_GET VPC_OP_O(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_GET)
@@ -342,14 +344,15 @@ enum vpc_phys_op_type {
 #define VPC_VMNIC_OP_MSIX VPC_OP_IM(VPC_OBJ_VMNIC, VPC_VMNIC_MSIX)
 #define VPC_VMNIC_OP_FREEZE VPC_OP_M(VPC_OBJ_VMNIC, VPC_VMNIC_FREEZE)
 
-#define VPC_VPCP_OP_CONNECT VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
-#define VPC_VPCP_OP_DISCONNECT VPC_OP_M(VPC_OBJ_VPCP, VPC_VPCP_CONNECT)
-#define VPC_VPCP_OP_VNI_GET VPC_OP_O(VPC_OBJ_VPCP, VPC_VPCP_VNI_GET)
-#define VPC_VPCP_OP_VNI_SET VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_VNI_SET)
-#define VPC_VPCP_OP_VTAG_GET VPC_OP_O(VPC_OBJ_VPCP, VPC_VPCP_VTAG_GET)
-#define VPC_VPCP_OP_VTAG_SET VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_VTAG_SET)
-#define VPC_VPCP_OP_MAC_GET VPC_OP_O(VPC_OBJ_VPCP, VPC_VPCP_MAC_GET)
-#define VPC_VPCP_OP_MAC_SET VPC_OP_IM(VPC_OBJ_VPCP, VPC_VPCP_MAC_SET)
+#define VPC_VPCP_OP_CONNECT VPC_OP_IM(VPC_OBJ_PORT, VPC_VPCP_CONNECT)
+#define VPC_VPCP_OP_DISCONNECT VPC_OP_M(VPC_OBJ_PORT, VPC_VPCP_DISCONNECT)
+#define VPC_VPCP_OP_VNI_GET VPC_OP_O(VPC_OBJ_PORT, VPC_VPCP_VNI_GET)
+#define VPC_VPCP_OP_VNI_SET VPC_OP_IM(VPC_OBJ_PORT, VPC_VPCP_VNI_SET)
+#define VPC_VPCP_OP_VTAG_GET VPC_OP_O(VPC_OBJ_PORT, VPC_VPCP_VTAG_GET)
+#define VPC_VPCP_OP_VTAG_SET VPC_OP_IM(VPC_OBJ_PORT, VPC_VPCP_VTAG_SET)
+#define VPC_VPCP_OP_MAC_GET VPC_OP_O(VPC_OBJ_PORT, VPC_VPCP_MAC_GET)
+#define VPC_VPCP_OP_MAC_SET VPC_OP_IM(VPC_OBJ_PORT, VPC_VPCP_MAC_SET)
+#define VPC_VPCP_OP_DEV_GET VPC_OP_O(VPC_OBJ_PORT, VPC_VPCP_DEV_GET)
 
 #define VPC_PHYS_OP_ATTACH VPC_OP_IM(VPC_OBJ_PHYS, VPC_PHYS_ATTACH)
 
