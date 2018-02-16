@@ -3,7 +3,7 @@
 .PATH: ${SRCTOP}/sys/net
 
 KMOD=	vmmnet
-SRCS=	if_vpci.c
+#SRCS=	if_vpci.c
 SRCS+=	opt_inet.h opt_inet6.h ifdi_if.h device_if.h bus_if.h pci_if.h
 
 CFLAGS+= -DVMM_KEEP_STATS -DSMP
@@ -20,6 +20,7 @@ SRCS+=	art.c \
 	if_vpclink.c \
 	if_vpcp.c \
 	if_vpcsw.c \
-	vmmnet.c
+	vmmnet.c \
+	vpc.c
 
 .include <bsd.kmod.mk>
