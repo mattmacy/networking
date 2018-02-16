@@ -60,6 +60,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/syslimits.h>
 #include <sys/queue.h>
 #include <sys/uuid.h>
+#include <sys/endian.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -424,7 +425,7 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
 	if (copyin(uap->vpc_id, vpc_id, sizeof(*vpc_id)))
 		return (EFAULT);
-	rc = kern_vpc_open(td, vpc_id, uap->obj_type, uap->flags, &vpcd);
+	rc = kern_vpc_open(td, vpc_id, be64toh(uap->obj_type), uap->flags, &vpcd);
 	if (rc)
 		goto done;
 	td->td_retval[0] = vpcd;
