@@ -1690,6 +1690,8 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 		case VPC_VMNIC_OP_NQUEUES_GET: {
 			uint16_t *nqsp;
 
+			if (*outlen < sizeof(uint16_t))
+				return (EOVERFLOW);
 			*outlen = sizeof(uint16_t);
 			nqsp = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
 			*nqsp = vs->vs_nqs;
@@ -1702,7 +1704,7 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			if (vs->vs_flags & VS_IMMUTABLE)
 				return (EBUSY);
 			if (inlen != sizeof(uint16_t))
-				return (EINVAL);
+				return (EBADRPC);
 			if (*nqsp == 0)
 				return (ENXIO);
 			if (*nqsp > VB_QUEUES_MAX)
@@ -1717,6 +1719,8 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 		case VPC_VMNIC_OP_MAC_GET: {
 			uint8_t *mac;
 
+			if (*outlen < ETHER_ADDR_LEN)
+				return (EOVERFLOW);
 			*outlen = ETHER_ADDR_LEN;
 			mac = malloc(ETHER_ADDR_LEN, M_TEMP, M_WAITOK);
 			memcpy(mac, vs->vs_origmac, ETHER_ADDR_LEN);
@@ -1729,7 +1733,7 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			uint8_t bits = 0;
 
 			if (inlen != ETHER_ADDR_LEN)
-				return (EINVAL);
+				return (EBADRPC);
 			if (vs->vs_flags & VS_IMMUTABLE)
 				return (EBUSY);
 			for (i = 0; i < ETHER_ADDR_LEN; i++)
@@ -1741,6 +1745,24 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			memcpy(vs->vs_origmac, mac, ETHER_ADDR_LEN);
 			vs->vs_flags |= VS_MAC_ISSET;
 			break;
+		}
+		case VPC_VMNIC_OP_MTU_GET: {
+			uint32_t *mtu;
+
+			if (*outlen < sizeof(uint32_t))
+				return (EOVERFLOW);
+
+			*outlen = sizeof(uint32_t);
+			mtu = malloc(*outlen, M_TEMP, M_WAITOK);
+			*mtu = vctx->v_ifp->if_mtu;
+		}
+		case VPC_VMNIC_OP_MTU_SET: {
+			const uint32_t *mtu = in;
+
+			if (inlen != sizeof(uint32_t))
+				return (EBADRPC);
+			vctx->v_ifp->if_mtu = *mtu;
+			vs->vs_cfg.mtu = *mtu;
 		}
 		case VPC_VMNIC_OP_ATTACH: {
 			if (!(vs->vs_flags & VS_IMMUTABLE))
