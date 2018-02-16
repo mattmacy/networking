@@ -412,9 +412,10 @@ vpcp_port_disconnect(if_ctx_t ctx)
 }
 
 int
-vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
+	if_ctx_t ctx = vctx->v_ifp->if_softc;
 	struct vpcp_softc *vs;
 	int rc;
 

@@ -1678,9 +1678,10 @@ vb_rx_clset(if_ctx_t ctx, uint16_t fl __unused, uint16_t qidx,
 }
 
 int
-vmnic_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
+	if_ctx_t ctx = vctx->v_ifp->if_softc;
 	struct vb_softc *vs = iflib_get_softc(ctx);
 	int i, rc;
 
