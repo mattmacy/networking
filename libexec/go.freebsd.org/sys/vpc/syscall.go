@@ -132,10 +132,10 @@ const (
 	ObjTypeSwitchPort ObjType = 2
 	ObjTypeRouter     ObjType = 3
 	ObjTypeNAT        ObjType = 4
-	ObjTypeLink       ObjType = 5
+	ObjTypeLinkVPC    ObjType = 5
 	ObjTypeNIC        ObjType = 6
 	ObjTypeMgmt       ObjType = 7
-	ObjTypePhys       ObjType = 8
+	ObjTypeLinkL2     ObjType = 8
 )
 
 // Close closes a VPC Handle.  Closing a VPC Handle does not destroy any
