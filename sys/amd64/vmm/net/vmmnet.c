@@ -92,6 +92,7 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 #define VMMNET_UNLOCK() sx_xunlock(&vmmnet_lock)
 
 #define VPC_CTX_F_DESTROYED 0x1
+#define VPC_CTX_F_COMMITTED 0x2
 
 struct vpcctx {
 	struct ifnet *v_ifp;
@@ -280,7 +281,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		/*
 		 * One reference for ART and one for descriptor
 		 */
-		refcount_init(&ctx->v_refcnt, 2);
+		refcount_init(&ctx->v_refcnt, 1);
 		ctx->v_ifp = ifp;
 		ctx->v_obj_type = obj_type;
 		memcpy(&ctx->v_id, vpc_id, sizeof(*vpc_id));
@@ -396,8 +397,17 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 	}
 	switch (op) {
 		case VPC_OBJ_OP_DESTROY:
+			if ((ctx->v_flags & (VPC_CTX_F_DESTROYED|VPC_CTX_F_COMMITTED)) !=
+				VPC_CTX_F_COMMITTED)
+				return (EAGAIN);
 			ctx->v_flags |= VPC_CTX_F_DESTROYED;
 			refcount_release(&ctx->v_refcnt);
+			break;
+		case VPC_OBJ_OP_COMMIT:
+			if (ctx->v_flags & (VPC_CTX_F_DESTROYED|VPC_CTX_F_COMMITTED))
+				return (EALREADY);
+			ctx->v_flags |= VPC_CTX_F_COMMITTED;
+			refcount_acquire(&ctx->v_refcnt);
 			break;
 		case VPC_OBJ_OP_TYPE_GET: {
 			uint8_t *typep;
