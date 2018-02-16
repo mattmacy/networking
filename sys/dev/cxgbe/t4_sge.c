@@ -276,7 +276,6 @@ static int handle_fw_msg(struct sge_iq *, const struct rss_header *,
 static int t4_handle_wrerr_rpl(struct adapter *, const __be64 *);
 static void wrq_tx_drain(void *, int);
 static void drain_wrq_wr_list(struct adapter *, struct sge_wrq *);
-static void *mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset);
 static void *m_advance(struct mbuf **pm, int *poffset, int len);
 static int sysctl_uint16(SYSCTL_HANDLER_ARGS);
 static int sysctl_bufsizes(SYSCTL_HANDLER_ARGS);
@@ -2254,31 +2253,6 @@ m_advance(struct mbuf **pm, int *poffset, int len)
 	*pm = m;
 	return ((void *)p);
 }
-
-static void *
-mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
-{
-	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
-	const struct mvec_ent *me = mext->me_ents;
-	const struct mvec_header *mh = &mext->me_mh;
-	int rem;
-
-	if (offset >= m->m_pkthdr.len)
-		return (NULL);
-	rem = offset;
-
-	me += mh->mh_start + mc->mc_idx ;
-	MPASS(me->me_len);
-	MPASS(me->me_cl);
-	mc->mc_off += offset;
-	while (mc->mc_off >= me->me_len) {
-		mc->mc_off -= me->me_len;
-		mc->mc_idx++;
-		me++;
-	}
-	return (void *)(me_data(me) + mc->mc_off);
-}
-
 
 static inline int
 count_mvec_nsegs(struct mbuf *m)
