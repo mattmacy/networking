@@ -255,6 +255,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	} else {
 		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
 		strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
+		ctx->v_ifp = NULL;
 		if (type->vht_obj_type != VPC_OBJ_PHYS) {
 			rc = if_clone_create(buf, sizeof(buf), NULL);
 			if (rc)
@@ -299,31 +300,46 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 }
 
 static int
-vpcr_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+vpcr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	return (EOPNOTSUPP);
 }
 
 static int
-vpcnat_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+vpcnat_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	return (EOPNOTSUPP);
 }
 
 static int
-vpclink_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	return (EOPNOTSUPP);
 }
 
 static int
-phys_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+phys_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
-	return (EOPNOTSUPP);
+	int rc = 0;
+
+	switch (op) {
+		case VPC_PHYS_OP_ATTACH: {
+			struct ifnet *ifp;
+
+			if ((ifp = ifunit_ref(in)) == NULL)
+				return (ENOENT);
+			ctx->v_ifp = ifp;
+
+			break;
+		}
+		default:
+			break;
+	}
+	return (rc);
 }
 
 static vpc_ctl_fn vpc_ctl_dispatch[] = {
@@ -366,9 +382,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		goto done;
 	}
 	if (objtype != VPC_OBJ_MGMT) {
-		if_ctx_t ifctx = ctx->v_ifp->if_softc;
-
-		rc = vpc_ctl_dispatch[objtype](ifctx, op, innbyte, in, outnbyte, outp);
+		rc = vpc_ctl_dispatch[objtype]((vpc_ctx_t)ctx, op, innbyte, in, outnbyte, outp);
 		goto done;
 	}
 	switch (op) {

@@ -718,9 +718,10 @@ vpcsw_port_uplink_get(struct vpcsw_softc *vs, struct vpcsw_port *port)
 }
 
 int
-vpcsw_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
+	if_ctx_t ctx = vctx->v_ifp->if_softc;
 	struct vpcsw_softc *vs = iflib_get_softc(ctx);
 	struct vpcsw_port *out;
 	int rc;

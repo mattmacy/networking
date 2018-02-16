@@ -238,27 +238,27 @@ int vpcp_set_ifswitch(if_ctx_t ctx, if_t ifp);
 if_t vpcp_get_ifswitch(if_ctx_t ctx);
 void vpcp_clear_ifswitch(if_ctx_t ctx);
 
-typedef int (*vpc_ctl_fn) (if_ctx_t ctx, vpc_op_t op, size_t keylen,
-				   const void *key, size_t *vallen, void **buf);
-
 typedef struct vpcctx_public {
 	struct ifnet *v_ifp;
 	vpc_type_t v_obj_type;
 	vpc_id_t v_id;
 } *vpc_ctx_t;
 
+typedef int (*vpc_ctl_fn) (vpc_ctx_t ctx, vpc_op_t op, size_t keylen,
+				   const void *key, size_t *vallen, void **buf);
+
 int vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type);
 vpc_ctx_t vmmnet_lookup(const vpc_id_t *id);
 
 
 
-int vmnic_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
+int vmnic_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			  size_t *outlen, void **outdata);
 
-int vpcsw_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
+int vpcsw_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			  size_t *outlen, void **outdata);
 
-int vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+int vpcp_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			 size_t *outlen, void **outdata);
 
 
