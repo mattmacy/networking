@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-FreeBSD
 //
+// Copyright (C) 2018 Sean Chittenden <seanc@joyent.com>
 // Copyright (c) 2018 Joyent, Inc.
 // All rights reserved.
 //
