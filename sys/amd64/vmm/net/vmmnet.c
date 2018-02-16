@@ -376,6 +376,14 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			ctx->v_flags |= VPC_CTX_F_DESTROYED;
 			refcount_release(&ctx->v_refcnt);
 			break;
+		case VPC_OBJ_OP_TYPE_GET: {
+			uint8_t *typep;
+
+			*outnbyte = 1;
+			typep = malloc(sizeof(uint8_t), M_TEMP, M_WAITOK);
+			*typep = ctx->v_obj_type;
+			break;
+		}
 		default:
 			rc = ENOTSUP;
 			break;
@@ -451,14 +459,23 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 			goto done;
 		}
 	}
-	if ((uap->op & IOC_OUT) &&
-		((uap->outnbyte == NULL) || (uap->out == NULL))) {
+	if (uap->op & IOC_OUT) {
+		if ((uap->outnbyte == NULL) || (uap->out == NULL)) {
 			rc = EFAULT;
 			goto done;
+		}
+		if (copyin(uap->outnbyte, &koutlen, sizeof(size_t))) {
+			rc = EFAULT;
+			goto done;
+		}
+		if (koutlen == 0) {
+			rc = ENOSPC;
+			goto done;
+		}
 	}
 	rc = kern_vpc_ctl(td, uap->vpcd, uap->op, uap->innbyte, kin, &koutlen, &kout);
 	if (uap->op & IOC_OUT) {
-		if ((rc = copyout(&koutlen, uap->outnbyte, sizeof(koutlen))))
+		if ((rc = copyout(&koutlen, uap->outnbyte, sizeof(size_t))))
 			goto done;
 		if ((rc = copyout(kout, uap->out, koutlen)))
 			goto done;
