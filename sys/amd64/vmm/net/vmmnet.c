@@ -230,7 +230,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	ifp = NULL;
 	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX ||
 		type->vht_obj_type == VPC_OBJ_MGMT)
-		return (EINVAL);
+		return (ENOPROTOOPT);
 
 	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
 		(flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN))
@@ -419,10 +419,6 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 {
 	vpc_id_t *vpc_id;
 	int rc, vpcd;
-
-	if (uap->obj_type == 0 || uap->obj_type > VPC_OBJ_TYPE_MAX ||
-		uap->obj_type == VPC_OBJ_MGMT)
-		return (ENOPROTOOPT);
 
 	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
 	if (copyin(vpc_id, (void*)(uintptr_t)uap->vpc_id, sizeof(*vpc_id)))
