@@ -281,7 +281,7 @@ task_fn_ifp_update_(void *context __unused)
 	for (count = i = 0; i < max; i++) {
 		if (ifps_orig[i] == NULL)
 			continue;
-		if (!(ifps_orig[i]->if_flags & IFF_DYING))
+		if (__predict_true(!(ifps_orig[i]->if_flags & IFF_DYING) && !exiting))
 			continue;
 		ifps[i] = ifps_orig[i];
 		ifps_orig[i] = NULL;
@@ -311,19 +311,8 @@ int
 vpc_ifp_cache(struct ifnet *ifp)
 {
 	if (__predict_false(vpc_ic->ic_size -1 < ifp->if_index)) {
-#ifndef INVARIANTS
-		struct ifp_cache *newcache;
-
-		newcache = realloc(vpc_ic, sizeof(ifp)*ifp->if_index+1, M_VPC, M_NOWAIT);
-		if (newcache == NULL) {
-			GROUPTASK_ENQUEUE(&vpc_ifp_task);
-			return (1);
-		}
-		vpc_ic->ic_size = ifp->if_index+1;
-#else
 		GROUPTASK_ENQUEUE(&vpc_ifp_task);
 		return (1);
-#endif
 	}
 	if (vpc_ic->ic_ifps[ifp->if_index] == ifp)
 		return (0);
