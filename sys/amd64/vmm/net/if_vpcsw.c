@@ -615,7 +615,6 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	vpc_ctx_t vctx;
 	void *cache;
 	uint16_t *ifindexp;
-	struct ifreq ifr;
 	int rc;
 
 	vctx = vmmnet_lookup(&port->vp_id);
@@ -630,7 +629,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const struct vpcsw_port *port)
 	/* Verify ifnet in table */
 	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) == NULL) {
 		if (bootverbose)
-			printf("%s not found\n", ifr.ifr_name);
+			printf("port not found\n");
 		if_rele(ifp);
 		return (ENOENT);
 	}
