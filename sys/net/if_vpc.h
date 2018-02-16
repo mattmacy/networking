@@ -361,8 +361,8 @@ enum vpc_phys_op_type {
 
 #define VPC_PHYS_OP_ATTACH VPC_OP_IM(VPC_OBJ_PHYS, VPC_PHYS_ATTACH)
 
-#define VPC_F_CREATE (1ULL << 1)
-#define VPC_F_OPEN (1ULL << 2)
-#define VPC_F_READ (1ULL << 3)
-#define VPC_F_WRITE (1ULL << 4)
+#define VPC_F_CREATE (1ULL << 0)
+#define VPC_F_OPEN (1ULL << 1)
+#define VPC_F_READ (1ULL << 2)
+#define VPC_F_WRITE (1ULL << 3)
 #endif
