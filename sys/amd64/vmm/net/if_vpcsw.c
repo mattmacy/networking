@@ -272,20 +272,16 @@ vpcsw_cache_lookup(struct vpcsw_cache_ent *cache, struct mbuf *m)
 	vsrc.vs_dmac[2] = mac[2];
 	_critical_enter();
 	vcep = &cache[curcpu];
+
 	if (__predict_false(vcep->vce_ticks == 0))
-		goto skip;
-	ifp = vpc_ic->ic_ifps[vcep->vce_ifindex];
-	if (ifp == NULL)
 		goto skip;
 	/*
 	 * Is still in caching window
 	 */
 	if (__predict_false(ticks - vcep->vce_ticks < hz/4))
 		goto skip;
-	if (ifp->if_flags & IFF_DYING) {
-		GROUPTASK_ENQUEUE(&vpc_ifp_task);
+	if ((ifp = vpc_if_lookup(vcep->vce_ifindex)) == NULL)
 		goto skip;
-	}
 	/*
 	 * dmac & vxlanid match
 	 */
@@ -334,13 +330,8 @@ vpc_broadcast_one(void *data, const unsigned char *key __unused, uint32_t key_le
 	m = m_dup((struct mbuf *)data, M_NOWAIT);
 	if (__predict_false(m == NULL))
 		return (ENOMEM);
-	ifp = vpc_ic->ic_ifps[*ifindexp];
-	if (ifp == NULL)
+	if ((ifp = vpc_if_lookup(*ifindexp)) == NULL)
 		return (0);
-	if (ifp->if_flags & IFF_DYING) {
-		GROUPTASK_ENQUEUE(&vpc_ifp_task);
-		return (0);
-	}
 	m->m_pkthdr.rcvif = ifp;
 	ifp->if_input(ifp, m);
 	return (0);
@@ -418,14 +409,13 @@ vpcsw_process_one(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct 
 	if (vpcsw_cache_lookup(cache, m))
 		return (0);
 	vif = art_search(vs->vs_ftable_ro, (const unsigned char *)eh->ether_dhost);
-	ifp = (vif != NULL) ? vpc_ic->ic_ifps[*vif] : vs->vs_ifdefault;
+	if (vif != NULL)
+		ifp = vpc_if_lookup(*vif);
+	else
+		ifp = vs->vs_ifdefault;
 	if (__predict_false(ifp == NULL)) {
 		m_freem(m);
 		*mp = NULL;
-		return (ENOBUFS);
-	}
-	if (ifp->if_flags & IFF_DYING) {
-		GROUPTASK_ENQUEUE(&vpc_ifp_task);
 		return (ENOBUFS);
 	}
 	m->m_pkthdr.rcvif = ifp;
@@ -773,13 +763,8 @@ clear_bridge(void *data __unused, const unsigned char *key __unused, uint32_t ke
 	uint16_t *ifindexp = value;
 	struct ifnet *ifp;
 
-	ifp = vpc_ic->ic_ifps[*ifindexp];
-	if (ifp == NULL)
+	if ((ifp = vpc_if_lookup(*ifindexp)) == NULL)
 		return (0);
-	if (ifp->if_flags & IFF_DYING) {
-		GROUPTASK_ENQUEUE(&vpc_ifp_task);
-		return (0);
-	}
 	ifp->if_bridge = NULL;
 	return (0);
 }

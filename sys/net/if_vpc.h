@@ -39,34 +39,25 @@ struct vpc_ioctl_header {
 	uint64_t vih_magic;
 	uint64_t vih_type;
 };
-struct vpc_listen {
+struct vpclink_listen {
 	struct vpc_ioctl_header vl_vih;
 	struct sockaddr vl_addr;
 };
 
-struct vpc_fte {
+struct vpclink_fte {
 	uint32_t vf_vni;
 	uint8_t vf_hwaddr[ETHER_ADDR_LEN];
 	struct sockaddr vf_protoaddr;
 };
 
-struct vpc_fte_update {
-	struct vpc_ioctl_header vfu_vih;
-	struct vpc_fte vfu_vfte;
-};
-
 struct vpc_fte_list {
 	struct vpc_ioctl_header vfl_vih;
 	uint32_t vfl_count;
-	struct vpc_fte vfl_vftes[0];
+	struct vpclink_fte vfl_vftes[0];
 };
 
 #define VPC_LISTEN								\
 	_IOW('k', 1, struct vpc_listen)
-#define VPC_FTE_SET								\
-	_IOW('k', 2, struct vpc_fte_update)
-#define VPC_FTE_DEL								\
-	_IOW('k', 3, struct vpc_fte_update)
 #define VPC_FTE_ALL								\
 	_IOWR('k', 4, struct vpc_fte_list)
 
@@ -197,10 +188,9 @@ struct vpc_pkt_info {
 };
 
 struct ck_epoch_record;
+extern ck_epoch_t vpc_epoch;
 extern struct ck_epoch_record vpc_global_record;
 DPCPU_DECLARE(struct ck_epoch_record *, vpc_epoch_record);
-extern struct ifp_cache *vpc_ic;
-extern struct grouptask vpc_ifp_task;
 
 
 int vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi);
@@ -249,7 +239,7 @@ typedef int (*vpc_ctl_fn) (vpc_ctx_t ctx, vpc_op_t op, size_t keylen,
 
 int vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type);
 vpc_ctx_t vmmnet_lookup(const vpc_id_t *id);
-
+struct ifnet *vpc_if_lookup(uint32_t ifindex);
 
 
 int vmnic_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
