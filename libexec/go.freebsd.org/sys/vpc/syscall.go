@@ -133,7 +133,7 @@ const (
 	ObjTypeRouter     ObjType = 3
 	ObjTypeNAT        ObjType = 4
 	ObjTypeLinkVPC    ObjType = 5
-	ObjTypeNIC        ObjType = 6
+	ObjTypeNICVM      ObjType = 6
 	ObjTypeMgmt       ObjType = 7
 	ObjTypeLinkL2     ObjType = 8
 )
