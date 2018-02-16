@@ -366,6 +366,30 @@ typedef union {
  */
 void *mvec_seek(const struct mbuf *m, struct mvec_cursor *mc, int off);
 
+static inline void *
+mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
+{
+	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
+	const struct mvec_ent *me = mext->me_ents;
+	const struct mvec_header *mh = &mext->me_mh;
+	int rem;
+
+	if (offset >= m->m_pkthdr.len)
+		return (NULL);
+	rem = offset;
+
+	me += mh->mh_start + mc->mc_idx ;
+	MPASS(me->me_len);
+	MPASS(me->me_cl);
+	mc->mc_off += offset;
+	while (mc->mc_off >= me->me_len) {
+		mc->mc_off -= me->me_len;
+		mc->mc_idx++;
+		me++;
+	}
+	return (void *)(me_data(me) + mc->mc_off);
+}
+
 
 void *mvec_seek_pktno(const struct mbuf *m, struct mvec_cursor *mc, int off, uint16_t pktno);
 
