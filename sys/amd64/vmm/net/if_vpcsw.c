@@ -525,6 +525,10 @@ vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 	return (NULL);
 }
 
+#define VPCSW_CAPS														\
+	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
+	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
+
 static int
 vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
@@ -539,6 +543,9 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	refcount_acquire(&modrefcnt);
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
+	scctx->isc_capenable = VPCSW_CAPS;
+	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
+		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	vs->vs_ctx = ctx;
 	vs->vs_ifp = iflib_get_ifp(ctx);
 	refcount_init(&vs->vs_refcnt, 0);
