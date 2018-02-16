@@ -496,31 +496,19 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 	return (rc);
 }
 
-static struct sysent vpc_open_sysent = {
-	.sy_narg = 3,
-	.sy_call = (sy_call_t *)sys_vpc_open,
-};
-
-static struct sysent vpc_ctl_sysent = {
-	.sy_narg = 6,
-	.sy_call = (sy_call_t *)sys_vpc_ctl,
+static struct syscall_helper_data vmmnet_syscalls[] = {
+	SYSCALL_INIT_HELPER(vpc_open),
+	SYSCALL_INIT_HELPER(vpc_ctl),
+	SYSCALL_INIT_LAST
 };
 	
 static int
 vmmnet_module_init(void)
 {
-	int rc, off;
-	struct sysent oldent;
+	int rc;
 
-	off = SYS_vpc_open;
-	rc = syscall_register(&off, &vpc_open_sysent, &oldent, 0);
-	if (rc)
-		return (rc);
-	off = SYS_vpc_ctl;
-	rc = syscall_register(&off, &vpc_ctl_sysent, &oldent, 0);
-	if (rc) {
-		off = SYS_vpc_open;
-		syscall_deregister(&off, &oldent);
+	if ((rc = syscall_helper_register(vmmnet_syscalls, 0))) {
+		printf("vmmnet syscall register failed %d\n", rc);
 		return (rc);
 	}
 	art_tree_init(&vpc_uuid_table, sizeof(vpc_id_t));
@@ -530,13 +518,7 @@ vmmnet_module_init(void)
 static void
 vmmnet_module_deinit(void)
 {
-	int off;
-	struct sysent oldent;
-
-	off = SYS_vpc_open;
-	syscall_deregister(&off, &oldent);
-	off = SYS_vpc_ctl;
-	syscall_deregister(&off, &oldent);
+	syscall_helper_unregister(vmmnet_syscalls);
 }
 
 
