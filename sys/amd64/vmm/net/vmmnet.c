@@ -229,9 +229,10 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	type = (vpc_handle_type_t*)&obj_type;
 	ifp = NULL;
 	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX ||
-		type->vht_obj_type == VPC_OBJ_MGMT)
+		type->vht_obj_type == VPC_OBJ_MGMT) {
+		printf("type->vht_obj_type=%d\n", type->vht_obj_type);
 		return (ENOPROTOOPT);
-
+	}
 	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
 		(flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN))
 		return (EINVAL);
