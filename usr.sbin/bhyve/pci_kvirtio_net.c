@@ -133,7 +133,7 @@ vtnet_be_msix(struct vmctx *ctx, int vcpu, struct pci_devinst *pi, int on)
 			vmsix->vm_q[i].addr = pi->pi_msix.table[i].addr;
 		}
 	}
-	err = vpc_ctl(vbs->vbs_fd, VPC_OP_VMNIC_MSIX, size, vmsix, NULL, NULL);
+	err = vpc_ctl(vbs->vbs_fd, VPC_VMNIC_OP_MSIX, size, vmsix, NULL, NULL);
 	free(vmsix);
 	assert(err == 0);
 }
@@ -234,9 +234,9 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	va.vva_io_start = vbs->vbs_pi->pi_bar[0].addr;
 	va.vva_io_size = VTNET_BE_REGSZ;
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
-	if (vpc_ctl(s, VPC_OP_VMNIC_NQUEUES_GET, 0, NULL, &osize, &nqs))
+	if (vpc_ctl(s, VPC_VMNIC_OP_NQUEUES_GET, 0, NULL, &osize, &nqs))
 		return (errno);
-	if (vpc_ctl(s, VPC_OP_VMNIC_ATTACH, sizeof(va), &va, NULL, NULL))
+	if (vpc_ctl(s, VPC_VMNIC_OP_ATTACH, sizeof(va), &va, NULL, NULL))
 		return (errno);
 	vbs->vbs_nqs = nqs;
 	vbs->vbs_nvqs = 2*nqs + 1;
