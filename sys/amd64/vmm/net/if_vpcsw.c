@@ -712,8 +712,8 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 {
 	if_ctx_t ctx = vctx->v_ifp->if_softc;
 	struct vpcsw_softc *vs = iflib_get_softc(ctx);
+	int rc = 0;
 	vpc_id_t *out;
-	int rc;
 
 	switch (op) {
 		case VPC_VPCSW_OP_PORT_ADD:
@@ -740,6 +740,24 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			*outdata = out;
 			*outlen = sizeof(*out);
 			rc = vpcsw_port_uplink_get(vs, out);
+			break;
+		case VPC_VPCSW_OP_STATE_GET: {
+			uint64_t *out;
+			if (*outlen < sizeof(uint64_t))
+				return (EOVERFLOW);
+			out = malloc(sizeof(uint64_t), M_TEMP, M_WAITOK);
+			*out = 0x1;
+			*outdata = out;
+		}
+		case VPC_VPCSW_OP_STATE_SET: {
+			//const uint64_t *flags = in;
+
+			if (*outlen != sizeof(uint64_t))
+				return (EBADRPC);
+			/* do something with the flags */
+		}
+		case VPC_VPCSW_OP_RESET:
+			/* hrrrm.... */
 			break;
 		default:
 			rc = ENOTSUP;
