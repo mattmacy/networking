@@ -235,9 +235,10 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		return (ENOPROTOOPT);
 	}
 	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
-		(flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN))
+		(flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN)) {
+		printf("bad open/create flag combination: %lx\n", flags);
 		return (EINVAL);
-
+	}
 	VMMNET_LOCK();
 	ctx = art_search(&vpc_uuid_table, (const unsigned char *)vpc_id);
 	if ((flags & VPC_F_CREATE) && (ctx != NULL)) {
@@ -260,8 +261,11 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		ctx->v_ifp = NULL;
 		if (type->vht_obj_type != VPC_OBJ_PHYS) {
 			rc = if_clone_create(buf, sizeof(buf), NULL);
-			if (rc)
+			if (rc) {
+				printf("if_clone_create with %s failed with %d\n",
+					   buf, rc);
 				goto unlock;
+			}
 			if ((ifp = ifunit_ref(buf)) == NULL) {
 				if (bootverbose)
 					printf("couldn't reference %s\n", buf);
@@ -425,7 +429,7 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
 	if (copyin(uap->vpc_id, vpc_id, sizeof(*vpc_id)))
 		return (EFAULT);
-	rc = kern_vpc_open(td, vpc_id, be64toh(uap->obj_type), uap->flags, &vpcd);
+	rc = kern_vpc_open(td, vpc_id, htobe64(uap->obj_type), uap->flags, &vpcd);
 	if (rc)
 		goto done;
 	td->td_retval[0] = vpcd;
