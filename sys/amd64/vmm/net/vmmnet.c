@@ -421,7 +421,7 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 	int rc, vpcd;
 
 	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
-	if (copyin(vpc_id, (void*)(uintptr_t)uap->vpc_id, sizeof(*vpc_id)))
+	if (copyin(uap->vpc_id, vpc_id, sizeof(*vpc_id)))
 		return (EFAULT);
 	rc = kern_vpc_open(td, vpc_id, uap->obj_type, uap->flags, &vpcd);
 	if (rc)
@@ -464,7 +464,7 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 		if (uap->innbyte == 0)
 			return (EFAULT);
 		kin = malloc(uap->innbyte, M_TEMP, M_WAITOK);
-		if (copyin(kin, (void *)(uintptr_t)uap->in, uap->innbyte)) {
+		if (copyin(uap->in, kin, uap->innbyte)) {
 			rc = EFAULT;
 			goto done;
 		}
