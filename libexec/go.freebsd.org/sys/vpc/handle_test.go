@@ -77,7 +77,7 @@ func TestHandleTypeVersion(t *testing.T) {
 		{
 			in:         0x6005000000000000,
 			outVersion: 6,
-			outObjType: vpc.ObjTypeLink,
+			outObjType: vpc.ObjTypeLinkVPC,
 		},
 		{
 			in:         0x7006000000000000,
@@ -92,7 +92,7 @@ func TestHandleTypeVersion(t *testing.T) {
 		{
 			in:         0x9008000000000000,
 			outVersion: 9,
-			outObjType: vpc.ObjTypePhys,
+			outObjType: vpc.ObjTypeLinkL2,
 		},
 	}
 
@@ -137,10 +137,10 @@ func TestHandleTypeVersion(t *testing.T) {
 			vpc.ObjTypeSwitchPort,
 			vpc.ObjTypeRouter,
 			vpc.ObjTypeNAT,
-			vpc.ObjTypeLink,
+			vpc.ObjTypeLinkVPC,
 			vpc.ObjTypeNIC,
 			vpc.ObjTypeMgmt,
-			vpc.ObjTypePhys,
+			vpc.ObjTypeLinkL2,
 		}
 
 		origHandleType := ht
