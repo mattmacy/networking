@@ -234,9 +234,12 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		printf("type->vht_obj_type=%d\n", type->vht_obj_type);
 		return (ENOPROTOOPT);
 	}
-	if (((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) ||
-		(flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN)) {
-		printf("bad open/create flag combination: %lx\n", flags);
+	if ((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0) {
+		printf("must specify OPEN or CREATE\n");
+		return (EINVAL);
+	}
+	if ((flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN)) {
+		printf("CREATE and OPEN are mutually exclusive\n");
 		return (EINVAL);
 	}
 	VMMNET_LOCK();
