@@ -15,7 +15,7 @@ export GOPATH=`go env GOPATH`:/usr/libexec/go.freebsd.org
 The other option is to simply symlink `go.freebsd.org` into `GOPATH`:
 
 ```
-ln -s /usr/libexec/go.freebsd.org `go env GOPATH`/src
+ln -sf /usr/libexec/go.freebsd.org `go env GOPATH`/src
 # or if you're developing from src:
-ln -s /usr/src/libexec/go.freebsd.org `go env GOPATH`/src
+ln -sf /usr/src/libexec/go.freebsd.org `go env GOPATH`/src
 ```
