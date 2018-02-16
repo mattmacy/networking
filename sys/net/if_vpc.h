@@ -32,6 +32,7 @@
 
 #include <netinet/in.h>
 #include <sys/uuid.h>
+#include <sys/ioccom.h>
 
 #define VPC_VERS 0x20171228
 struct vpc_ioctl_header {
@@ -249,6 +250,18 @@ typedef struct vpcctx_public {
 int vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type);
 vpc_ctx_t vmmnet_lookup(const vpc_id_t *id);
 
+
+
+int vmnic_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
+			  size_t *outlen, void **outdata);
+
+int vpcsw_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
+			  size_t *outlen, void **outdata);
+
+int vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+			 size_t *outlen, void **outdata);
+
+
 #endif
 enum vpc_obj_type {
 	VPC_OBJ_INVALID = 0,
@@ -362,15 +375,4 @@ enum vpc_phys_op_type {
 #define VPC_F_OPEN (1ULL << 2)
 #define VPC_F_READ (1ULL << 3)
 #define VPC_F_WRITE (1ULL << 4)
-
-
-int vmnic_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
-			  size_t *outlen, void **outdata);
-
-int vpcsw_ctl(struct iflib_ctx *ctx, vpc_op_t op, size_t inlen, const void *in,
-			  size_t *outlen, void **outdata);
-
-int vpcp_ctl(if_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
-			 size_t *outlen, void **outdata);
-
 #endif
