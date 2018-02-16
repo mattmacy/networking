@@ -372,7 +372,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		goto done;
 	}
 	switch (op) {
-		case VPC_OBJ_DESTROY:
+		case VPC_OBJ_OP_DESTROY:
 			ctx->v_flags |= VPC_CTX_F_DESTROYED;
 			refcount_release(&ctx->v_refcnt);
 			break;
