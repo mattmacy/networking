@@ -139,7 +139,7 @@ vpcd_close(struct file *fp, struct thread *td)
 		/* run object dtor */
 		if (ctx->v_ifp != NULL)
 			if_rele(ctx->v_ifp);
-		if (ctx->v_obj_type != VPC_OBJ_PHYS)
+		if (ctx->v_obj_type != VPC_OBJ_L2LINK)
 			if_clone_destroy(ctx->v_ifp->if_xname);
 		free(ctx, M_VMMNET);
 	}
@@ -262,7 +262,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
 		strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
 		ctx->v_ifp = NULL;
-		if (type->vht_obj_type != VPC_OBJ_PHYS) {
+		if (type->vht_obj_type != VPC_OBJ_L2LINK) {
 			rc = if_clone_create(buf, sizeof(buf), NULL);
 			if (rc) {
 				printf("if_clone_create with %s failed with %d\n",
@@ -330,13 +330,13 @@ vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 }
 
 static int
-phys_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	int rc = 0;
 
 	switch (op) {
-		case VPC_PHYS_OP_ATTACH: {
+		case VPC_L2LINK_OP_ATTACH: {
 			struct ifnet *ifp;
 
 			if ((ifp = ifunit_ref(in)) == NULL)
@@ -359,7 +359,7 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	vpcnat_ctl,
 	vpclink_ctl,
 	vmnic_ctl,
-	phys_ctl
+	l2link_ctl
 };
 static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
