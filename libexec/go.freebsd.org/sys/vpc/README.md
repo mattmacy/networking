@@ -1,19 +1,30 @@
 # Virtual Private Cloud ("VPC")
 
-The Virtual Private Cloud ("VPC") system provides network isolation to bhyve
-guests in a coherent way.
+The Virtual Private Cloud ("VPC") system provides a cloud-natural experience for
+bhyve guests.
 
 ## Requirements
 
-1. `vmmnet` must be loaded
+1. `vmmnet(4)` must be loaded: `kldload /boot/modules/vmmnet.ko`
+2. Add the VPC library to `GOPATH`:
+
+    ```
+% mkdir -p `go env GOPATH`/src
+% ln -sf /usr/libexec/go.freebsd.org `go env GOPATH`/src
+```
+
+3. `go get -u -d github.com/pkg/errors`
+4. `go get -u github.com/kylelemons/godebug/pretty`
+5. `go get -u github.com/kylelemons/godebug/diff`
 
 ## Testing
 
-1. ```
-ln -s /usr/libexec/go.freebsd.org `go env GOPATH`/src
+Run the VPC tests:
+
+    ```
+cd src/libexec/go.freebsd.org/sys/vpc
+go test -v ./...
 ```
-2. `cd src/libexec/go.freebsd.org/sys/vpc`
-3. `go test -v ./...`
 
 ## Development
 
@@ -32,10 +43,13 @@ doas make install
 doas kldunload /boot/modules/vmmnet.ko
 doas kldload /boot/modules/vmmnet.ko
 cd /usr/src/libexec/go.freebsd.org/sys/vpc
-go test ./...
+doas go test ./...
 ```
 
 ### Debugging
 
-1. TODO(seanc@): Build a series of scripts to trace execution
-2. `doas truss -faDH go test ./...`
+- `doas truss -faDH go test ./...`
+
+#### TODO
+
+- Build a series of scripts to trace execution

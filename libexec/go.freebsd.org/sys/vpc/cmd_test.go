@@ -1,4 +1,4 @@
-// Tests for VPC OpFlags
+// Tests for vpc_ctl(2) commands
 //
 // SPDX-License-Identifier: BSD-2-Clause-FreeBSD
 //
@@ -37,64 +37,81 @@ import (
 
 func TestOpFlagType(t *testing.T) {
 	tests := []struct {
-		op        vpc.OpFlag
+		cmd       vpc.Cmd
 		inBit     bool
 		outBit    bool
 		mutateBit bool
+		privBit   bool
 		objType   vpc.ObjType
+		op        vpc.Op
 	}{
 		{
-			op:        0x00000000,
+			cmd:       vpc.Cmd(0x00000000),
 			outBit:    false,
 			inBit:     false,
 			mutateBit: false,
-			objType:   0x00000000,
+			privBit:   false,
+			objType:   vpc.ObjType(0x00),
+			op:        vpc.Op(0x0000),
 		},
 		{
-			op:        0xffffffff,
+			cmd:       vpc.Cmd(0xffffffff),
 			outBit:    true,
 			inBit:     true,
 			mutateBit: true,
-			objType:   0x000000ff,
+			privBit:   true,
+			objType:   vpc.ObjType(0xff),
+			op:        vpc.Op(0xffff),
 		},
 		{
-			op:        0x20010000,
+			cmd:       vpc.Cmd(0x20010000),
 			outBit:    false,
 			inBit:     false,
 			mutateBit: true,
-			objType:   0x00000001,
+			privBit:   false,
+			objType:   vpc.ObjType(0x01),
+			op:        vpc.Op(0x0000),
 		},
 		{
-			op:        0x40200000,
+			cmd:       vpc.Cmd(0x50200000),
 			outBit:    true,
 			inBit:     false,
 			mutateBit: false,
-			objType:   0x00000020,
+			privBit:   true,
+			objType:   vpc.ObjType(0x20),
+			op:        vpc.Op(0x0000),
 		},
 		{
-			op:        0x80ff0000,
+			cmd:       vpc.Cmd(0xa0ff0000),
 			outBit:    false,
 			inBit:     true,
-			mutateBit: false,
-			objType:   0x000000ff,
+			mutateBit: true,
+			privBit:   false,
+			objType:   vpc.ObjType(0xff),
+			op:        vpc.Op(0x0000),
 		},
 	}
 
 	for i, test := range tests {
-		if test.op.Mutate() != test.mutateBit {
+		if test.cmd.Mutate() != test.mutateBit {
 			t.Errorf("[%d] Mutate wrong", i)
 		}
 
-		if test.op.Out() != test.outBit {
+		if test.cmd.Out() != test.outBit {
 			t.Errorf("[%d] Out wrong", i)
 		}
 
-		if test.op.In() != test.inBit {
+		if test.cmd.In() != test.inBit {
 			t.Errorf("[%d] In wrong", i)
 		}
 
-		if test.op.ObjType() != test.objType {
-			t.Errorf("[%d] ObjType wrong: 0x%04x 0x%04x", i, test.op.ObjType(), test.objType)
+		if test.cmd.ObjType() != test.objType {
+			t.Errorf("[%d] ObjType wrong: 0x%04x 0x%04x", i, test.cmd.ObjType(), test.objType)
 		}
+
+		if test.cmd.Op() != test.op {
+			t.Errorf("[%d] Op wrong", i)
+		}
+
 	}
 }
