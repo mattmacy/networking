@@ -152,11 +152,13 @@ void rn_inithead_internal(struct radix_head *rh, struct radix_node *base_nodes,
 
 #ifndef _KERNEL
 #define R_Malloc(p, t, n) (p = (t) malloc((unsigned int)(n)))
-#define R_Zalloc(p, t, n) (p = (t) calloc(1,(unsigned int)(n)))
+#define R_Malloc_flags(p, t, n, f) (p = (t) malloc((unsigned int)(n)))
+#define R_Zalloc_flags(p, t, n, f) (p = (t) calloc(1,(unsigned int)(n)))
 #define R_Free(p) free((char *)p);
 #else
 #define R_Malloc(p, t, n) (p = (t) malloc((unsigned long)(n), M_RTABLE, M_NOWAIT))
-#define R_Zalloc(p, t, n) (p = (t) malloc((unsigned long)(n), M_RTABLE, M_NOWAIT | M_ZERO))
+#define R_Malloc_flags(p, t, n, f) (p = (t) malloc((unsigned long)(n), M_RTABLE, f))
+#define R_Zalloc_flags(p, t, n, f) (p = (t) malloc((unsigned long)(n), M_RTABLE, f | M_ZERO))
 #define R_Free(p) free((caddr_t)p, M_RTABLE);
 
 #define	RADIX_NODE_HEAD_LOCK_INIT(rnh)	\
@@ -174,6 +176,7 @@ void rn_inithead_internal(struct radix_head *rh, struct radix_node *base_nodes,
 #endif /* _KERNEL */
 
 int	 rn_inithead(void **, int);
+int	 rn_inithead_flags(void **, int, int);
 int	 rn_detachhead(void **);
 int	 rn_refines(void *, void *);
 struct radix_node *rn_addroute(void *, void *, struct radix_head *,
@@ -181,6 +184,11 @@ struct radix_node *rn_addroute(void *, void *, struct radix_head *,
 struct radix_node *rn_delete(void *, void *, struct radix_head *);
 struct radix_node *rn_lookup (void *v_arg, void *m_arg,
     struct radix_head *head);
+struct radix_node *rn_addroute_flags(void *, void *, struct radix_head *,
+	struct radix_node[2], int flags);
+struct radix_node *rn_delete_flags(void *, void *, struct radix_head *, int);
+struct radix_node *rn_lookup_flags(void *v_arg, void *m_arg,
+							  struct radix_head *head, int flags);
 struct radix_node *rn_match(void *, struct radix_head *);
 int rn_walktree_from(struct radix_head *h, void *a, void *m,
     walktree_f_t *f, void *w);

@@ -61,7 +61,7 @@ static struct radix_node
 	 *rn_newpair(void *, int, struct radix_node[2]),
 	 *rn_search(void *, struct radix_node *),
 	 *rn_search_m(void *, struct radix_node *, void *);
-static struct radix_node *rn_addmask(void *, struct radix_mask_head *, int,int);
+static struct radix_node *rn_addmask(void *, struct radix_mask_head *, int, int, int);
 
 static void rn_detachhead_internal(struct radix_head *);
 
@@ -79,7 +79,7 @@ static char rn_ones[RADIX_MAX_KEY_LEN] = {
 static int	rn_lexobetter(void *m_arg, void *n_arg);
 static struct radix_mask *
 		rn_new_radix_mask(struct radix_node *tt,
-		    struct radix_mask *next);
+						  struct radix_mask *next, int flags);
 static int	rn_satisfies_leaf(char *trial, struct radix_node *leaf,
 		    int skip);
 
@@ -211,7 +211,7 @@ rn_refines(void *m_arg, void *n_arg)
  * from host routes.
  */
 struct radix_node *
-rn_lookup(void *v_arg, void *m_arg, struct radix_head *head)
+rn_lookup_flags(void *v_arg, void *m_arg, struct radix_head *head, int flags)
 {
 	struct radix_node *x;
 	caddr_t netmask;
@@ -221,7 +221,7 @@ rn_lookup(void *v_arg, void *m_arg, struct radix_head *head)
 		 * Most common case: search exact prefix/mask
 		 */
 		x = rn_addmask(m_arg, head->rnh_masks, 1,
-		    head->rnh_treetop->rn_offset);
+					   head->rnh_treetop->rn_offset, flags);
 		if (x == NULL)
 			return (NULL);
 		netmask = x->rn_key;
@@ -249,6 +249,12 @@ rn_lookup(void *v_arg, void *m_arg, struct radix_head *head)
 		return (NULL);
 
 	return (x);
+}
+
+struct radix_node *
+rn_lookup(void *v_arg, void *m_arg, struct radix_head *head)
+{
+	return (rn_lookup_flags(v_arg, m_arg, head, M_NOWAIT));
 }
 
 static int
@@ -485,8 +491,8 @@ on1:
 	return (tt);
 }
 
-struct radix_node *
-rn_addmask(void *n_arg, struct radix_mask_head *maskhead, int search, int skip)
+static struct radix_node *
+rn_addmask(void *n_arg, struct radix_mask_head *maskhead, int search, int skip, int flags)
 {
 	unsigned char *netmask = n_arg;
 	unsigned char *cp, *cplim;
@@ -521,7 +527,7 @@ rn_addmask(void *n_arg, struct radix_mask_head *maskhead, int search, int skip)
 		x = NULL;
 	if (x || search)
 		return (x);
-	R_Zalloc(x, struct radix_node *, RADIX_MAX_KEY_LEN + 2 * sizeof (*x));
+	R_Zalloc_flags(x, struct radix_node *, RADIX_MAX_KEY_LEN + 2 * sizeof (*x), flags);
 	if ((saved_x = x) == NULL)
 		return (0);
 	netmask = cp = (unsigned char *)(x + 2);
@@ -572,11 +578,11 @@ rn_lexobetter(void *m_arg, void *n_arg)
 }
 
 static struct radix_mask *
-rn_new_radix_mask(struct radix_node *tt, struct radix_mask *next)
+rn_new_radix_mask(struct radix_node *tt, struct radix_mask *next, int flags)
 {
 	struct radix_mask *m;
 
-	R_Malloc(m, struct radix_mask *, sizeof (struct radix_mask));
+	R_Malloc_flags(m, struct radix_mask *, sizeof (struct radix_mask), flags);
 	if (m == NULL) {
 		log(LOG_ERR, "Failed to allocate route mask\n");
 		return (0);
@@ -594,8 +600,8 @@ rn_new_radix_mask(struct radix_node *tt, struct radix_mask *next)
 }
 
 struct radix_node *
-rn_addroute(void *v_arg, void *n_arg, struct radix_head *head,
-    struct radix_node treenodes[2])
+rn_addroute_flags(void *v_arg, void *n_arg, struct radix_head *head,
+				  struct radix_node treenodes[2], int flags)
 {
 	caddr_t v = (caddr_t)v_arg, netmask = (caddr_t)n_arg;
 	struct radix_node *t, *x = NULL, *tt;
@@ -613,7 +619,7 @@ rn_addroute(void *v_arg, void *n_arg, struct radix_head *head,
 	 * nodes and possibly save time in calculating indices.
 	 */
 	if (netmask)  {
-		x = rn_addmask(netmask, head->rnh_masks, 0, top->rn_offset);
+		x = rn_addmask(netmask, head->rnh_masks, 0, top->rn_offset, flags);
 		if (x == NULL)
 			return (0);
 		b_leaf = x->rn_bit;
@@ -710,7 +716,7 @@ rn_addroute(void *v_arg, void *n_arg, struct radix_head *head,
 	if (x->rn_bit < 0) {
 	    for (mp = &t->rn_mklist; x; x = x->rn_dupedkey)
 		if (x->rn_mask && (x->rn_bit >= b_leaf) && x->rn_mklist == 0) {
-			*mp = m = rn_new_radix_mask(x, 0);
+			*mp = m = rn_new_radix_mask(x, 0, flags);
 			if (m)
 				mp = &m->rm_mklist;
 		}
@@ -763,12 +769,19 @@ on2:
 		    || rn_lexobetter(netmask, mmask))
 			break;
 	}
-	*mp = rn_new_radix_mask(tt, *mp);
+	*mp = rn_new_radix_mask(tt, *mp, flags);
 	return (tt);
 }
 
 struct radix_node *
-rn_delete(void *v_arg, void *netmask_arg, struct radix_head *head)
+rn_addroute(void *v_arg, void *n_arg, struct radix_head *head,
+			struct radix_node treenodes[2])
+{
+	return (rn_addroute_flags(v_arg, n_arg, head, treenodes, M_NOWAIT));
+}
+
+struct radix_node *
+rn_delete_flags(void *v_arg, void *netmask_arg, struct radix_head *head, int flags)
 {
 	struct radix_node *t, *p, *x, *tt;
 	struct radix_mask *m, *saved_m, **mp;
@@ -791,7 +804,7 @@ rn_delete(void *v_arg, void *netmask_arg, struct radix_head *head)
 	 * Delete our route from mask lists.
 	 */
 	if (netmask) {
-		x = rn_addmask(netmask, head->rnh_masks, 1, head_off);
+		x = rn_addmask(netmask, head->rnh_masks, 1, head_off, flags);
 		if (x == NULL)
 			return (0);
 		netmask = x->rn_key;
@@ -949,6 +962,11 @@ out:
 	tt->rn_flags &= ~RNF_ACTIVE;
 	tt[1].rn_flags &= ~RNF_ACTIVE;
 	return (tt);
+}
+struct radix_node *
+rn_delete(void *v_arg, void *netmask_arg, struct radix_head *head)
+{
+	return (rn_delete_flags(v_arg, netmask_arg, head, M_NOWAIT));
 }
 
 /*
@@ -1139,7 +1157,7 @@ rn_detachhead_internal(struct radix_head *head)
 /* Functions used by 'struct radix_node_head' users */
 
 int
-rn_inithead(void **head, int off)
+rn_inithead_flags(void **head, int off, int flags)
 {
 	struct radix_node_head *rnh;
 	struct radix_mask_head *rmh;
@@ -1150,8 +1168,8 @@ rn_inithead(void **head, int off)
 	if (*head != NULL)
 		return (1);
 
-	R_Zalloc(rnh, struct radix_node_head *, sizeof (*rnh));
-	R_Zalloc(rmh, struct radix_mask_head *, sizeof (*rmh));
+	R_Zalloc_flags(rnh, struct radix_node_head *, sizeof (*rnh), flags);
+	R_Zalloc_flags(rmh, struct radix_mask_head *, sizeof (*rmh), flags);
 	if (rnh == NULL || rmh == NULL) {
 		if (rnh != NULL)
 			R_Free(rnh);
@@ -1175,6 +1193,12 @@ rn_inithead(void **head, int off)
 	rnh->rnh_walktree_from = rn_walktree_from;
 
 	return (1);
+}
+
+int
+rn_inithead(void **head, int off)
+{
+	return rn_inithead_flags(head, off, M_NOWAIT);
 }
 
 static int
