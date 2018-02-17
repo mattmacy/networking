@@ -21,6 +21,7 @@ SRCS+=	art.c \
 	if_vpcp.c \
 	if_vpcsw.c \
 	vmmnet.c \
-	vpc.c
+	vpc.c	\
+	vpc_route.c
 
 .include <bsd.kmod.mk>
