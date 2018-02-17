@@ -47,7 +47,8 @@ const (
 // found, Open returns ENOENT unless the Create flag is set in flags.  If the
 // Create flag is set and the id is found, Open returns EEXIST.  If an invalid
 // Flag is set, Open returns EINVAL.  If the HandleType is out of bounds, Open
-// returns EOPNOTSUPP.
+// returns EOPNOTSUPP.  Returned Handles must have their information Commit()'ed
+// in order for it to persist beyond the life of the Handle.
 func Open(id ID, ht HandleType, flags OpenFlags) (h Handle, err error) {
 	// 580     AUE_VPC         NOSTD   { int vpc_open(const vpc_id_t *vpc_id, vpc_type_t obj_type, \
 	//                                   vpc_flags_t flags); }
@@ -61,16 +62,16 @@ func Open(id ID, ht HandleType, flags OpenFlags) (h Handle, err error) {
 }
 
 // Ctl manipulates the Handle based on the args
-func Ctl(h Handle, op OpFlag, in []byte, out *[]byte) error {
+func Ctl(h Handle, cmd Cmd, in []byte, out *[]byte) error {
 	// // syscall 581:
 	// 581     AUE_VPC         NOSTD   { int vpc_ctl(int vpcd, vpc_op_t op, size_t innbyte, \
 	//                                     const void *in, size_t *outnbyte, void *out); }
 
 	// Implementation sanity checking
 	switch {
-	case op.In() && len(in) == 0:
+	case cmd.In() && len(in) == 0:
 		return errors.New("operation requires non-zero length input")
-	case op.Out() && out == nil:
+	case cmd.Out() && out == nil:
 		return errors.New("operation requires non-nil output")
 	}
 
