@@ -223,6 +223,9 @@ int vpcp_set_ifswitch(if_ctx_t ctx, if_t ifp);
 if_t vpcp_get_ifswitch(if_ctx_t ctx);
 void vpcp_clear_ifswitch(if_ctx_t ctx);
 
+struct rtr_ctx;
+typedef struct rtr_ctx *rtr_ctx_t;
+
 typedef struct vpcctx_public {
 	struct ifnet *v_ifp;
 	vpc_type_t v_obj_type;
@@ -246,6 +249,24 @@ int vpcsw_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 int vpcp_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			 size_t *outlen, void **outdata);
 
+int vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+			   size_t *outlen, void **outdata);
+
+
+rtr_ctx_t vpc_rtr_ctx_alloc(void);
+void vpc_rtr_ctx_free(rtr_ctx_t rc);
+
+int vpc_rtr_add(rtr_ctx_t rc, void *paddr, uint32_t value, uint8_t mlen, int family);
+int vpc_rtr_addv4(rtr_ctx_t rc, void *paddr, uint32_t value, uint8_t mlen);
+int vpc_rtr_addv6(rtr_ctx_t rc, void *paddr, uint32_t value, uint8_t mlen);
+
+int vpc_rtr_del(rtr_ctx_t rc, void *paddr, uint32_t value, uint8_t mlen, int family);
+int vpc_rtr_delv4(rtr_ctx_t rc, void *paddr, uint32_t value, uint8_t mlen);
+int vpc_rtr_delv6(rtr_ctx_t rc, void *paddr, uint32_t value, uint8_t mlen);
+
+int vpc_rtr_lookup(rtr_ctx_t rc, void *key, uint32_t *val, int family);
+int vpc_rtr_lookupv4(rtr_ctx_t rc, void *key, uint32_t *val);
+int vpc_rtr_lookupv6(rtr_ctx_t rc, void *key, uint32_t *val);
 
 #endif
 enum vpc_obj_type {
@@ -283,6 +304,12 @@ enum vpc_vmnic_op_type {
 	VPC_VMNIC_UNFREEZE =		10,
 	VPC_VMNIC_OP_TYPE_MAX =			10,
 };
+
+enum vpc_vpcrtr_op_type {
+	VPC_VPCRTR_INVALID = 0,
+	VPC_VPCRTR_NAT = 1
+};
+
 
 enum vpc_vpcsw_op_type {
 	VPC_VPCSW_INVALID = 0,
