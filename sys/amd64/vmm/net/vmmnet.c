@@ -93,6 +93,8 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 
 #define VPC_CTX_F_DESTROYED 0x1
 #define VPC_CTX_F_COMMITTED 0x2
+#define VPC_CTX_F_WRITE 0x4
+#define VPC_CTX_F_PRIV 0x8
 
 struct vpcctx {
 	struct ifnet *v_ifp;
@@ -301,6 +303,10 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			refcount_release(&ctx->v_refcnt);
 		goto unlock;
 	}
+	if (flags & VPC_F_WRITE)
+		ctx->v_flags |= VPC_CTX_F_WRITE;
+	if (priv_check(td, PRIV_DRIVER))
+		ctx->v_flags |= VPC_CTX_F_PRIV;
 	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
 	fdrop(fp, td);
 	td->td_retval[0] = fd;
@@ -371,6 +377,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 	vpc_op_t objop;
 	vpc_type_t objtype;
 	struct vpcctx *ctx;
+	uint64_t caps;
 	int rc;
 
 	objtype = VPC_OBJ_TYPE(op);
@@ -379,7 +386,15 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 	if (objtype == 0 || objtype > VPC_OBJ_TYPE_MAX)
 		return (EOPNOTSUPP);
 
-	if (fget(td, vpcd, cap_rights_init(&rights, CAP_VPC_CTL), &fp) != 0)
+	caps = CAP_VPC_READ;
+	if (op & IOC_PRIVMUT)
+		caps |= CAP_VPC_PRIVWRITE;
+	else if (op & IOC_PRIV)
+		caps |= CAP_VPC_PRIVREAD;
+	else if (op & IOC_MUT)
+		caps |= CAP_VPC_WRITE;
+
+	if (fget(td, vpcd, cap_rights_init(&rights, caps), &fp) != 0)
 		return (EBADF);
 	if ((fp->f_type != DTYPE_VPCFD) ||
 		(fp->f_data == NULL)) {
@@ -389,6 +404,14 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 	ctx = fp->f_data;
 	if ((objtype != VPC_OBJ_MGMT) && (ctx->v_obj_type != objtype)) {
 		rc = ENODEV;
+		goto done;
+	}
+	if ((op & IOC_PRIV) && ((ctx->v_flags & VPC_CTX_F_PRIV) == 0)) {
+		rc = EPERM;
+		goto done;
+	}
+	if ((op & IOC_MUT) && ((ctx->v_flags & VPC_CTX_F_WRITE) == 0)) {
+		rc = EPERM;
 		goto done;
 	}
 	if (objtype != VPC_OBJ_MGMT) {
