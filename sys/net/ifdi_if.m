@@ -40,6 +40,8 @@
 #include <net/if_media.h>
 #include <net/iflib.h>
 #include <net/if_clone.h>
+#include <net/if_dl.h>
+#include <net/if_types.h>
 
 INTERFACE ifdi;
 
@@ -137,6 +139,17 @@ CODE {
 	null_rx_clset(if_ctx_t _ctx __unused, uint16_t _flid __unused,
 		      uint16_t _qid __unused, caddr_t *_sdcl __unused)
 	{
+	}
+	static void
+	default_mac_set(if_ctx_t ctx, const uint8_t *mac)
+	{
+	    struct ifnet *ifp = iflib_get_ifp(ctx);
+	    struct sockaddr_dl *sdl;
+
+	    sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+	    MPASS(sdl->sdl_type == IFT_ETHER);
+	    memcpy(LLADDR(sdl), mac, ETHER_ADDR_LEN);
+
 	}
 };
 
@@ -270,6 +283,10 @@ METHOD int mtu_set {
 	if_ctx_t _ctx;
 	uint32_t _mtu;
 };
+METHOD int mac_set {
+	if_ctx_t _ctx;
+	const uint8_t *_mac;
+} DEFAULT default_mac_set;
 
 METHOD void media_set{
 	if_ctx_t _ctx;
