@@ -260,7 +260,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		}
 		refcount_acquire(&ctx->v_refcnt);
 	} else {
-		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK);
+		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK|M_ZERO);
 		strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
 		ctx->v_ifp = NULL;
 		if (type->vht_obj_type != VPC_OBJ_L2LINK) {
