@@ -301,6 +301,13 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			refcount_release(&ctx->v_refcnt);
 		goto unlock;
 	}
+	if ((flags & VPC_F_CREATE) &&
+		(ctx->v_ifp != NULL)) {
+		if_ctx_t ifctx;
+
+		ifctx = ctx->v_ifp->if_softc;
+		iflib_set_mac(ifctx, vpc_id->node);
+	}
 	if (flags & VPC_F_WRITE)
 		ctx->v_flags |= VPC_CTX_F_WRITE;
 	if (priv_check(td, PRIV_DRIVER))
