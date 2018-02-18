@@ -380,7 +380,8 @@ struct ifmedia *iflib_get_media(if_ctx_t ctx);
 if_softc_ctx_t iflib_get_softc_ctx(if_ctx_t ctx);
 if_shared_ctx_t iflib_get_sctx(if_ctx_t ctx);
 
-void iflib_set_mac(if_ctx_t ctx, uint8_t mac[ETHER_ADDR_LEN]);
+int iflib_set_mac(if_ctx_t ctx, const uint8_t mac[ETHER_ADDR_LEN]);
+int iflib_set_mtu(if_ctx_t ctx, uint32_t mtu);
 
 /*
  * If the driver can plug cleanly in to newbus use these

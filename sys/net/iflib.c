@@ -263,13 +263,6 @@ iflib_get_media(if_ctx_t ctx)
 	return (&ctx->ifc_media);
 }
 
-void
-iflib_set_mac(if_ctx_t ctx, uint8_t mac[ETHER_ADDR_LEN])
-{
-
-	bcopy(mac, ctx->ifc_mac, ETHER_ADDR_LEN);
-}
-
 if_softc_ctx_t
 iflib_get_softc_ctx(if_ctx_t ctx)
 {
@@ -1272,6 +1265,54 @@ prefetch2cachelines(void *x)
 #define prefetch(x)
 #define prefetch2cachelines(x)
 #endif
+
+int
+iflib_set_mac(if_ctx_t ctx, const uint8_t mac[ETHER_ADDR_LEN])
+{
+	uint8_t i, bits;
+	int rc;
+
+	for (bits = i = 0; i < ETHER_ADDR_LEN; i++)
+		bits |= mac[i];
+	if (bits == 0)
+		return (EINVAL);
+	if (ETHER_IS_MULTICAST(mac))
+		return (EINVAL);
+
+	if ((rc = IFDI_MAC_SET(ctx, mac)))
+		return (rc);
+
+	bcopy(mac, ctx->ifc_mac, ETHER_ADDR_LEN);
+	return (0);
+}
+
+int
+iflib_set_mtu(if_ctx_t ctx, uint32_t mtu)
+{
+	struct ifnet *ifp = iflib_get_ifp(ctx);
+	int err, bits;
+
+	CTX_LOCK(ctx);
+	if (mtu == if_getmtu(ifp)) {
+		CTX_UNLOCK(ctx);
+		return (0);
+	}
+	bits = if_getdrvflags(ifp);
+	/* stop the driver and free any clusters before proceeding */
+	iflib_stop(ctx);
+
+	if ((err = IFDI_MTU_SET(ctx, mtu)) == 0) {
+		if (mtu > ctx->ifc_max_fl_buf_size)
+			ctx->ifc_flags |= IFC_MULTISEG;
+		else
+			ctx->ifc_flags &= ~IFC_MULTISEG;
+		err = if_setmtu(ifp, mtu);
+	}
+	iflib_init_locked(ctx);
+	if_setdrvflags(ifp, bits);
+	CTX_UNLOCK(ctx);
+	return (err);
+}
 
 static void
 iflib_gen_mac(if_ctx_t ctx)
@@ -4529,26 +4570,8 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		} else
 			err = ether_ioctl(ifp, command, data);
 		break;
-	case SIOCSIFMTU:
-		CTX_LOCK(ctx);
-		if (ifr->ifr_mtu == if_getmtu(ifp)) {
-			CTX_UNLOCK(ctx);
-			break;
-		}
-		bits = if_getdrvflags(ifp);
-		/* stop the driver and free any clusters before proceeding */
-		iflib_stop(ctx);
-
-		if ((err = IFDI_MTU_SET(ctx, ifr->ifr_mtu)) == 0) {
-			if (ifr->ifr_mtu > ctx->ifc_max_fl_buf_size)
-				ctx->ifc_flags |= IFC_MULTISEG;
-			else
-				ctx->ifc_flags &= ~IFC_MULTISEG;
-			err = if_setmtu(ifp, ifr->ifr_mtu);
-		}
-		iflib_init_locked(ctx);
-		if_setdrvflags(ifp, bits);
-		CTX_UNLOCK(ctx);
+		case SIOCSIFMTU:
+			err = iflib_set_mtu(ctx, ifr->ifr_mtu);
 		break;
 	case SIOCSIFFLAGS:
 		CTX_LOCK(ctx);
