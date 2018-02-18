@@ -146,10 +146,11 @@ CODE {
 	    struct ifnet *ifp = iflib_get_ifp(ctx);
 	    struct sockaddr_dl *sdl;
 
-	    sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-	    MPASS(sdl->sdl_type == IFT_ETHER);
-	    memcpy(LLADDR(sdl), mac, ETHER_ADDR_LEN);
-
+	    if (ifp && ifp->if_addr) {
+		sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+		MPASS(sdl->sdl_type == IFT_ETHER);
+		memcpy(LLADDR(sdl), mac, ETHER_ADDR_LEN);
+	    }
 	}
 };
 
