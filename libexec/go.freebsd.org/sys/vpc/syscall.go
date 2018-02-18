@@ -187,6 +187,10 @@ const (
 // Close closes a VPC Handle.  Closing a VPC Handle does not destroy any
 // resources.
 func (h *Handle) Close() error {
+	if *h == ClosedHandle {
+		return nil
+	}
+
 	// TODO(seanc@): verify that we don't need to wrap this close in a loop
 	if err := syscall.Close(int(*h)); err != nil {
 		return errors.Wrap(err, "unable to close VPC handle")
