@@ -846,7 +846,6 @@ vpclink_fte_print(struct vpclink_softc *vs)
 	art_iter(&vs->vs_vxftable, vpclink_vxftable_print_callback, NULL);
 }
 
-#ifdef notyet
 static int
 vpclink_ftable_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
@@ -874,79 +873,65 @@ vpc_fte_count(struct vpclink_softc *vs)
 }
 
 static int
-vpclink_fte_list(struct vpclink_softc *vs, struct vpc_fte_list *vfl, int length)
+vpclink_fte_list(struct vpclink_softc *vs, struct vpclink_fte_list **vflp, size_t *length)
 {
-	if (length == sizeof(struct vpc_fte_list) &&
-		vfl->vfl_count == 0) {
+	struct vpclink_fte_list *vfl;
+
+	if (*length == sizeof(struct vpclink_fte_list)) {
+		vfl = malloc(sizeof(*vfl), M_TEMP, M_WAITOK|M_ZERO);
 		vfl->vfl_count = vpc_fte_count(vs);
+		*vflp = vfl;
 		return (0);
 	}
-	if (length != (sizeof(struct vpc_fte_list) +
-				   vfl->vfl_count*sizeof(struct vpc_fte)))
+#if 0
+	if (length != (sizeof(struct vpclink_fte_list) +
+				   vfl->vfl_count*sizeof(struct vpclink_fte)))
 		return (EINVAL);
+#endif	
 	/* XXX implement me */
 	return (EOPNOTSUPP);
 }
 
-static int
-vpc_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
+
+int
+vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
 {
-	struct vpclink_softc *vs = iflib_get_softc(ctx);
-	struct ifreq *ifr = (struct ifreq *)data;
-	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
-	struct vpc_ioctl_header *ioh =
-	    (struct vpc_ioctl_header *)(ifbuf->buffer);
-	int rc = ENOTSUP;
-	struct vpc_ioctl_data *iod = NULL;
+	struct ifnet *ifp = ctx->v_ifp;
+	if_ctx_t ifctx = ifp->if_softc;
+	struct vpclink_softc *vs = iflib_get_softc(ifctx);
 
-	if (command != SIOCGPRIVATE_0)
-		return (EINVAL);
+	switch(op) {
+		case VPC_VPCLINK_LISTEN: {
+			const struct sockaddr *vl_addr = in;
 
-	if ((rc = priv_check(curthread, PRIV_DRIVER)) != 0)
-		return (rc);
-	if (ioh->vih_type != VPC_FTE_ALL &&
-		IOCPARM_LEN(ioh->vih_type) != ifbuf->length) {
-		DPRINTF("IOCPARM_LEN: %d ifbuf->length: %d\n",
-			   (int)IOCPARM_LEN(ioh->vih_type), (int)ifbuf->length);
-			   return (EINVAL);
+			if (inlen != sizeof(*vl_addr))
+				return (EBADRPC);
+			return (vpclink_set_listen(vs, vl_addr));
+			break;
+		}
+		case VPC_VPCLINK_FTE_DEL:
+		case VPC_VPCLINK_FTE_SET: {
+			const struct vpclink_fte *vfte = in;
+
+			if (inlen != sizeof(*vfte))
+				return (EBADRPC);
+			return (vpclink_fte_update(vs, vfte, op == VPC_VPCLINK_FTE_SET));
+			break;
+		}
+		case VPC_VPCLINK_FTE_LIST: {
+			struct vpclink_fte_list *vfl;
+			int rc;
+
+			if ((rc = vpclink_fte_list(vs, &vfl, outlen)))
+				return (rc);
+			*outdata = vfl;
+			break;
+		}
 	}
-#ifdef notyet
-	/* need sx lock for iflib context */
-	iod = malloc(ifbuf->length, M_VPCLINK, M_WAITOK | M_ZERO);
-#endif
-	iod = malloc(ifbuf->length, M_VPCLINK, M_NOWAIT | M_ZERO);
-	if (iod == NULL)
-		return (ENOMEM);
-	rc = copyin(ioh, iod, ifbuf->length);
-	if (rc) {
-		free(iod, M_VPCLINK);
-		return (rc);
-	}
-	switch (ioh->vih_type) {
-		case VPC_LISTEN:
-			rc = vpc_set_listen(vs, (struct vpc_listen *)iod);
-			break;
-		case VPC_FTE_SET:
-			rc = vpc_fte_update(vs, (struct vpc_fte_update *)iod, true);
-			break;
-		case VPC_FTE_DEL:
-			rc = vpc_fte_update(vs, (struct vpc_fte_update *)iod, false);
-			break;
-		case VPC_FTE_ALL:
-			if (ifbuf->length < sizeof(struct vpc_fte_list))
-				return (EINVAL);
-			rc = vpc_fte_list(vs, (struct vpc_fte_list *)iod, ifbuf->length);
-			if (!rc)
-				rc = copyout(iod, ioh, ifbuf->length);
-			break;
-		default:
-			rc = ENOIOCTL;
-			break;
-	}
-	free(iod, M_VPCLINK);
-	return (rc);
+	return (EOPNOTSUPP);
 }
-#endif
+
 static device_method_t vpclink_if_methods[] = {
 	DEVMETHOD(ifdi_cloneattach, vpclink_cloneattach),
 	DEVMETHOD(ifdi_attach_post, vpclink_attach_post),
