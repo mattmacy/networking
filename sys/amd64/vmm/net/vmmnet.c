@@ -309,7 +309,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	}
 	if (flags & VPC_F_WRITE)
 		ctx->v_flags |= VPC_CTX_F_WRITE;
-	if (priv_check(td, PRIV_DRIVER))
+	if (priv_check(td, PRIV_DRIVER) == 0)
 		ctx->v_flags |= VPC_CTX_F_PRIV;
 	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
 	fdrop(fp, td);
