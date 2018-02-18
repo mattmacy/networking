@@ -100,9 +100,6 @@ static uint32_t vpcp_vxlanid_get(if_ctx_t ctx);
 static void vpcp_vlanid_set(if_ctx_t ctx, uint16_t vlanid);
 static uint16_t vpcp_vlanid_get(if_ctx_t ctx);
 static int vpcp_port_type_set(if_ctx_t ctx, vpc_ctx_t vctx, enum vpcp_port_type type);
-static void vpcp_mac_set(if_ctx_t ctx, const uint8_t *mac);
-static void vpcp_mac_get(if_ctx_t ctx, uint8_t *mac);
-
 static int clone_count;
 
 static int
@@ -470,20 +467,6 @@ vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			vpcp_vlanid_set(ctx, vtag);
 			break;
 		}
-		case VPC_VPCP_OP_MAC_GET: {
-			uint8_t *mac;
-
-			*outlen = ETHER_ADDR_LEN;
-			mac = malloc(ETHER_ADDR_LEN, M_TEMP, M_WAITOK);
-			vpcp_mac_get(ctx, mac);
-			*outdata = mac;
-			break;
-		}
-		case VPC_VPCP_OP_MAC_SET:
-			if (inlen != ETHER_ADDR_LEN)
-				goto fail;
-			vpcp_mac_set(ctx, in);
-			break;
 		case VPC_VPCP_OP_PEER_ID_GET: {
 			vpc_id_t *id;
 
@@ -625,29 +608,6 @@ vpcp_vlanid_get(if_ctx_t ctx)
 
 	return (vs->vs_vlanid);
 }
-
-static void
-vpcp_mac_get(if_ctx_t ctx, uint8_t *mac)
-{
-	struct sockaddr_dl *sdl;
-	struct ifnet *ifp = iflib_get_ifp(ctx);
-
-	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-	MPASS(sdl->sdl_type == IFT_ETHER);
-	memcpy(mac, LLADDR(sdl), ETHER_ADDR_LEN);
-}
-
-static void
-vpcp_mac_set(if_ctx_t ctx, const uint8_t *mac)
-{
-	struct sockaddr_dl *sdl;
-	struct ifnet *ifp = iflib_get_ifp(ctx);
-
-	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-	MPASS(sdl->sdl_type == IFT_ETHER);
-	memcpy(LLADDR(sdl), mac, ETHER_ADDR_LEN);
-}
-
 
 static device_method_t vpcp_if_methods[] = {
 	DEVMETHOD(ifdi_cloneattach, vpcp_cloneattach),

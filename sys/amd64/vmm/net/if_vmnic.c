@@ -1591,8 +1591,6 @@ vb_vm_attach(struct vb_softc *vs, const struct vb_vm_attach *vva)
 static int
 vb_vm_deferred_attach(struct vb_softc *vs, const struct vb_vm_attach *va)
 {
-	struct ifnet *ifp = iflib_get_ifp(vs->vs_ctx);
-	struct sockaddr_dl *sdl;
 	int rc;
 
 	if ((rc = vb_vm_attach(vs, va))) {
@@ -1601,14 +1599,6 @@ vb_vm_deferred_attach(struct vb_softc *vs, const struct vb_vm_attach *va)
 	}
 	if ((rc = vb_if_attach(vs)))
 		return (rc);
-
-	vs->vs_cfg.mtu = ifp->if_mtu;
-	memcpy(&vs->vs_cfg.mac, vs->vs_origmac, ETHER_ADDR_LEN);
-	iflib_set_mac(vs->vs_ctx, vs->vs_origmac);
-
-	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-	MPASS(sdl->sdl_type == IFT_ETHER);
-	memcpy(LLADDR(sdl), vs->vs_origmac, ETHER_ADDR_LEN);
 	if (vs->vs_flags & VS_NQS_CHANGED) {
 		rc = iflib_device_reinit(vs->vs_ctx);
 		if (!rc)
@@ -1642,6 +1632,38 @@ vb_detach(if_ctx_t ctx)
 	free(vs->vs_msix, M_VTNETBE);
 	free(vs->vs_queues, M_VTNETBE);
 
+	return (0);
+}
+
+static int
+vmnic_mtu_set(if_ctx_t ctx, uint32_t mtu)
+{
+	struct vb_softc *vs = iflib_get_softc(ctx);
+	struct ifnet *ifp = iflib_get_ifp(ctx);
+
+	if (vs->vs_flags & VS_IMMUTABLE)
+		return (EBUSY);
+	vs->vs_flags |= VS_MAC_ISSET;
+	ifp->if_mtu = mtu;
+	vs->vs_cfg.mtu = mtu;
+	return (0);
+}
+
+static int
+vmnic_mac_set(if_ctx_t ctx, const uint8_t *mac)
+{
+	struct vb_softc *vs = iflib_get_softc(ctx);
+	struct ifnet *ifp;
+	struct sockaddr_dl *sdl;
+
+	if (vs->vs_flags & VS_IMMUTABLE)
+		return (EBUSY);
+	ifp = iflib_get_ifp(ctx);
+	memcpy(vs->vs_origmac, mac, ETHER_ADDR_LEN);
+	vs->vs_flags |= VS_MAC_ISSET;
+	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+	MPASS(sdl->sdl_type == IFT_ETHER);
+	memcpy(LLADDR(sdl), vs->vs_origmac, ETHER_ADDR_LEN);
 	return (0);
 }
 
@@ -1683,7 +1705,7 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 {
 	if_ctx_t ctx = vctx->v_ifp->if_softc;
 	struct vb_softc *vs = iflib_get_softc(ctx);
-	int i, rc;
+	int rc;
 
 	rc = 0;
 	switch (op) {
@@ -1715,54 +1737,6 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				vs->vs_flags |= VS_NQS_CHANGED;
 			}
 			break;
-		}
-		case VPC_VMNIC_OP_MAC_GET: {
-			uint8_t *mac;
-
-			if (*outlen < ETHER_ADDR_LEN)
-				return (EOVERFLOW);
-			*outlen = ETHER_ADDR_LEN;
-			mac = malloc(ETHER_ADDR_LEN, M_TEMP, M_WAITOK);
-			memcpy(mac, vs->vs_origmac, ETHER_ADDR_LEN);
-			*outdata = mac;
-			break;
-
-		}
-		case VPC_VMNIC_OP_MAC_SET: {
-			const uint8_t *mac = in;
-			uint8_t bits = 0;
-
-			if (inlen != ETHER_ADDR_LEN)
-				return (EBADRPC);
-			if (vs->vs_flags & VS_IMMUTABLE)
-				return (EBUSY);
-			for (i = 0; i < ETHER_ADDR_LEN; i++)
-				bits |= mac[i];
-			if (bits == 0)
-				return (EINVAL);
-			if (ETHER_IS_MULTICAST(mac))
-				return (EINVAL);
-			memcpy(vs->vs_origmac, mac, ETHER_ADDR_LEN);
-			vs->vs_flags |= VS_MAC_ISSET;
-			break;
-		}
-		case VPC_VMNIC_OP_MTU_GET: {
-			uint32_t *mtu;
-
-			if (*outlen < sizeof(uint32_t))
-				return (EOVERFLOW);
-
-			*outlen = sizeof(uint32_t);
-			mtu = malloc(*outlen, M_TEMP, M_WAITOK);
-			*mtu = vctx->v_ifp->if_mtu;
-		}
-		case VPC_VMNIC_OP_MTU_SET: {
-			const uint32_t *mtu = in;
-
-			if (inlen != sizeof(uint32_t))
-				return (EBADRPC);
-			vctx->v_ifp->if_mtu = *mtu;
-			vs->vs_cfg.mtu = *mtu;
 		}
 		case VPC_VMNIC_OP_ATTACH: {
 			if (!(vs->vs_flags & VS_IMMUTABLE))
@@ -1922,6 +1896,8 @@ static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_cloneattach, vb_cloneattach),
 	DEVMETHOD(ifdi_attach_post, vb_attach_post),
 	DEVMETHOD(ifdi_detach, vb_detach),
+	DEVMETHOD(ifdi_mtu_set, vmnic_mtu_set),
+	DEVMETHOD(ifdi_mac_set, vmnic_mac_set),
 	DEVMETHOD(ifdi_init, vb_init),
 	DEVMETHOD(ifdi_stop, vb_stop),
 	DEVMETHOD(ifdi_rx_clset, vb_rx_clset),
