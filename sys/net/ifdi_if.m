@@ -140,7 +140,7 @@ CODE {
 		      uint16_t _qid __unused, caddr_t *_sdcl __unused)
 	{
 	}
-	static void
+	static int
 	default_mac_set(if_ctx_t ctx, const uint8_t *mac)
 	{
 	    struct ifnet *ifp = iflib_get_ifp(ctx);
@@ -151,6 +151,7 @@ CODE {
 		MPASS(sdl->sdl_type == IFT_ETHER);
 		memcpy(LLADDR(sdl), mac, ETHER_ADDR_LEN);
 	    }
+	    return (0);
 	}
 };
 
