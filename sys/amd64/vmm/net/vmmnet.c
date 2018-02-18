@@ -84,8 +84,6 @@ static MALLOC_DEFINE(M_VMMNET, "vmmnet", "vmm networking");
 static art_tree vpc_uuid_table;
 
 static struct sx vmmnet_lock;
-
-
 SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 
 #define VMMNET_LOCK() sx_xlock(&vmmnet_lock)
@@ -316,13 +314,6 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 }
 
 static int
-vpcr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
-				 size_t *outlen, void **outdata)
-{
-	return (EOPNOTSUPP);
-}
-
-static int
 vpcnat_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
@@ -362,7 +353,7 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	NULL,
 	vpcsw_ctl,
 	vpcp_ctl,
-	vpcr_ctl,
+	vpcrtr_ctl,
 	vpcnat_ctl,
 	vpclink_ctl,
 	vmnic_ctl,
@@ -372,6 +363,7 @@ static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			 const void *in, size_t *outnbyte, void **outp)
 {
+	struct ifnet *ifp;
 	cap_rights_t rights;
 	struct file *fp;
 	vpc_op_t objop;
@@ -418,17 +410,23 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		rc = vpc_ctl_dispatch[objtype]((vpc_ctx_t)ctx, op, innbyte, in, outnbyte, outp);
 		goto done;
 	}
+
+	ifp = ctx->v_ifp;
 	switch (op) {
 		case VPC_OBJ_OP_DESTROY:
 			if ((ctx->v_flags & (VPC_CTX_F_DESTROYED|VPC_CTX_F_COMMITTED)) !=
-				VPC_CTX_F_COMMITTED)
-				return (EAGAIN);
+				VPC_CTX_F_COMMITTED) {
+				rc = EAGAIN;
+				goto done;
+			}
 			ctx->v_flags |= VPC_CTX_F_DESTROYED;
 			refcount_release(&ctx->v_refcnt);
 			break;
 		case VPC_OBJ_OP_COMMIT:
-			if (ctx->v_flags & (VPC_CTX_F_DESTROYED|VPC_CTX_F_COMMITTED))
-				return (EALREADY);
+			if (ctx->v_flags & (VPC_CTX_F_DESTROYED|VPC_CTX_F_COMMITTED)) {
+				rc = EALREADY;
+				goto done;
+			}
 			ctx->v_flags |= VPC_CTX_F_COMMITTED;
 			refcount_acquire(&ctx->v_refcnt);
 			break;
@@ -438,6 +436,72 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			*outnbyte = 1;
 			typep = malloc(sizeof(uint8_t), M_TEMP, M_WAITOK);
 			*typep = ctx->v_obj_type;
+			break;
+		}
+		case VPC_OBJ_OP_MAC_SET: {
+			if_ctx_t ifctx;
+			const uint8_t *mac = in;
+
+			if ((ctx->v_obj_type == VPC_OBJ_L2LINK) ||
+				(innbyte != ETHER_ADDR_LEN)) {
+				rc = EBADRPC;
+				goto done;
+			}
+			ifctx = ifp->if_softc;
+			iflib_set_mac(ifctx, mac);
+			break;
+		}
+		case VPC_OBJ_OP_MAC_GET: {
+			struct sockaddr_dl *sdl;
+			uint8_t *mac;
+
+			if (ctx->v_ifp == NULL) {
+				rc = EINPROGRESS;
+				goto done;
+			}
+			if (*outnbyte < ETHER_ADDR_LEN) {
+				rc = EOVERFLOW;
+				goto done;
+			}
+			*outnbyte = ETHER_ADDR_LEN;
+			mac = malloc(ETHER_ADDR_LEN, M_TEMP, M_WAITOK);
+			sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
+			MPASS(sdl->sdl_type == IFT_ETHER);
+			memcpy(mac, LLADDR(sdl), ETHER_ADDR_LEN);
+			break;
+		}
+		case VPC_OBJ_OP_MTU_SET: {
+			if_ctx_t ifctx;
+			struct ifreq ifr;
+			const uint32_t *mtu = in;
+
+			if (innbyte != sizeof(uint32_t)) {
+				rc = EBADRPC;
+				goto done;
+			}
+			if (ctx->v_obj_type == VPC_OBJ_L2LINK) {
+				ifr.ifr_mtu = *mtu;
+				ifp->if_ioctl(ifp, SIOCSIFMTU, (caddr_t)&ifr);
+			} else {
+				ifctx = ifp->if_softc;
+				iflib_set_mtu(ifctx, *mtu);
+			}
+			break;
+		}
+		case VPC_OBJ_OP_MTU_GET: {
+			uint32_t *mtu;
+
+			if (ifp == NULL) {
+				rc = EINPROGRESS;
+				goto done;
+			}
+			if (*outnbyte < sizeof(uint32_t)) {
+				rc = EOVERFLOW;
+				goto done;
+			}
+			*outnbyte = sizeof(uint32_t);
+			mtu = malloc(*outnbyte, M_TEMP, M_WAITOK);
+			*mtu = ifp->if_mtu;
 			break;
 		}
 		default:
