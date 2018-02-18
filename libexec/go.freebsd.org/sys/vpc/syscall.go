@@ -33,11 +33,14 @@
 package vpc
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"syscall"
 
 	"github.com/pkg/errors"
+	uuid "github.com/satori/go.uuid"
 )
 
 // VNI is the type for VXLAN Network Identifiers ("VNI")
@@ -59,7 +62,7 @@ type ID struct {
 	TimeHi      uint16
 	ClockSeqHi  uint8
 	ClockSeqLow uint8
-	Node        [6]uint8
+	Node        [6]byte
 }
 
 // GenID randomly generates a new UUID
@@ -108,6 +111,49 @@ func GenID() ID {
 		ClockSeqLow: randUint8(),
 		Node:        randNode(),
 	}
+}
+
+func ParseID(idStr string) (ID, error) {
+	uuidRaw, err := uuid.FromString(idStr)
+	if err != nil {
+		return ID{}, errors.Wrapf(err, "unable to parse UUID: %q", idStr)
+	}
+
+	id := ID{
+		TimeLow:     binary.LittleEndian.Uint32(uuidRaw[0:]),
+		TimeMid:     binary.LittleEndian.Uint16(uuidRaw[4:]),
+		TimeHi:      binary.LittleEndian.Uint16(uuidRaw[6:]),
+		ClockSeqHi:  uint8(binary.LittleEndian.Uint16(uuidRaw[8:])),
+		ClockSeqLow: uint8(binary.LittleEndian.Uint16(uuidRaw[9:])),
+	}
+
+	buf := bytes.NewReader(uuidRaw[10:])
+	err = binary.Read(buf, binary.LittleEndian, id.Node[0:])
+	if err != nil {
+		return ID{}, errors.Wrap(err, "unable to read bytes")
+	}
+
+	return id, nil
+}
+
+func (id ID) String() string {
+	var binBuf bytes.Buffer
+	binBuf.Grow(16)
+	binary.Write(&binBuf, binary.LittleEndian, id)
+	uuid := binBuf.Bytes()
+
+	var buf [36]byte
+	hex.Encode(buf[:], uuid[:4])
+	buf[8] = '-'
+	hex.Encode(buf[9:13], uuid[4:6])
+	buf[13] = '-'
+	hex.Encode(buf[14:18], uuid[6:8])
+	buf[18] = '-'
+	hex.Encode(buf[19:23], uuid[8:10])
+	buf[23] = '-'
+	hex.Encode(buf[24:], uuid[10:])
+
+	return string(buf[:])
 }
 
 // OpenFlags is the flags passed to Open
