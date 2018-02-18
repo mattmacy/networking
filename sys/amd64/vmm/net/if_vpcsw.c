@@ -579,7 +579,6 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	}
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 	if (sdl->sdl_type != IFT_ETHER) {
-		if_rele(ifp);
 		if_clone_destroy(ifr.ifr_name);
 		return (EINVAL);
 	}
@@ -656,7 +655,6 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge = NULL;
 	ifp->if_bridge_input = NULL;
 	ifp->if_bridge_output = NULL;
-	if_rele(ifp);
 	if_clone_destroy(ifp->if_xname);
 	return (0);
  fail:
