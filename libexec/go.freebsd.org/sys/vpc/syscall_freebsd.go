@@ -63,10 +63,6 @@ func Open(id ID, ht HandleType, flags OpenFlags) (h Handle, err error) {
 
 // Ctl manipulates the Handle based on the args
 func Ctl(h Handle, cmd Cmd, in []byte, out *[]byte) error {
-	// // syscall 581:
-	// 581     AUE_VPC         NOSTD   { int vpc_ctl(int vpcd, vpc_op_t op, size_t innbyte, \
-	//                                     const void *in, size_t *outnbyte, void *out); }
-
 	// Implementation sanity checking
 	switch {
 	case cmd.In() && len(in) == 0:
@@ -75,5 +71,29 @@ func Ctl(h Handle, cmd Cmd, in []byte, out *[]byte) error {
 		return errors.New("operation requires non-nil output")
 	}
 
-	return errors.New("not implemented")
+	// 581     AUE_VPC         NOSTD   { int vpc_ctl(int vpcd, vpc_op_t op, size_t innbyte, \
+	//                                     const void *in, size_t *outnbyte, void *out); }
+	var r1 uintptr
+	var e1 syscall.Errno
+	switch {
+	case len(in) == 0 && out == nil:
+		r1, _, e1 = syscall.Syscall6(SYS_VPC_CTL, uintptr(h), uintptr(cmd),
+			uintptr(0), uintptr(0),
+			uintptr(0), uintptr(0))
+	case len(in) != 0 && out != nil:
+		r1, _, e1 = syscall.Syscall6(SYS_VPC_CTL, uintptr(h), uintptr(cmd),
+			uintptr(len(in)), uintptr(unsafe.Pointer(&in[0])),
+			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
+	case len(in) == 0 && out != nil:
+		r1, _, e1 = syscall.Syscall6(SYS_VPC_CTL, uintptr(h), uintptr(cmd),
+			uintptr(0), uintptr(0),
+			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
+	default:
+		panic("invalid args to vpc.Ctl()")
+	}
+	if r1 != 0 {
+		return e1
+	}
+
+	return nil
 }
