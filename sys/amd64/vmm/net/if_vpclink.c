@@ -31,7 +31,6 @@ __FBSDID("$FreeBSD$");
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
-
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/bus.h>
@@ -885,8 +884,6 @@ vpclink_fte_list(struct vpclink_softc *vs, struct vpc_fte_list *vfl, int length)
 	if (length != (sizeof(struct vpc_fte_list) +
 				   vfl->vfl_count*sizeof(struct vpc_fte)))
 		return (EINVAL);
-
-
 	/* XXX implement me */
 	return (EOPNOTSUPP);
 }
