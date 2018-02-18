@@ -213,7 +213,7 @@
 	 CAP_SETSOCKOPT | CAP_SHUTDOWN)
 
 /* All used bits for index 0. */
-#define	CAP_ALL0		CAPRIGHT(0, 0x000007FFFFFFFFFFULL)
+#define	CAP_ALL0		CAPRIGHT(0, 0x00007FFFFFFFFFFFULL)
 
 /* VPC descriptor unprivileged read */
 #define	CAP_VPC_READ		CAPRIGHT(0, 0x0000080000000000ULL)
