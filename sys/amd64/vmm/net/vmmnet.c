@@ -307,7 +307,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		ctx->v_flags |= VPC_CTX_F_PRIV;
 	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
 	fdrop(fp, td);
-	td->td_retval[0] = fd;
+	*vpcd = fd;
  unlock:
 	VMMNET_UNLOCK();
 	return (rc);
