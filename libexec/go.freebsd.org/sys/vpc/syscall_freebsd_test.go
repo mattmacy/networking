@@ -35,11 +35,12 @@ package vpc_test
 import (
 	"testing"
 
+	"github.com/rs/zerolog/log"
 	"go.freebsd.org/sys/vpc"
 )
 
 func TestVPCOpenClose(t *testing.T) {
-	id := vpc.GenID()
+	h1ID := vpc.GenID()
 
 	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
 		Version: 1,
@@ -49,13 +50,73 @@ func TestVPCOpenClose(t *testing.T) {
 		t.Fatalf("unable to construct a HandleType: %v", err)
 	}
 
-	h, err := vpc.Open(id, ht, vpc.FlagCreate)
+	log.Debug().Msg("creating vpcsw0")
+	vpcsw0CreateFD, err := vpc.Open(h1ID, ht, vpc.FlagCreate)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
 
-	err = h.Close()
+	if vpcsw0CreateFD == 0 {
+		t.Errorf("vpc_open(2) return an FD of 0")
+	}
+
+	log.Debug().Msg("opening vpcsw0")
+	vpcsw0OpenFD, err := vpc.Open(h1ID, ht, vpc.FlagOpen)
 	if err != nil {
+		t.Fatalf("vpc_open(2) failed: %v", err)
+	}
+	defer func() {
+		if err := vpcsw0OpenFD.Close(); err != nil {
+			t.Fatalf("unable to close(2) VPC Handle : %v", err)
+		}
+	}()
+
+	if vpcsw0OpenFD == vpcsw0CreateFD {
+		t.Errorf("vpc_open(2) open and create FDs are identical")
+	}
+
+	h2ID := vpc.GenID()
+
+	log.Debug().Msg("creating vpcsw1")
+	vpcsw1CreateFD, err := vpc.Open(h2ID, ht, vpc.FlagCreate)
+	if err != nil {
+		t.Fatalf("vpc_open(2) failed: %v", err)
+	}
+	defer func() {
+		if err := vpcsw1CreateFD.Close(); err != nil {
+			t.Fatalf("unable to close(2) vpcsw1CreateFD VPC Handle : %v", err)
+		}
+	}()
+
+	log.Debug().Int("vpcsw0CreateFD", int(vpcsw0CreateFD)).Msg("closing vpcsw0 create")
+	if err := vpcsw0CreateFD.Close(); err != nil {
 		t.Fatalf("unable to close(2) VPC Handle : %v", err)
 	}
+	if vpcsw0CreateFD != vpc.ClosedHandle {
+		t.Fatalf("handle set to wrong value in vpc.Close()")
+	}
+
+	if err := vpcsw0CreateFD.Close(); err != nil {
+		t.Fatalf("unable to close(2) VPC Handle : %v", err)
+	}
+
+	// TODO(seanc@): programmatically verify that vpcsw0 is still present
+	//time.Sleep(30 * time.Second)
+
+	log.Debug().Msg("closing vpcsw0 open")
+	if err := vpcsw0OpenFD.Close(); err != nil {
+		t.Fatalf("unable to close(2) VPC Handle : %v", err)
+	}
+
+	// TODO(seanc@): programmatically verify that vpcsw0 disappeared after the
+	// openfd was closed
+	//time.Sleep(30 * time.Second)
+
+	log.Debug().Msg("closing vpcsw1 open")
+	if err := vpcsw1CreateFD.Close(); err != nil {
+		t.Fatalf("unable to close(2) VPC Handle : %v", err)
+	}
+
+	// TODO(seanc@): programmatically verify that vpcsw1 disappeared
+	//time.Sleep(30 * time.Second)
 }
