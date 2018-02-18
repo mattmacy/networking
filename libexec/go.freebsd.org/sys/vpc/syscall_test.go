@@ -33,11 +33,33 @@
 package vpc_test
 
 import (
+	"reflect"
 	"testing"
 	"unsafe"
 
 	"go.freebsd.org/sys/vpc"
 )
+
+func Test_VPC_ID(t *testing.T) {
+	origID := vpc.GenID()
+	origIDStr := origID.String()
+	if len(origIDStr) != 36 {
+		t.Fatalf("ID wrong len")
+	}
+
+	parseID, err := vpc.ParseID(origIDStr)
+	if err != nil {
+		t.Fatalf("unable to parse %q: %v", origIDStr, err)
+	}
+
+	if !reflect.DeepEqual(origID, parseID) {
+		t.Fatalf("parsed bytes don't match: %v %v", origID, parseID)
+	}
+
+	if origID.String() != parseID.String() {
+		t.Fatalf("string IDs don't match: %q %q", origID.String(), parseID.String())
+	}
+}
 
 func TestOpenFlags(t *testing.T) {
 	if unsafe.Sizeof(vpc.OpenFlags(0)) != 8 {
