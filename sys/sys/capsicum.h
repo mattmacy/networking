@@ -212,9 +212,6 @@
 	 CAP_GETSOCKOPT | CAP_LISTEN | CAP_PEELOFF | CAP_RECV | CAP_SEND | \
 	 CAP_SETSOCKOPT | CAP_SHUTDOWN)
 
-/* All used bits for index 0. */
-#define	CAP_ALL0		CAPRIGHT(0, 0x00007FFFFFFFFFFFULL)
-
 /* VPC descriptor unprivileged read */
 #define	CAP_VPC_READ		CAPRIGHT(0, 0x0000080000000000ULL)
 /* VPC descriptor unprivileged write */
@@ -223,6 +220,9 @@
 #define	CAP_VPC_PRIVREAD		CAPRIGHT(0, 0x0000200000000000ULL)
 /* VPC descriptor privileged write */
 #define	CAP_VPC_PRIVWRITE		CAPRIGHT(0, 0x0000400000000000ULL)
+
+/* All used bits for index 0. */
+#define	CAP_ALL0		CAPRIGHT(0, 0x00007FFFFFFFFFFFULL)
 
 /* Available bits for index 0. */
 #define	CAP_UNUSED0_48		CAPRIGHT(0, 0x0000800000000000ULL)
