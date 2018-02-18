@@ -125,3 +125,35 @@ func (t HandleType) SetObjType(objType ObjType) (HandleType, error) {
 	uVer = uVer << (64 - 8 - 8)
 	return HandleType(tu | uVer), nil
 }
+
+// Operations that can be applied to all VPC Object types
+const (
+	_DestroyOp = Op(0x0001)
+	_GetOp     = Op(0x0002)
+	_CommitOp  = Op(0x0003)
+
+	_CommitCmd  = PrivBit | MutateBit | (Cmd(ObjTypeMgmt) << 16) | Cmd(_CommitOp)
+	_DestroyCmd = PrivBit | MutateBit | (Cmd(ObjTypeMgmt) << 16) | Cmd(_DestroyOp)
+)
+
+// Commit increments the refcount on the object referrenced by this VPC Handle.
+// Commit is used to ensure that the life of the referred VPC object outlives
+// the current process with the open VPC Handle.
+func (h *Handle) Commit() error {
+	if err := Ctl(*h, _CommitCmd, nil, nil); err != nil {
+		return errors.Wrap(err, "unable to commit VPC object")
+	}
+
+	return nil
+}
+
+// Destroy decrements the refcount on the object referrenced by this VPC Handle.
+// Destroy is used to terminate the life of the referred VPC object so that the
+// VPC Object's resources are cleaned up when the Handle is closed.
+func (h *Handle) Destroy() error {
+	if err := Ctl(*h, _DestroyCmd, nil, nil); err != nil {
+		return errors.Wrap(err, "unable to destroy VPC object")
+	}
+
+	return nil
+}

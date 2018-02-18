@@ -39,7 +39,7 @@ import (
 	"go.freebsd.org/sys/vpc"
 )
 
-func TestVPCOpenClose(t *testing.T) {
+func TestVPCCreateOpenClose(t *testing.T) {
 	h1ID := vpc.GenID()
 
 	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
@@ -56,6 +56,8 @@ func TestVPCOpenClose(t *testing.T) {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
 
+	// NOTE(seanc@): This could conceivably be 0 if we've closed stdin before this
+	// test runs.
 	if vpcsw0CreateFD == 0 {
 		t.Errorf("vpc_open(2) return an FD of 0")
 	}
@@ -119,4 +121,44 @@ func TestVPCOpenClose(t *testing.T) {
 
 	// TODO(seanc@): programmatically verify that vpcsw1 disappeared
 	//time.Sleep(30 * time.Second)
+}
+
+func TestVPCCreateCommitDestroyClose(t *testing.T) {
+	h1ID := vpc.GenID()
+
+	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
+		Version: 1,
+		Type:    vpc.ObjTypeSwitch,
+	})
+	if err != nil {
+		t.Fatalf("unable to construct a HandleType: %v", err)
+	}
+
+	log.Debug().Msg("creating vpcsw0")
+	vpcsw0CreateFD, err := vpc.Open(h1ID, ht, vpc.FlagCreate|vpc.FlagWrite)
+	if err != nil {
+		t.Fatalf("vpc_open(2) failed: %v", err)
+	}
+
+	// NOTE(seanc@): This could conceivably be 0 if we've closed stdin before this
+	// test runs.
+	if vpcsw0CreateFD == 0 {
+		t.Errorf("vpc_open(2) return an FD of 0")
+	}
+
+	if err := vpcsw0CreateFD.Commit(); err != nil {
+		t.Fatalf("vpc_open(2) unable to commit: %v", err)
+	}
+
+	if err := vpcsw0CreateFD.Destroy(); err != nil {
+		t.Fatalf("vpc_open(2) unable to destroy: %v", err)
+	}
+
+	log.Debug().Int("vpcsw0CreateFD", int(vpcsw0CreateFD)).Msg("closing vpcsw0 create")
+	if err := vpcsw0CreateFD.Close(); err != nil {
+		t.Fatalf("unable to close(2) VPC Handle : %v", err)
+	}
+	if vpcsw0CreateFD != vpc.ClosedHandle {
+		t.Fatalf("handle set to wrong value in vpc.Close()")
+	}
 }

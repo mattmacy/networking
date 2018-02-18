@@ -160,12 +160,17 @@ func (id ID) String() string {
 type OpenFlags uint64
 
 const (
-	// FlagCreate is used to signal that a given ID should be created on Open.
-	FlagCreate OpenFlags = 1 << iota
+	// FlagCreate is used to create a new VPC object.
+	FlagCreate OpenFlags = 1 << 0
 
-	// FlagOpen is used to signal that a given ID must already exist in order to
-	// be successfully opened.
-	FlagOpen
+	// FlagOpen is used to open an existing VPC object.
+	FlagOpen OpenFlags = 1 << 1
+
+	// FlagRead is used to open an existing VPC object for reading.
+	FlagRead OpenFlags = 1 << 2
+
+	// FlagWrite is used to open a VPC object for writes (including commit).
+	FlagWrite OpenFlags = 1 << 3
 )
 
 // ObjType distinguishes the different types of supported VPC Object Types.

@@ -31,6 +31,7 @@ package vpcsw
 
 import (
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	"go.freebsd.org/sys/vpc"
 )
 
@@ -40,16 +41,22 @@ type Config struct {
 	VNI vpc.VNI
 }
 
+func (c Config) MarshalZerologObject(e *zerolog.Event) {
+	e.Str("id", c.ID.String()).
+		Int32("vni", int32(c.VNI))
+}
+
 // VPCSW is an opaque struct representing a VPC Switch.
 type VPCSW struct {
 	h   vpc.Handle
 	ht  vpc.HandleType
 	vni vpc.VNI
+	id  vpc.ID
 }
 
-// New creates a new VPC Switch using the Config parameters.  Callers are
+// Create creates a new VPC Switch using the Config parameters.  Callers are
 // expected to Close a given VPCSW (otherwise a file descriptor would leak).
-func New(cfg Config) (*VPCSW, error) {
+func Create(cfg Config) (*VPCSW, error) {
 	switch {
 	case cfg.VNI < vpc.VNIMin:
 		return nil, errors.Errorf("VNI %d too small", cfg.VNI)
@@ -65,7 +72,7 @@ func New(cfg Config) (*VPCSW, error) {
 		return nil, errors.Wrap(err, "unable to create a new VPC Switch handle type")
 	}
 
-	h, err := vpc.Open(cfg.ID, ht, vpc.FlagCreate)
+	h, err := vpc.Open(cfg.ID, ht, vpc.FlagCreate|vpc.FlagWrite)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to open VPC Switch handle")
 	}
@@ -77,19 +84,8 @@ func New(cfg Config) (*VPCSW, error) {
 	}, nil
 }
 
-// Create actually creates a VPC Switch using the existing vpc.Handle.
-func (sw *VPCSW) Create() error {
-	// 1) open a vpc handle
-	if err := vpc.Ctl(sw.h, vpc.OpFlag(_CreateOp), nil, nil); err != nil {
-		return errors.Wrap(err, "unable to create VPC Switch")
-	}
-
-	// 2) issue a switch create
-	return errors.New("not implemented")
-}
-
 // Close closes the VPC Handle descriptor.  Created VPC Switches will not be
-// destroyed when the VPCSW is closed.
+// destroyed when the VPCSW is closed if the VPC Switch has been Committed.
 func (sw *VPCSW) Close() error {
 	if sw.h <= 0 {
 		return nil
@@ -100,4 +96,56 @@ func (sw *VPCSW) Close() error {
 	}
 
 	return nil
+}
+
+// Commit increments the refcount of the VPC Switch in order to ensure the VPC
+// Switch lives beyond the life of the current process and is not automatically
+// cleaned up when the VPCSW is closed.
+func (sw *VPCSW) Commit() error {
+	if sw.h <= 0 {
+		return nil
+	}
+
+	if err := sw.h.Commit(); err != nil {
+		return errors.Wrap(err, "unable to commit VPC Switch")
+	}
+
+	return nil
+}
+
+// Destroy decrements the refcount of the VPC Switch in destroy the the VPC
+// Switch when the VPC Handle is closed.
+func (sw *VPCSW) Destroy() error {
+	if sw.h <= 0 {
+		return nil
+	}
+
+	if err := sw.h.Destroy(); err != nil {
+		return errors.Wrap(err, "unable to destroy VPC Switch")
+	}
+
+	return nil
+}
+
+// Open opens an existing VPC Switch using the Config parameters.  Callers are
+// expected to Close a given VPCSW.
+func Open(cfg Config) (*VPCSW, error) {
+	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
+		Version: 1,
+		Type:    vpc.ObjTypeSwitch,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to create a new VPC Switch handle type")
+	}
+
+	h, err := vpc.Open(cfg.ID, ht, vpc.FlagOpen|vpc.FlagRead)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to open VPC Switch handle")
+	}
+
+	return &VPCSW{
+		h:  h,
+		ht: ht,
+		id: cfg.ID,
+	}, nil
 }
