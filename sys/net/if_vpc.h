@@ -39,28 +39,18 @@ struct vpc_ioctl_header {
 	uint64_t vih_magic;
 	uint64_t vih_type;
 };
-struct vpclink_listen {
-	struct vpc_ioctl_header vl_vih;
-	struct sockaddr vl_addr;
-};
 
 struct vpclink_fte {
 	uint32_t vf_vni;
+	uint16_t vf_vlanid;
 	uint8_t vf_hwaddr[ETHER_ADDR_LEN];
 	struct sockaddr vf_protoaddr;
 };
 
-struct vpc_fte_list {
-	struct vpc_ioctl_header vfl_vih;
+struct vpclink_fte_list {
 	uint32_t vfl_count;
 	struct vpclink_fte vfl_vftes[0];
 };
-
-#define VPC_LISTEN								\
-	_IOW('k', 1, struct vpc_listen)
-#define VPC_FTE_ALL								\
-	_IOWR('k', 4, struct vpc_fte_list)
-
 
 struct vpci_attach {
 	struct vpc_ioctl_header va_vih;
@@ -252,6 +242,9 @@ int vpcp_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 int vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			   size_t *outlen, void **outdata);
 
+int vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				size_t *outlen, void **outdata);
+
 
 rtr_ctx_t vpc_rtr_ctx_alloc(void);
 void vpc_rtr_ctx_free(rtr_ctx_t rc);
@@ -282,39 +275,6 @@ enum vpc_obj_type {
 	VPC_OBJ_TYPE_MAX = 8,
 };
 
-
-enum vpc_meta_op_type {
-	VPC_OBJ_DESTROY = 1,
-	VPC_OBJ_TYPE_GET = 2,
-	VPC_OBJ_COMMIT = 3,
-	VPC_OBJ_MAC_SET = 4,
-	VPC_OBJ_MAC_GET = 5,
-	VPC_OBJ_MTU_SET = 6,
-	VPC_OBJ_MTU_GET = 7,
-	VPC_META_OP_TYPE_MAX = 7
-};
-
-enum vpc_vmnic_op_type {
-	VPC_VMNIC_INVALID = 0,
-	VPC_VMNIC_NQUEUES_GET =		1,
-	VPC_VMNIC_NQUEUES_SET =		2,
-	VPC_VMNIC_UNUSED3 =		3,
-	VPC_VMNIC_UNUSED4 =		4,
-	VPC_VMNIC_UNUSED5 =		5,
-	VPC_VMNIC_UNUSED6 =		6,
-	VPC_VMNIC_ATTACH =		7,
-	VPC_VMNIC_MSIX =		8,
-	VPC_VMNIC_FREEZE =		9,
-	VPC_VMNIC_UNFREEZE =		10,
-	VPC_VMNIC_OP_TYPE_MAX =			10,
-};
-
-enum vpc_vpcrtr_op_type {
-	VPC_VPCRTR_INVALID = 0,
-	VPC_VPCRTR_NAT = 1
-};
-
-
 enum vpc_vpcsw_op_type {
 	VPC_VPCSW_INVALID = 0,
 	VPC_VPCSW_PORT_ADD =		1,
@@ -341,7 +301,58 @@ enum vpc_vpcp_op_type {
 	VPC_VPCP_MAX = 9,
 };
 
-enum vpc_phys_op_type {
+enum vpc_vpcrtr_op_type {
+	VPC_VPCRTR_INVALID = 0,
+	// add/update
+	VPC_VPCRTR_ROUTE_SET = 1,
+	// delete
+	VPC_VPCRTR_ROUTE_DEL = 2,
+	// dump route table
+	VPC_VPCRTR_ROUTE_LIST = 3,
+	VPC_VPCRTR_MAX_OPS = 3
+};
+
+enum vpc_vpcnat_op_type {
+	VPC_VPCNAT_INVALID = 0,
+	VPC_VPCNAT_MAX = 0,
+};
+
+enum vpc_vpclink_op_type {
+	VPC_VPCLINK_INVALID = 0,
+	VPC_VPCLINK_LISTEN = 1,
+	VPC_VPCLINK_FTE_SET = 2,
+	VPC_VPCLINK_FTE_DEL = 3,
+	VPC_VPCLINK_FTE_LIST = 4,
+	VPC_VPCLINK_MAX = 4,
+};
+
+enum vpc_vmnic_op_type {
+	VPC_VMNIC_INVALID = 0,
+	VPC_VMNIC_NQUEUES_GET =		1,
+	VPC_VMNIC_NQUEUES_SET =		2,
+	VPC_VMNIC_UNUSED3 =		3,
+	VPC_VMNIC_UNUSED4 =		4,
+	VPC_VMNIC_UNUSED5 =		5,
+	VPC_VMNIC_UNUSED6 =		6,
+	VPC_VMNIC_ATTACH =		7,
+	VPC_VMNIC_MSIX =		8,
+	VPC_VMNIC_FREEZE =		9,
+	VPC_VMNIC_UNFREEZE =		10,
+	VPC_VMNIC_OP_TYPE_MAX =			10,
+};
+
+enum vpc_mgmt_op_type {
+	VPC_OBJ_DESTROY = 1,
+	VPC_OBJ_TYPE_GET = 2,
+	VPC_OBJ_COMMIT = 3,
+	VPC_OBJ_MAC_SET = 4,
+	VPC_OBJ_MAC_GET = 5,
+	VPC_OBJ_MTU_SET = 6,
+	VPC_OBJ_MTU_GET = 7,
+	VPC_META_OP_TYPE_MAX = 7
+};
+
+enum vpc_l2link_op_type {
 	VPC_L2LINK_INVALID = 0,
 	VPC_L2LINK_ATTACH = 1,
 	VPC_L2LINK_MAX = 1,

@@ -321,13 +321,6 @@ vpcnat_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 }
 
 static int
-vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
-				 size_t *outlen, void **outdata)
-{
-	return (EOPNOTSUPP);
-}
-
-static int
 l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
@@ -348,13 +341,13 @@ l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	}
 	return (rc);
 }
+
 int
 vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	return (EOPNOTSUPP);
 }
-
 
 static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	NULL,
