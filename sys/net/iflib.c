@@ -1279,10 +1279,10 @@ iflib_set_mac(if_ctx_t ctx, const uint8_t mac[ETHER_ADDR_LEN])
 	if (ETHER_IS_MULTICAST(mac))
 		return (EINVAL);
 
-	if ((rc = IFDI_MAC_SET(ctx, mac)))
-		return (rc);
-
 	bcopy(mac, ctx->ifc_mac, ETHER_ADDR_LEN);
+
+	if ((ctx->ifc_flags & IFC_INIT_DONE)  && (rc = IFDI_MAC_SET(ctx, mac)))
+		return (rc);
 	return (0);
 }
 
