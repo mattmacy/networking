@@ -35,8 +35,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
-#include <sys/eventhandler.h>
-#include <sys/sockio.h>
+#include <sys/file.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/priv.h>
@@ -125,13 +124,13 @@ struct vpcsw_softc {
 	struct ifnet *vs_ifdefault;
 	vpc_id_t vs_uplink_id;
 	struct knlist vs_knlist;
+	struct mtx vs_vtep_mtx;
 	struct grouptask vs_vtep_gtask;
-	struct vpcsw_response vs_resp_pending;
-	bool vs_resp_consumed;
+	struct vpcsw_request vs_req_pending;
+	bool vs_req_read;
 };
 
-#ifdef notyet
-static int      filt_vpcwsattach(struct knote *kn);
+static int      filt_vpcswattach(struct knote *kn);
 static void     filt_vpcswdetach(struct knote *kn);
 static int      filt_vpcsw(struct knote *kn, long hint);
 
@@ -143,117 +142,32 @@ struct filterops vpcsw_filtops = {
 };
 
 static void
-vpcsw_event_signal(struct vpc_softc *vs, int type)
+vpcsw_event_signal(struct vpcsw_softc *vs)
 {
-	KNOTE_UNLOCKED(&vs->vs_knlist, type);
+	KNOTE_LOCKED(&vs->vs_knlist, 1);
 }
 
 static int
-filt_vpcswattach(struct knote *kn)
-{
-	vpc_ctx_t vctx;
-	if_ctx_t ctx;
-	struct vpcsw_softc *vs;
-
-	if (kn->kn_fp->f_type != DTYPE_VPCFD)
-		return (EBADF);
-
-	vctx = kn->kn_fp->f_data;
-	if (vctx->v_type != VPC_OBJ_SWITCH)
-		return (EBADF);
-	ctx = vctx->v_ifp->if_softc;
-	vs = iflib_get_ctx(ctx);
-	knlist_add(&vs->vs_knlist, kn, 0);
-	return (0);
-}
-
-static void
-filt_vpcswdetach(struct knote *kn)
-{
-	vpc_ctx_t vctx;
-	if_ctx_t ctx;
-	struct vpcsw_softc *vs;
-
-	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
-	vctx = kn->kn_fp->f_data;
-	MPASS(vctx->v_type == VPC_OBJ_SWITCH);
-	ctx = vctx->v_ifp->if_softc;
-	vs = iflib_get_ctx(ctx);
-	knlist_remove(&vs->vs_knlist, kn, 0);
-}
-
-static int
-filt_vpcsw(struct knote *kn, long hint)
-{
-	void *uaddr;
-	if_ctx_t ctx;
-	vpc_ctx_t vctx;
-	struct kevent *kev;
-	struct vpcsw_softc *vs;
-	struct vpcsw_request *vr;
-
-	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
-	vctx = kn->kn_fp->f_data;
-	MPASS(vctx->v_type == VPC_OBJ_SWITCH);
-	ctx = vctx->v_ifp->if_softc;
-	vs = iflib_get_ctx(ctx);
-	vr = &vs->vs_req_pending;
-	if (vs->vs_req_type == 0)
-		return (0);
-
-	if (hint == 0)
-		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
-	kev = &kn->kn_kevent;
-	kev->fflags |= vs->vs_req_type;
-	uaddr = (void*)kev->ext[0];
-	if (uaddr != NULL) {
-		if (copyout(vr, uaddr, sizeof(*vr)) == 0)
-			vs->vs_req_consumed = true;
-	}
-	return (kn->kn_fflags != 0);
-}
-
-#else
-struct filterops vpcsw_filtops;
-#endif
-
-#ifdef notyet
-static const char *opcode_map[] = {
-	"",
-	"VPCSW_REQ_NDv4",
-	"VPCSW_REQ_NDv6",
-	"VPCSW_REQ_DHCPv4",
-	"VPCSW_REQ_DHCPv6",
-};
-
-static int
-vpcsw_poll_dispatch(struct vpcsw_softc *vs, struct vpcsw_request *vr)
+vpcsw_update_req(struct vpcsw_softc *vs)
 {
 	struct vpcsw_mcast_queue *vmq;
+	struct vpcsw_request *vr;
+	struct vpc_pkt_info pinfo;
 	struct ether_header *eh;
 	struct mbuf *m;
-	struct vpc_pkt_info pinfo;
-	int rc;
 	bool valid;
 
-	if (vr->vrq_header.voh_version == VPCSW_VERSION) {
-		printf("version %d doesn't match compiled version: %d\n",
-			   vr->vrq_header.voh_version, VPCSW_VERSION);
-		return (ENXIO);
-	}
+	vmq = &vs->vs_vmq;
+	valid = false;
+	vr = &vs->vs_req_pending;
  restart:
 	bzero(vr, sizeof(*vr));
-	vr->vrq_header.voh_version = VPCSW_VERSION;
-	vmq = &vs->vs_vmq;
 	mtx_lock(&vs->vs_lock);
-	while (vmq->vmq_mh == NULL) {
-		rc = msleep(vs, &vs->vs_lock, PCATCH, "vpcswpoll", 0);
-		if (rc == ERESTART) {
-			mtx_unlock(&vs->vs_lock);
-			return (rc);
-		}
+	if (vmq->vmq_mh == NULL) {
+		mtx_unlock(&vs->vs_lock);
+		vr->vrq_header.voh_op = 0;
+		return (ENOBUFS);
 	}
-	/* dequeue mbuf */
 	m  = vmq->vmq_mh;
 	vmq->vmq_mh = m->m_nextpkt;
 	if (vmq->vmq_mh == NULL)
@@ -297,6 +211,100 @@ vpcsw_poll_dispatch(struct vpcsw_softc *vs, struct vpcsw_request *vr)
 		goto restart;
 	return (0);
 }
+
+static void
+_task_fn_vtep(void *arg)
+{
+	struct vpcsw_softc *vs;
+	if_ctx_t ctx;
+
+	ctx = arg;
+	vs = iflib_get_softc(ctx);
+	mtx_lock(&vs->vs_vtep_mtx);
+	if(!vs->vs_req_read ||
+	   (vpcsw_update_req(vs) != 0)) {
+		mtx_unlock(&vs->vs_vtep_mtx);
+		return;
+	}
+	vs->vs_req_read = false;
+	vpcsw_event_signal(vs);
+	mtx_unlock(&vs->vs_vtep_mtx);
+}
+
+static int
+filt_vpcswattach(struct knote *kn)
+{
+	vpc_ctx_t vctx;
+	if_ctx_t ctx;
+	struct vpcsw_softc *vs;
+
+	if (kn->kn_fp->f_type != DTYPE_VPCFD)
+		return (EBADF);
+
+	vctx = kn->kn_fp->f_data;
+	if (vctx->v_obj_type != VPC_OBJ_SWITCH)
+		return (EBADF);
+	ctx = vctx->v_ifp->if_softc;
+	vs = iflib_get_softc(ctx);
+	knlist_add(&vs->vs_knlist, kn, 0);
+	return (0);
+}
+
+static void
+filt_vpcswdetach(struct knote *kn)
+{
+	vpc_ctx_t vctx;
+	if_ctx_t ctx;
+	struct vpcsw_softc *vs;
+
+	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
+	vctx = kn->kn_fp->f_data;
+	MPASS(vctx->v_obj_type == VPC_OBJ_SWITCH);
+	ctx = vctx->v_ifp->if_softc;
+	vs = iflib_get_softc(ctx);
+	knlist_remove(&vs->vs_knlist, kn, 0);
+}
+
+static int
+filt_vpcsw(struct knote *kn, long hint)
+{
+	void *uaddr;
+	if_ctx_t ctx;
+	vpc_ctx_t vctx;
+	struct kevent *kev;
+	struct vpcsw_softc *vs;
+	struct vpcsw_request *vr;
+	int op;
+
+	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
+	vctx = kn->kn_fp->f_data;
+	MPASS(vctx->v_obj_type == VPC_OBJ_SWITCH);
+	ctx = vctx->v_ifp->if_softc;
+	vs = iflib_get_softc(ctx);
+	vr = &vs->vs_req_pending;
+	op = vr->vrq_header.voh_op;
+	if (op == 0)
+		return (0);
+
+	if (hint == 0)
+		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
+	kev = &kn->kn_kevent;
+	kev->fflags |= op;
+	uaddr = (void*)kev->ext[0];
+	if (uaddr != NULL) {
+		copyout(vr, uaddr, sizeof(*vr));
+	}
+	return (kn->kn_fflags != 0);
+}
+
+#ifdef notyet
+static const char *opcode_map[] = {
+	"",
+	"VPCSW_REQ_NDv4",
+	"VPCSW_REQ_NDv6",
+	"VPCSW_REQ_DHCPv4",
+	"VPCSW_REQ_DHCPv6",
+};
 
 static int 
 vpcsw_response_dispatch(struct vpcsw_softc *vs, unsigned long cmd, struct vpcsw_response *vrs)
@@ -471,8 +479,8 @@ vpcsw_process_mcast(struct vpcsw_softc *vs, struct mbuf **msrc)
 			m_freem(m);
 			vmq->vmq_mcount--;
 		}
-		wakeup(vs);
 		mtx_unlock(&vs->vs_lock);
+		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
 		*msrc = NULL;
 		rc = 0;
 	} else if (!(m->m_flags & M_VXLANTAG)) {
@@ -645,7 +653,10 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	vs->vs_ftable_rw = malloc(sizeof(art_tree), M_VPCSW, M_WAITOK|M_ZERO);
 	art_tree_init(vs->vs_ftable_ro, ETHER_ADDR_LEN);
 	art_tree_init(vs->vs_ftable_rw, ETHER_ADDR_LEN);
-	knlist_init_mtx(&vs->vs_knlist, NULL);
+	vs->vs_req_read = true;
+	mtx_init(&vs->vs_vtep_mtx, "vtep mtx", NULL, MTX_DEF);
+	knlist_init_mtx(&vs->vs_knlist, &vs->vs_vtep_mtx);
+	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_vtep_gtask, _task_fn_vtep, "vtep task");
 	return (0);
 }
 
@@ -911,9 +922,10 @@ vpcsw_detach(if_ctx_t ctx)
 		vmq->vmq_mh = m->m_nextpkt;
 		m_freem(m);
 	}
-
+	iflib_config_gtask_deinit(&vs->vs_vtep_gtask);
 	art_iter(vs->vs_ftable_rw, clear_bridge, NULL);
 	mtx_destroy(&vs->vs_lock);
+	mtx_destroy(&vs->vs_vtep_mtx);
 	vpc_art_free(vs->vs_ftable_ro, M_VPCSW);
 	vpc_art_free(vs->vs_ftable_rw, M_VPCSW);
 	refcount_release(&modrefcnt);
