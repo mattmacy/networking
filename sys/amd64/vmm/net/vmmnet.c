@@ -148,17 +148,15 @@ vpcd_close(struct file *fp, struct thread *td)
 	if ((ctx = fp->f_data) == NULL)
 		return (0);
 	fp->f_data = NULL;
+	VMMNET_LOCK();
 	if (refcount_release(&ctx->v_refcnt)) {
-		VMMNET_LOCK();
 		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
-		VMMNET_UNLOCK();
 #ifdef INVARIANTS
 		if (value != ctx) {
 			printf("%16D  --- vpc_id not found\n", &ctx->v_id, ":");
 			vpcd_print_uuids();
 		}
 #endif
-
 		/* run object dtor */
 		if (ctx->v_obj_type != VPC_OBJ_L2LINK)
 			if_clone_destroy(ctx->v_ifp->if_xname);
@@ -166,6 +164,7 @@ vpcd_close(struct file *fp, struct thread *td)
 			if_rele(ctx->v_ifp);
 		free(ctx, M_VMMNET);
 	}
+	VMMNET_UNLOCK();
 	return (0);
 }
 
