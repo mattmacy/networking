@@ -346,10 +346,11 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			printf("set_mac failed: %d\n", macrc);
 	}
 	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
-	fdrop(fp, td);
 	*vpcd = fd;
  unlock:
 	VMMNET_UNLOCK();
+	if (rc == 0)
+		fdrop(fp, td);
 	return (rc);
 }
 
