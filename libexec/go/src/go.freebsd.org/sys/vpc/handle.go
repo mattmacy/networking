@@ -175,11 +175,10 @@ func (h *Handle) Destroy() error {
 }
 
 // FD returns the integer Unix file descriptor referencing the open file. The
-// file descriptor is valid only until f.Close is called or f is garbage
-// collected.
-func (h *Handle) FD() uintptr {
+// file descriptor is valid only until h.Close is called.
+func (h *Handle) FD() HandleFD {
 	h.lock.RLock()
 	defer h.lock.RUnlock()
 
-	return uintptr(h.fd)
+	return h.fd
 }
