@@ -10,21 +10,23 @@ bhyve guests.
 
     ```
 % mkdir -p `go env GOPATH`/src
-% ln -sf /usr/libexec/go.freebsd.org `go env GOPATH`/src
-```
+% ln -sf /usr/libexec/go/src/go.freebsd.org `go env GOPATH`/src
 
-3. `go get -u -d github.com/pkg/errors`
-4. `go get -u github.com/kylelemons/godebug/pretty`
-5. `go get -u github.com/kylelemons/godebug/diff`
-6. `go get -u -d github.com/sean-/seed`
-7. `go get -u -d github.com/satori/go.uuid`
+# or if developing against `src/`:
+
+% ln -sf /usr/src/libexec/go/src/go.freebsd.org `go env GOPATH`/src
+
+# or if you are developing the `src/`:
+
+% export GOPATH /usr/src/libexec/go
+```
 
 ## Testing
 
 Run the VPC tests:
 
 ```
-cd src/libexec/go.freebsd.org/sys/vpc
+cd src/libexec/go/src/go.freebsd.org/sys/vpc
 doas go test -v ./...
 doas go test -bench . -benchtime 15s ./...
 ```
