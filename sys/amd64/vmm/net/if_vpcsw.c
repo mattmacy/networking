@@ -867,6 +867,10 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 		case VPC_VPCSW_OP_RESET:
 			/* hrrrm.... */
 			break;
+		case VPC_VPCSW_OP_RESPONSE_NDV4:
+		case VPC_VPCSW_OP_RESPONSE_DHCPV4:
+		case VPC_VPCSW_OP_RESPONSE_NDV6:
+		case VPC_VPCSW_OP_RESPONSE_DHCPV6:
 		default:
 			rc = ENOTSUP;
 	}
