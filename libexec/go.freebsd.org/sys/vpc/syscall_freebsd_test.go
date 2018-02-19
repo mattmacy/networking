@@ -33,14 +33,29 @@
 package vpc_test
 
 import (
+	"bytes"
+	"fmt"
+	"math/rand"
+	"net"
+	"runtime"
 	"testing"
 
+	"github.com/kylelemons/godebug/pretty"
 	"github.com/rs/zerolog/log"
 	"go.freebsd.org/sys/vpc"
 )
 
+// TestVPCCreateOpenClose performs a serialized and strict test of the Create,
+// Open, Close semantics.  Most per-interface tests should go into
+// TestVPCCreateOpenCloseParallel.  Serialization is required because of the
+// use of testGetAllInterfaces().
 func TestVPCCreateOpenClose(t *testing.T) {
-	h1ID := vpc.GenID()
+	vpcsw0ID := vpc.GenID()
+
+	existingIfaces, err := testGetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
 
 	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
 		Version: 1,
@@ -50,8 +65,7 @@ func TestVPCCreateOpenClose(t *testing.T) {
 		t.Fatalf("unable to construct a HandleType: %v", err)
 	}
 
-	log.Debug().Msg("creating vpcsw0")
-	vpcsw0CreateFD, err := vpc.Open(h1ID, ht, vpc.FlagCreate)
+	vpcsw0CreateFD, err := vpc.Open(vpcsw0ID, ht, vpc.FlagCreate)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
@@ -62,8 +76,34 @@ func TestVPCCreateOpenClose(t *testing.T) {
 		t.Errorf("vpc_open(2) return an FD of 0")
 	}
 
-	log.Debug().Msg("opening vpcsw0")
-	vpcsw0OpenFD, err := vpc.Open(h1ID, ht, vpc.FlagOpen)
+	// Get the before/after
+	ifacesAfterCreate, err := testGetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+	_, newIfaces1, _ := existingIfaces.Difference(ifacesAfterCreate)
+	if len(newIfaces1) != 1 {
+		t.Fatalf("one interface should have been added")
+	}
+
+	// For the sake of testing, call this `vpcsw0` even though the name may be
+	// different.
+	vpcsw0 := newIfaces1.First()
+	log.Debug().Str("name", vpcsw0.Name).Msg("created vpcsw0")
+	if bytes.Compare(vpcsw0.HardwareAddr[:], net.HardwareAddr{}[:]) == 0 {
+		t.Fatalf("%s hardware address is uninitialized, passed in %q", vpcsw0.Name, vpcsw0ID)
+	}
+
+	if bytes.Compare(vpcsw0.HardwareAddr, vpcsw0ID.Node[:]) != 0 {
+		t.Fatalf("MAC address doesn't match Node portion of ID:\ngot: %v\nwant: %v\nvpcid: %q", vpcsw0.HardwareAddr, vpcsw0ID.Node[:], vpcsw0ID)
+	}
+
+	if diff := pretty.Compare(vpcsw0.HardwareAddr, vpcsw0ID.Node[:]); diff != "" {
+		t.Fatalf("MAC address doesn't match: (-got, +want)\n%s\ngot: %q\nwant: %q", diff, vpcsw0.HardwareAddr, vpcsw0ID.Node[:])
+	}
+
+	log.Debug().Str("VPC ID", vpcsw0ID.String()).Msg("Opening vpcsw0")
+	vpcsw0OpenFD, err := vpc.Open(vpcsw0ID, ht, vpc.FlagOpen)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
@@ -77,10 +117,23 @@ func TestVPCCreateOpenClose(t *testing.T) {
 		t.Errorf("vpc_open(2) open and create FDs are identical")
 	}
 
-	h2ID := vpc.GenID()
+	{
+		// Get a new before/after: there should be no change
+		ifacesAfterOpen, err := testGetAllInterfaces()
+		if err != nil {
+			t.Fatalf("unable to get all interfaces")
+		}
+		_, newIfaces1a, _ := ifacesAfterCreate.Difference(ifacesAfterOpen)
+		if len(newIfaces1a) != 0 {
+			t.Fatalf("no new interfaces should have been added")
+		}
+
+	}
+
+	vpcsw1ID := vpc.GenID()
 
 	log.Debug().Msg("creating vpcsw1")
-	vpcsw1CreateFD, err := vpc.Open(h2ID, ht, vpc.FlagCreate)
+	vpcsw1CreateFD, err := vpc.Open(vpcsw1ID, ht, vpc.FlagCreate)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
@@ -123,8 +176,115 @@ func TestVPCCreateOpenClose(t *testing.T) {
 	//time.Sleep(30 * time.Second)
 }
 
+// TestVPCCreateOpenCloseParallel tests the creation of switches in parallel.
+// This is the preferred way of testing the characteristics of individual
+// interfaces.
+func TestVPCCreateOpenCloseParallel(t *testing.T) {
+	maxNumOpensPerSwitch := 32
+	cpuScalingFactor := 16
+	if testing.Short() {
+		cpuScalingFactor = 1
+		maxNumOpensPerSwitch = 1
+	}
+
+	type _TestCase struct {
+		name string
+		id   vpc.ID
+	}
+	testCases := make([]_TestCase, runtime.NumCPU()*cpuScalingFactor)
+	for i := range testCases {
+		testCases[i] = _TestCase{
+			name: fmt.Sprintf("id%d", i),
+			id:   vpc.GenID(),
+		}
+	}
+
+	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
+		Version: 1,
+		Type:    vpc.ObjTypeSwitch,
+	})
+	if err != nil {
+		t.Fatalf("unable to construct a HandleType: %v", err)
+	}
+
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			vpcswID := vpc.GenID()
+
+			vpcswCreateFD, err := vpc.Open(vpcswID, ht, vpc.FlagCreate)
+			if err != nil {
+				t.Fatalf("vpc_open(2) failed: %v", err)
+			}
+			defer func() {
+				if err := vpcswCreateFD.Close(); err != nil {
+					t.Fatalf("unable to close(2) VPC Handle : %v", err)
+				}
+			}()
+
+			// NOTE(seanc@): This could conceivably be 0 if we've closed stdin before
+			// this test runs.
+			if vpcswCreateFD == 0 {
+				t.Errorf("vpc_open(2) return an FD of 0")
+			}
+
+			allInterfaces, err := testGetAllInterfaces()
+			if err != nil {
+				t.Errorf("unable to get all interfaces: %v", err)
+			}
+
+			// For the sake of testing, call this `vpcsw0` even though the name may be
+			// different.
+			vpcsw0, err := allInterfaces.FindMAC(net.HardwareAddr(vpcswID.Node[:]))
+			if err != nil {
+				t.Errorf("unable to find self: %v", err)
+			}
+
+			if bytes.Compare(vpcsw0.HardwareAddr[:], net.HardwareAddr{}[:]) == 0 {
+				t.Fatalf("%s hardware address is uninitialized, passed in %q", vpcsw0.Name, vpcswID)
+			}
+
+			if bytes.Compare(vpcsw0.HardwareAddr, vpcswID.Node[:]) != 0 {
+				t.Fatalf("MAC address doesn't match Node portion of ID:\ngot: %v\nwant: %v\nvpcid: %q", vpcsw0.HardwareAddr, vpcswID.Node[:], vpcswID)
+			}
+
+			if diff := pretty.Compare(vpcsw0.HardwareAddr, vpcswID.Node[:]); diff != "" {
+				t.Fatalf("MAC address doesn't match: (-got, +want)\n%s\ngot: %q\nwant: %q", diff, vpcsw0.HardwareAddr, vpcswID.Node[:])
+			}
+
+			numVPCSwitchOpens := rand.Intn(maxNumOpensPerSwitch)
+
+			openHandles := make(vpcHandleSlice, numVPCSwitchOpens, numVPCSwitchOpens+1)
+			for i := 0; i < numVPCSwitchOpens; i++ {
+				// Open a handle to the same switch and add it to the list
+				vpcswOpenFD, err := vpc.Open(vpcswID, ht, vpc.FlagOpen)
+				if err != nil {
+					t.Fatalf("vpc_open(2) failed: %v", err)
+				}
+				defer func() {
+					if err := vpcswOpenFD.Close(); err != nil {
+						t.Fatalf("unable to close(2) VPC Handle : %v", err)
+					}
+				}()
+
+				openHandles[i] = vpcswOpenFD
+			}
+
+			openHandles = append(openHandles, vpcswCreateFD)
+			openHandles.Shuffle()
+
+			for i := range openHandles {
+				if err := openHandles[i].Close(); err != nil {
+					t.Fatalf("unable to close(2) VPC Handle : %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestVPCCreateCommitDestroyClose(t *testing.T) {
-	h1ID := vpc.GenID()
+	vpcsw0ID := vpc.GenID()
 
 	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
 		Version: 1,
@@ -135,7 +295,7 @@ func TestVPCCreateCommitDestroyClose(t *testing.T) {
 	}
 
 	log.Debug().Msg("creating vpcsw0")
-	vpcsw0CreateFD, err := vpc.Open(h1ID, ht, vpc.FlagCreate|vpc.FlagWrite)
+	vpcsw0CreateFD, err := vpc.Open(vpcsw0ID, ht, vpc.FlagCreate|vpc.FlagWrite)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
@@ -161,4 +321,29 @@ func TestVPCCreateCommitDestroyClose(t *testing.T) {
 	if vpcsw0CreateFD != vpc.ClosedHandle {
 		t.Fatalf("handle set to wrong value in vpc.Close()")
 	}
+}
+
+func BenchmarkVPCCreateOpenClose(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		vpcsw0ID := vpc.GenID()
+
+		ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
+			Version: 1,
+			Type:    vpc.ObjTypeSwitch,
+		})
+		if err != nil {
+			b.Fatalf("unable to construct a HandleType: %v", err)
+		}
+
+		for pb.Next() {
+			vpcsw0CreateFD, err := vpc.Open(vpcsw0ID, ht, vpc.FlagCreate)
+			if err != nil {
+				b.Fatalf("vpc_open(2) failed: %v", err)
+			}
+
+			if err := vpcsw0CreateFD.Close(); err != nil {
+				b.Fatalf("unable to close(2) VPC Handle : %v", err)
+			}
+		}
+	})
 }
