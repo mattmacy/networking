@@ -129,8 +129,7 @@ struct fileops vpcd_fileops  = {
 static int
 vpcd_close(struct file *fp, struct thread *td)
 {
-	struct vpcctx *ctx;
-	void *value;
+	struct vpcctx *ctx, *value;
 
 	if ((ctx = fp->f_data) == NULL)
 		return (0);
@@ -139,7 +138,7 @@ vpcd_close(struct file *fp, struct thread *td)
 		VMMNET_LOCK();
 		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
 		VMMNET_UNLOCK();
-		MPASS(value != NULL);
+		MPASS(value == ctx);
 		/* run object dtor */
 		if (ctx->v_obj_type != VPC_OBJ_L2LINK)
 			if_clone_destroy(ctx->v_ifp->if_xname);
@@ -289,6 +288,14 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		ctx->v_obj_type = obj_type;
 		memcpy(&ctx->v_id, vpc_id, sizeof(*vpc_id));
 		art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
+#ifdef INVARIANTS
+			{
+				struct vpcctx *tmpctx = art_search(&vpc_uuid_table, (const char *)vpc_id);
+
+				MPASS(tmpctx != NULL);
+				MPASS(tmpctx == ctx);
+			}
+#endif
 	}
 
 	fflags = O_CLOEXEC;
