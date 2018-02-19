@@ -130,18 +130,21 @@ static int
 vpcd_close(struct file *fp, struct thread *td)
 {
 	struct vpcctx *ctx;
+	void *value;
 
 	if ((ctx = fp->f_data) == NULL)
 		return (0);
 	if (refcount_release(&ctx->v_refcnt)) {
+		fp->f_data = NULL;
 		VMMNET_LOCK();
-		art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
+		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
 		VMMNET_UNLOCK();
+		MPASS(value != NULL);
 		/* run object dtor */
-		if (ctx->v_ifp != NULL)
-			if_rele(ctx->v_ifp);
 		if (ctx->v_obj_type != VPC_OBJ_L2LINK)
 			if_clone_destroy(ctx->v_ifp->if_xname);
+		else
+			if_rele(ctx->v_ifp);
 		free(ctx, M_VMMNET);
 	}
 	return (0);
@@ -271,6 +274,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 				if (bootverbose)
 					printf("couldn't reference %s\n", buf);
 				if_clone_destroy(buf);
+				free(ctx, M_VMMNET);
 				rc = ENXIO;
 				goto unlock;
 			}
@@ -301,9 +305,12 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	if ((flags & VPC_F_CREATE) &&
 		(ctx->v_ifp != NULL)) {
 		if_ctx_t ifctx;
+		int macrc;
 
 		ifctx = ctx->v_ifp->if_softc;
-		iflib_set_mac(ifctx, vpc_id->node);
+		macrc = iflib_set_mac(ifctx, vpc_id->node);
+		if (macrc && bootverbose)
+			printf("set_mac failed: %d\n", macrc);
 	}
 	if (flags & VPC_F_WRITE)
 		ctx->v_flags |= VPC_CTX_F_WRITE;
@@ -606,6 +613,8 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 	return (rc);
 }
 
+extern struct filterops vpcsw_filtops;
+
 static struct syscall_helper_data vmmnet_syscalls[] = {
 	SYSCALL_INIT_HELPER(vpc_open),
 	SYSCALL_INIT_HELPER(vpc_ctl),
@@ -621,6 +630,11 @@ vmmnet_module_init(void)
 		printf("vmmnet syscall register failed %d\n", rc);
 		return (rc);
 	}
+	if ((rc = kqueue_add_filteropts(EVFILT_VPCSW, &vpcsw_filtops))) {
+		syscall_helper_unregister(vmmnet_syscalls);
+		printf("failed to register vpcsw_filtops %d\n", rc);
+		return (rc);
+	}
 	art_tree_init(&vpc_uuid_table, sizeof(vpc_id_t));
 	return (0);
 }
@@ -629,8 +643,8 @@ static void
 vmmnet_module_deinit(void)
 {
 	syscall_helper_unregister(vmmnet_syscalls);
+	kqueue_del_filteropts(EVFILT_VPCSW);
 }
-
 
 static int
 vmmnet_module_event_handler(module_t mod, int what, void *arg)
