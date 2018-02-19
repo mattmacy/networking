@@ -29,7 +29,9 @@
 
 package vpc
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 // Handle is the descriptor associated with an opened VPC Object.
 type Handle int

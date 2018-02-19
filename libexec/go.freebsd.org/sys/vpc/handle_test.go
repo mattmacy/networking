@@ -30,12 +30,29 @@
 package vpc_test
 
 import (
+	"math/rand"
 	"testing"
 	"unsafe"
 
 	"github.com/kylelemons/godebug/pretty"
+	"github.com/sean-/seed"
 	"go.freebsd.org/sys/vpc"
 )
+
+func init() {
+	seed.MustInit()
+}
+
+type vpcHandleSlice []vpc.Handle
+
+// Shuffle pseudo-randomizes the order of elements using Fisher-Yates shuffle
+// function.
+func (s vpcHandleSlice) Shuffle() {
+	for i := len(s) - 1; i > 0; i-- {
+		j := rand.Int31n(int32(i + 1))
+		s[i], s[j] = s[j], s[i]
+	}
+}
 
 func TestHandle(t *testing.T) {
 	if unsafe.Sizeof(vpc.HandleType(0)) != 8 {
