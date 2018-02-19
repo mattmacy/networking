@@ -17,6 +17,7 @@ bhyve guests.
 4. `go get -u github.com/kylelemons/godebug/pretty`
 5. `go get -u github.com/kylelemons/godebug/diff`
 6. `go get -u -d github.com/sean-/seed`
+7. `go get -u -d github.com/satori/go.uuid`
 
 ## Testing
 

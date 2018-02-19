@@ -7,7 +7,7 @@ directories to search for Go files.  Set your `GOPATH` to include
 `/usr/libexec/go.freebsd.org`.  For example:
 
 ```sh
-export GOPATH=`go env GOPATH`:/usr/libexec/go.freebsd.org
+export GOPATH=`go env GOPATH`:/usr/libexec/go/src/go.freebsd.org
 ```
 
 ## Option 2: Add `go.freebsd.org` to `GOPATH`'s hierarchy.
@@ -16,12 +16,12 @@ The other option is to simply symlink `go.freebsd.org` into `GOPATH`:
 
 ```
 % mkdir -p `go env GOPATH`/src
-% ln -sf /usr/libexec/go.freebsd.org `go env GOPATH`/src
+% ln -sf /usr/libexec/go/src/go.freebsd.org `go env GOPATH`/src
 ```
 
 or if you're developing from src:
 
 ```
 % mkdir -p `go env GOPATH`/src
-% ln -sf /usr/src/libexec/go.freebsd.org `go env GOPATH`/src
+% ln -sf /usr/src/libexec/go `go env GOPATH`/src
 ```
