@@ -125,6 +125,22 @@ struct fileops vpcd_fileops  = {
 	.fo_flags = DFLAG_PASSABLE,
 };
 
+static int
+vpcd_print_uuid_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	MPASS(key_len == sizeof(vpc_id_t));
+
+	printf("%16D\n", key, ":");
+	return (0);
+}
+
+static void
+vpcd_print_uuids(void)
+{
+	VMMNET_LOCK();
+	art_iter(&vpc_uuid_table, vpcd_print_uuid_callback, NULL);
+	VMMNET_UNLOCK();
+}
 
 static int
 vpcd_close(struct file *fp, struct thread *td)
@@ -138,7 +154,13 @@ vpcd_close(struct file *fp, struct thread *td)
 		VMMNET_LOCK();
 		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
 		VMMNET_UNLOCK();
-		MPASS(value == ctx);
+#ifdef INVARIANTS
+		if (value != ctx) {
+			printf("%16D  --- vpc_id not found\n", &ctx->v_id, ":");
+			vpcd_print_uuids();
+		}
+#endif
+
 		/* run object dtor */
 		if (ctx->v_obj_type != VPC_OBJ_L2LINK)
 			if_clone_destroy(ctx->v_ifp->if_xname);
