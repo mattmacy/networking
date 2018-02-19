@@ -16,14 +16,16 @@ bhyve guests.
 
 % ln -sf /usr/src/libexec/go/src/go.freebsd.org `go env GOPATH`/src
 
-# or if you are developing the `src/`:
+# or if you are developing the `src/` (caution though: `GOPATH` may not be
+# passed as an environment variable by `doas(1)` or `sudo(1)` to the root
+# and is why the symlink in the default `GOPATH/src` is preferred):
 
 % export GOPATH /usr/src/libexec/go
 ```
 
 ## Testing
 
-Run the VPC tests:
+Run the VPC tests (once `GOPATH` is set correctly):
 
 ```
 cd src/libexec/go/src/go.freebsd.org/sys/vpc
