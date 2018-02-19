@@ -61,6 +61,52 @@ func Test_VPC_ID(t *testing.T) {
 	}
 }
 
+func Test_VPC_ParseID(t *testing.T) {
+	tests := []struct {
+		idStr string
+		ok    bool
+	}{
+		{
+			idStr: "183dddcc-2f8a-85d7-2d7c-3c6a14e22d5d",
+			ok:    true,
+		},
+		{
+			idStr: "183dddcc-2f8a-85d7-2d7c-316a14e22d5d",
+			ok:    false,
+		},
+		{
+			idStr: vpc.GenID().String(),
+			ok:    true,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.idStr, func(t *testing.T) {
+			t.Parallel()
+
+			if len(test.idStr) != 36 {
+				t.Fatalf("ID wrong len")
+			}
+
+			parseID, err := vpc.ParseID(test.idStr)
+			switch {
+			case err == nil && test.ok == true:
+			case err != nil && test.ok == false:
+				return // ok
+			case err != nil && test.ok == true:
+				t.Fatalf("unable to parse %q: %v", test.idStr, err)
+			case err == nil && test.ok == false:
+				t.Fatalf("expected failure for %q", test.idStr)
+			}
+
+			if test.idStr != parseID.String() {
+				t.Fatalf("string IDs don't match: %q %q", test.idStr, parseID.String())
+			}
+		})
+	}
+}
+
 func TestOpenFlags(t *testing.T) {
 	if unsafe.Sizeof(vpc.OpenFlags(0)) != 8 {
 		t.Fatal("open flags must be 8 bytes")
