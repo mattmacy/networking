@@ -30,19 +30,27 @@
 package vpc
 
 import (
+	"sync"
+
 	"github.com/pkg/errors"
 )
 
-// Handle is the descriptor associated with an opened VPC Object.
-type Handle int
+// HandleFD is the descriptor number associated with an opened VPC Object.
+type HandleFD int
+
+// Handle is a handle to the actual descriptor
+type Handle struct {
+	lock sync.RWMutex
+	fd   HandleFD
+}
 
 const (
-	// ErrorHandle is the value returned when an error occurss during a call to
+	// HandleErrorFD is the value returned when an error occurrs during a call to
 	// Open.
-	ErrorHandle Handle = -1
+	HandleErrorFD HandleFD = -1
 
-	// ClosedHandle is the value used to indicate a Handle has been closed.
-	ClosedHandle Handle = -2
+	// HandleClosedFD is the value used to indicate a Handle has been closed.
+	HandleClosedFD HandleFD = -2
 
 	errVersion HandleType = 0x1
 )
@@ -142,7 +150,10 @@ const (
 // Commit is used to ensure that the life of the referred VPC object outlives
 // the current process with the open VPC Handle.
 func (h *Handle) Commit() error {
-	if err := Ctl(*h, _CommitCmd, nil, nil); err != nil {
+	h.lock.Lock()
+	defer h.lock.Unlock()
+
+	if err := ctl(h, _CommitCmd, nil, nil); err != nil {
 		return errors.Wrap(err, "unable to commit VPC object")
 	}
 
@@ -153,9 +164,22 @@ func (h *Handle) Commit() error {
 // Destroy is used to terminate the life of the referred VPC object so that the
 // VPC Object's resources are cleaned up when the Handle is closed.
 func (h *Handle) Destroy() error {
-	if err := Ctl(*h, _DestroyCmd, nil, nil); err != nil {
+	h.lock.Lock()
+	defer h.lock.Unlock()
+
+	if err := ctl(h, _DestroyCmd, nil, nil); err != nil {
 		return errors.Wrap(err, "unable to destroy VPC object")
 	}
 
 	return nil
+}
+
+// FD returns the integer Unix file descriptor referencing the open file. The
+// file descriptor is valid only until f.Close is called or f is garbage
+// collected.
+func (h *Handle) FD() uintptr {
+	h.lock.RLock()
+	defer h.lock.RUnlock()
+
+	return uintptr(h.fd)
 }

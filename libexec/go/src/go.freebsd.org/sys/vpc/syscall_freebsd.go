@@ -37,8 +37,11 @@ import (
 )
 
 const (
-	SYS_VPC_OPEN = 580
-	SYS_VPC_CTL  = 581
+	// SysVPCOpen is the reserved syscall number for vpc_open(2)
+	SysVPCOpen = 580
+
+	// SysVPCCtl is the reserved syscall number for vpc_ctl(2)
+	SysVPCCtl = 581
 )
 
 // Open obtains a VPC handle to a given object type.  Obtaining an open Handle
@@ -49,20 +52,32 @@ const (
 // Flag is set, Open returns EINVAL.  If the HandleType is out of bounds, Open
 // returns EOPNOTSUPP.  Returned Handles must have their information Commit()'ed
 // in order for it to persist beyond the life of the Handle.
-func Open(id ID, ht HandleType, flags OpenFlags) (h Handle, err error) {
+func Open(id ID, ht HandleType, flags OpenFlags) (h *Handle, err error) {
+	h = &Handle{}
+
 	// 580     AUE_VPC         NOSTD   { int vpc_open(const vpc_id_t *vpc_id, vpc_type_t obj_type, \
 	//                                   vpc_flags_t flags); }
-	r0, _, e1 := syscall.Syscall(SYS_VPC_OPEN, uintptr(unsafe.Pointer(&id)), uintptr(ht), uintptr(flags))
-	h = Handle(r0)
+	r0, _, e1 := syscall.Syscall(SysVPCOpen, uintptr(unsafe.Pointer(&id)), uintptr(ht), uintptr(flags))
+	h.fd = HandleFD(r0)
 	if e1 != 0 {
-		return ErrorHandle, syscall.Errno(e1)
+		h.fd = HandleErrorFD
+		return h, syscall.Errno(e1)
 	}
 
 	return h, nil
 }
 
 // Ctl manipulates the Handle based on the args
-func Ctl(h Handle, cmd Cmd, in []byte, out *[]byte) error {
+func Ctl(h *Handle, cmd Cmd, in []byte, out *[]byte) error {
+	// TODO(seanc@): Potential concurrency optimization if we conditionalize the
+	// type of lock based on the bits encoded in Cmd.
+	h.lock.Lock()
+	defer h.lock.Unlock()
+
+	return ctl(h, cmd, in, out)
+}
+
+func ctl(h *Handle, cmd Cmd, in []byte, out *[]byte) error {
 	// Implementation sanity checking
 	switch {
 	case cmd.In() && len(in) == 0:
@@ -77,15 +92,15 @@ func Ctl(h Handle, cmd Cmd, in []byte, out *[]byte) error {
 	var e1 syscall.Errno
 	switch {
 	case len(in) == 0 && out == nil:
-		r1, _, e1 = syscall.Syscall6(SYS_VPC_CTL, uintptr(h), uintptr(cmd),
+		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(0), uintptr(0),
 			uintptr(0), uintptr(0))
 	case len(in) != 0 && out != nil:
-		r1, _, e1 = syscall.Syscall6(SYS_VPC_CTL, uintptr(h), uintptr(cmd),
+		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(len(in)), uintptr(unsafe.Pointer(&in[0])),
 			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
 	case len(in) == 0 && out != nil:
-		r1, _, e1 = syscall.Syscall6(SYS_VPC_CTL, uintptr(h), uintptr(cmd),
+		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(0), uintptr(0),
 			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
 	default:

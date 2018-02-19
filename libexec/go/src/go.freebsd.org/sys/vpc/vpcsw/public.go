@@ -48,7 +48,7 @@ func (c Config) MarshalZerologObject(e *zerolog.Event) {
 
 // VPCSW is an opaque struct representing a VPC Switch.
 type VPCSW struct {
-	h   vpc.Handle
+	h   *vpc.Handle
 	ht  vpc.HandleType
 	vni vpc.VNI
 	id  vpc.ID
@@ -87,7 +87,7 @@ func Create(cfg Config) (*VPCSW, error) {
 // Close closes the VPC Handle descriptor.  Created VPC Switches will not be
 // destroyed when the VPCSW is closed if the VPC Switch has been Committed.
 func (sw *VPCSW) Close() error {
-	if sw.h <= 0 {
+	if vpc.HandleFD(sw.h.FD()) <= 0 {
 		return nil
 	}
 
@@ -102,7 +102,7 @@ func (sw *VPCSW) Close() error {
 // Switch lives beyond the life of the current process and is not automatically
 // cleaned up when the VPCSW is closed.
 func (sw *VPCSW) Commit() error {
-	if sw.h <= 0 {
+	if vpc.HandleFD(sw.h.FD()) <= 0 {
 		return nil
 	}
 
@@ -116,7 +116,7 @@ func (sw *VPCSW) Commit() error {
 // Destroy decrements the refcount of the VPC Switch in destroy the the VPC
 // Switch when the VPC Handle is closed.
 func (sw *VPCSW) Destroy() error {
-	if sw.h <= 0 {
+	if vpc.HandleFD(sw.h.FD()) <= 0 {
 		return nil
 	}
 
