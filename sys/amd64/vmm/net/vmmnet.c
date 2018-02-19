@@ -147,8 +147,8 @@ vpcd_close(struct file *fp, struct thread *td)
 
 	if ((ctx = fp->f_data) == NULL)
 		return (0);
+	fp->f_data = NULL;
 	if (refcount_release(&ctx->v_refcnt)) {
-		fp->f_data = NULL;
 		VMMNET_LOCK();
 		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
 		VMMNET_UNLOCK();
