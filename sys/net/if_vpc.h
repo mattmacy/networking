@@ -76,8 +76,8 @@ struct vpci_vni {
 
 #define VPCSW_REQ_NDv4 0x1
 #define VPCSW_REQ_NDv6 0x2
-#define VPCSW_REQ_DHCPv4 0x3
-#define VPCSW_REQ_DHCPv6 0x4
+#define VPCSW_REQ_DHCPv4 0x4
+#define VPCSW_REQ_DHCPv6 0x8
 #define VPCSW_REQ_MAX VPCSW_REQ_DHCPv6 
 
 #define VPCSW_VERSION 0x42
