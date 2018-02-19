@@ -124,7 +124,98 @@ struct vpcsw_softc {
 	art_tree *vs_ftable_rw;
 	struct ifnet *vs_ifdefault;
 	vpc_id_t vs_uplink_id;
+	struct knlist vs_knlist;
+	struct grouptask vs_vtep_gtask;
+	struct vpcsw_response vs_resp_pending;
+	bool vs_resp_consumed;
 };
+
+#ifdef notyet
+static int      filt_vpcwsattach(struct knote *kn);
+static void     filt_vpcswdetach(struct knote *kn);
+static int      filt_vpcsw(struct knote *kn, long hint);
+
+struct filterops vpcsw_filtops = {
+	.f_isfd = 1,
+	.f_attach = filt_vpcswattach,
+	.f_detach = filt_vpcswdetach,
+	.f_event = filt_vpcsw,
+};
+
+static void
+vpcsw_event_signal(struct vpc_softc *vs, int type)
+{
+	KNOTE_UNLOCKED(&vs->vs_knlist, type);
+}
+
+static int
+filt_vpcswattach(struct knote *kn)
+{
+	vpc_ctx_t vctx;
+	if_ctx_t ctx;
+	struct vpcsw_softc *vs;
+
+	if (kn->kn_fp->f_type != DTYPE_VPCFD)
+		return (EBADF);
+
+	vctx = kn->kn_fp->f_data;
+	if (vctx->v_type != VPC_OBJ_SWITCH)
+		return (EBADF);
+	ctx = vctx->v_ifp->if_softc;
+	vs = iflib_get_ctx(ctx);
+	knlist_add(&vs->vs_knlist, kn, 0);
+	return (0);
+}
+
+static void
+filt_vpcswdetach(struct knote *kn)
+{
+	vpc_ctx_t vctx;
+	if_ctx_t ctx;
+	struct vpcsw_softc *vs;
+
+	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
+	vctx = kn->kn_fp->f_data;
+	MPASS(vctx->v_type == VPC_OBJ_SWITCH);
+	ctx = vctx->v_ifp->if_softc;
+	vs = iflib_get_ctx(ctx);
+	knlist_remove(&vs->vs_knlist, kn, 0);
+}
+
+static int
+filt_vpcsw(struct knote *kn, long hint)
+{
+	void *uaddr;
+	if_ctx_t ctx;
+	vpc_ctx_t vctx;
+	struct kevent *kev;
+	struct vpcsw_softc *vs;
+	struct vpcsw_request *vr;
+
+	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
+	vctx = kn->kn_fp->f_data;
+	MPASS(vctx->v_type == VPC_OBJ_SWITCH);
+	ctx = vctx->v_ifp->if_softc;
+	vs = iflib_get_ctx(ctx);
+	vr = &vs->vs_req_pending;
+	if (vs->vs_req_type == 0)
+		return (0);
+
+	if (hint == 0)
+		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
+	kev = &kn->kn_kevent;
+	kev->fflags |= vs->vs_req_type;
+	uaddr = (void*)kev->ext[0];
+	if (uaddr != NULL) {
+		if (copyout(vr, uaddr, sizeof(*vr)) == 0)
+			vs->vs_req_consumed = true;
+	}
+	return (kn->kn_fflags != 0);
+}
+
+#else
+struct filterops vpcsw_filtops;
+#endif
 
 #ifdef notyet
 static const char *opcode_map[] = {
@@ -554,6 +645,7 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	vs->vs_ftable_rw = malloc(sizeof(art_tree), M_VPCSW, M_WAITOK|M_ZERO);
 	art_tree_init(vs->vs_ftable_ro, ETHER_ADDR_LEN);
 	art_tree_init(vs->vs_ftable_rw, ETHER_ADDR_LEN);
+	knlist_init_mtx(&vs->vs_knlist, NULL);
 	return (0);
 }
 
