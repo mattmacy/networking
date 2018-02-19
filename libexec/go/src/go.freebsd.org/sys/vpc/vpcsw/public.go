@@ -87,7 +87,7 @@ func Create(cfg Config) (*VPCSW, error) {
 // Close closes the VPC Handle descriptor.  Created VPC Switches will not be
 // destroyed when the VPCSW is closed if the VPC Switch has been Committed.
 func (sw *VPCSW) Close() error {
-	if vpc.HandleFD(sw.h.FD()) <= 0 {
+	if sw.h.FD() <= 0 {
 		return nil
 	}
 
@@ -102,7 +102,7 @@ func (sw *VPCSW) Close() error {
 // Switch lives beyond the life of the current process and is not automatically
 // cleaned up when the VPCSW is closed.
 func (sw *VPCSW) Commit() error {
-	if vpc.HandleFD(sw.h.FD()) <= 0 {
+	if sw.h.FD() <= 0 {
 		return nil
 	}
 
@@ -116,7 +116,7 @@ func (sw *VPCSW) Commit() error {
 // Destroy decrements the refcount of the VPC Switch in destroy the the VPC
 // Switch when the VPC Handle is closed.
 func (sw *VPCSW) Destroy() error {
-	if vpc.HandleFD(sw.h.FD()) <= 0 {
+	if sw.h.FD() <= 0 {
 		return nil
 	}
 

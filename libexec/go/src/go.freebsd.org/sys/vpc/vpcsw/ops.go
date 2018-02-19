@@ -97,7 +97,7 @@ func init() {
 
 // Reset resets the VPC Switch.
 func (sw *VPCSW) Reset() error {
-	if vpc.HandleFD(sw.h.FD()) <= 0 {
+	if sw.h.FD() <= 0 {
 		return nil
 	}
 

@@ -147,7 +147,7 @@ func TestVPCCreateOpenClose(t *testing.T) {
 	if err := vpcsw0CHandle.Close(); err != nil {
 		t.Fatalf("unable to close(2) VPC Handle : %v", err)
 	}
-	if vpc.HandleFD(vpcsw0CHandle.FD()) != vpc.HandleClosedFD {
+	if vpcsw0CHandle.FD() != vpc.HandleClosedFD {
 		t.Fatalf("handle set to wrong value in vpc.Close()")
 	}
 
@@ -319,7 +319,7 @@ func TestVPCCreateCommitDestroyClose(t *testing.T) {
 	if err := vpcsw0CHandle.Close(); err != nil {
 		t.Fatalf("unable to close(2) VPC Handle : %v", err)
 	}
-	if vpc.HandleFD(vpcsw0CHandle.FD()) != vpc.HandleClosedFD {
+	if vpcsw0CHandle.FD() != vpc.HandleClosedFD {
 		t.Fatalf("handle set to wrong value in vpc.Close()")
 	}
 }
