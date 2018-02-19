@@ -232,6 +232,8 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 
 	type = (vpc_handle_type_t*)&obj_type;
 	ifp = NULL;
+	if (ETHER_IS_MULTICAST(vpc_id->node))
+		return (EADDRNOTAVAIL);
 	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX ||
 		type->vht_obj_type == VPC_OBJ_MGMT) {
 		printf("type->vht_obj_type=%d\n", type->vht_obj_type);
