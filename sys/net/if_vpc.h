@@ -136,18 +136,6 @@ struct vpcsw_response {
 	union vpcsw_response_data vrs_data;
 };
 
-#define VPCSW_POLL									\
-	_IOWR('k', 1, struct vpcsw_request)
-#define VPCSW_RESPONSE_NDv4		   					\
-	_IOW('k', 2, struct vpcsw_response)
-#define VPCSW_RESPONSE_NDv6		   					\
-	_IOW('k', 3, struct vpcsw_response)
-#define VPCSW_RESPONSE_DHCPv4		  				\
-	_IOW('k', 4, struct vpcsw_response)
-#define VPCSW_RESPONSE_DHCPv6		   	  			\
-	_IOW('k', 5, struct vpcsw_response)
-
-
 #ifdef _KERNEL
 #include <sys/proc.h>
 #include <sys/sched.h>
@@ -202,13 +190,6 @@ vpc_epoch_end(void)
 
 int vpc_ifp_cache(struct ifnet *ifp);
 
-
-enum vpcp_port_type {
-	VPCP_TYPE_NONE,
-	VPCP_TYPE_VMI,
-	VPCP_TYPE_PHYS
-};
-
 int vpcp_set_ifswitch(if_ctx_t ctx, if_t ifp);
 if_t vpcp_get_ifswitch(if_ctx_t ctx);
 void vpcp_clear_ifswitch(if_ctx_t ctx);
@@ -262,6 +243,12 @@ int vpc_rtr_lookupv4(rtr_ctx_t rc, void *key, uint32_t *val);
 int vpc_rtr_lookupv6(rtr_ctx_t rc, void *key, uint32_t *val);
 
 #endif
+enum vpcp_port_type {
+	VPCP_TYPE_NONE,
+	VPCP_TYPE_VMI,
+	VPCP_TYPE_PHYS
+};
+
 enum vpc_obj_type {
 	VPC_OBJ_INVALID = 0,
 	VPC_OBJ_SWITCH = 1,
@@ -284,7 +271,11 @@ enum vpc_vpcsw_op_type {
 	VPC_VPCSW_STATE_GET =		5,
 	VPC_VPCSW_STATE_SET =		6,
 	VPC_VPCSW_RESET =		7,
-	VPC_VPCSW_OP_TYPE_MAX =			7,
+	VPC_VPCSW_RESPONSE_NDV4 =	8,
+	VPC_VPCSW_RESPONSE_NDV6 =	9,
+	VPC_VPCSW_RESPONSE_DHCPV4 =	10,
+	VPC_VPCSW_RESPONSE_DHCPV6 =	11,
+	VPC_VPCSW_OP_TYPE_MAX =			11,
 };
 
 enum vpc_vpcp_op_type {
@@ -400,11 +391,13 @@ enum vpc_l2link_op_type {
 #define VPC_VPCSW_OP_STATE_GET VPC_OP_O(VPC_OBJ_SWITCH, VPC_VPCSW_STATE_GET)
 #define VPC_VPCSW_OP_STATE_SET VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_STATE_SET)
 #define VPC_VPCSW_OP_RESET VPC_OP_MP(VPC_OBJ_SWITCH, VPC_VPCSW_RESET)
+#define VPC_VPCSW_OP_RESPONSE_NDV4 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_NDV4)
+#define VPC_VPCSW_OP_RESPONSE_DHCPV4 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_DHCPV4)
+#define VPC_VPCSW_OP_RESPONSE_NDV6 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_NDV6)
+#define VPC_VPCSW_OP_RESPONSE_DHCPV6 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_DHCPV6)
 
 #define VPC_VMNIC_OP_NQUEUES_GET VPC_OP_O(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_GET)
 #define VPC_VMNIC_OP_NQUEUES_SET VPC_OP_IMP(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_SET)
-
-
 
 
 #define VPC_VMNIC_OP_ATTACH VPC_OP_IMP(VPC_OBJ_VMNIC, VPC_VMNIC_ATTACH)
