@@ -7071,6 +7071,7 @@ iflib_clone_create(struct if_clone *ifc, int unit, caddr_t params)
 	dev = device_add_child(iflib_pseudodev, name, unit);
 	device_set_driver(dev, &pseudodriver);
 	PSEUDO_UNLOCK();
+	device_quiet(dev);
 	rc = device_attach(dev);
 	MPASS(rc == 0);
 	MPASS(dev != NULL);
