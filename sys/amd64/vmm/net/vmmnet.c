@@ -91,8 +91,6 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 
 #define VPC_CTX_F_DESTROYED 0x1
 #define VPC_CTX_F_COMMITTED 0x2
-#define VPC_CTX_F_WRITE 0x4
-#define VPC_CTX_F_PRIV 0x8
 
 struct vpcctx {
 	struct ifnet *v_ifp;
@@ -203,7 +201,7 @@ char *if_names[] = {
 	"NONE",
 	"vpcsw",
 	"vpcp",
-	"vpcr",
+	"vpcrtr",
 	"vpcnat",
 	"vpclink",
 	"vmnic",
@@ -321,6 +319,11 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	}
 
 	fflags = O_CLOEXEC;
+	if (flags & VPC_F_WRITE)
+		fflags |= FWRITE;
+	if (priv_check(td, PRIV_DRIVER) == 0)
+		fflags |= O_APPEND;
+
 	fdp = td->td_proc->p_fd;
 	rc = falloc(td, &fp, &fd, fflags);
 	if (rc) {
@@ -343,10 +346,6 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		if (macrc && bootverbose)
 			printf("set_mac failed: %d\n", macrc);
 	}
-	if (flags & VPC_F_WRITE)
-		ctx->v_flags |= VPC_CTX_F_WRITE;
-	if (priv_check(td, PRIV_DRIVER) == 0)
-		ctx->v_flags |= VPC_CTX_F_PRIV;
 	finit(fp, fflags, DTYPE_VPCFD, ctx, &vpcd_fileops);
 	fdrop(fp, td);
 	*vpcd = fd;
@@ -440,11 +439,11 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		rc = ENODEV;
 		goto done;
 	}
-	if ((op & IOC_PRIV) && ((ctx->v_flags & VPC_CTX_F_PRIV) == 0)) {
+	if ((op & IOC_PRIV) && ((fp->f_flag & O_APPEND) == 0)) {
 		rc = EPERM;
 		goto done;
 	}
-	if ((op & IOC_MUT) && ((ctx->v_flags & VPC_CTX_F_WRITE) == 0)) {
+	if ((op & IOC_MUT) && ((fp->f_flag & FWRITE) == 0)) {
 		rc = EPERM;
 		goto done;
 	}
