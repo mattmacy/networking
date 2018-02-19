@@ -462,7 +462,8 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 				goto done;
 			}
 			ctx->v_flags |= VPC_CTX_F_DESTROYED;
-			refcount_release(&ctx->v_refcnt);
+			rc = refcount_release(&ctx->v_refcnt);
+			MPASS(rc == 0);
 			break;
 		case VPC_OBJ_OP_COMMIT:
 			if (ctx->v_flags & (VPC_CTX_F_DESTROYED|VPC_CTX_F_COMMITTED)) {
