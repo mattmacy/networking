@@ -65,14 +65,14 @@ func TestVPCCreateOpenClose(t *testing.T) {
 		t.Fatalf("unable to construct a HandleType: %v", err)
 	}
 
-	vpcsw0CreateFD, err := vpc.Open(vpcsw0ID, ht, vpc.FlagCreate)
+	vpcsw0CHandle, err := vpc.Open(vpcsw0ID, ht, vpc.FlagCreate)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
 
 	// NOTE(seanc@): This could conceivably be 0 if we've closed stdin before this
 	// test runs.
-	if vpcsw0CreateFD == 0 {
+	if vpcsw0CHandle.FD() == 0 {
 		t.Errorf("vpc_open(2) return an FD of 0")
 	}
 
@@ -103,17 +103,17 @@ func TestVPCCreateOpenClose(t *testing.T) {
 	}
 
 	log.Debug().Str("VPC ID", vpcsw0ID.String()).Msg("Opening vpcsw0")
-	vpcsw0OpenFD, err := vpc.Open(vpcsw0ID, ht, vpc.FlagOpen)
+	vpcsw0OHandle, err := vpc.Open(vpcsw0ID, ht, vpc.FlagOpen)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
 	defer func() {
-		if err := vpcsw0OpenFD.Close(); err != nil {
+		if err := vpcsw0OHandle.Close(); err != nil {
 			t.Fatalf("unable to close(2) VPC Handle : %v", err)
 		}
 	}()
 
-	if vpcsw0OpenFD == vpcsw0CreateFD {
+	if vpcsw0OHandle == vpcsw0CHandle {
 		t.Errorf("vpc_open(2) open and create FDs are identical")
 	}
 
@@ -143,15 +143,15 @@ func TestVPCCreateOpenClose(t *testing.T) {
 		}
 	}()
 
-	log.Debug().Int("vpcsw0CreateFD", int(vpcsw0CreateFD)).Msg("closing vpcsw0 create")
-	if err := vpcsw0CreateFD.Close(); err != nil {
+	log.Debug().Int("vpcsw0CreateFD", int(vpcsw0CHandle.FD())).Msg("closing vpcsw0 create")
+	if err := vpcsw0CHandle.Close(); err != nil {
 		t.Fatalf("unable to close(2) VPC Handle : %v", err)
 	}
-	if vpcsw0CreateFD != vpc.ClosedHandle {
+	if vpc.HandleFD(vpcsw0CHandle.FD()) != vpc.HandleClosedFD {
 		t.Fatalf("handle set to wrong value in vpc.Close()")
 	}
 
-	if err := vpcsw0CreateFD.Close(); err != nil {
+	if err := vpcsw0CHandle.Close(); err != nil {
 		t.Fatalf("unable to close(2) VPC Handle : %v", err)
 	}
 
@@ -159,7 +159,7 @@ func TestVPCCreateOpenClose(t *testing.T) {
 	//time.Sleep(30 * time.Second)
 
 	log.Debug().Msg("closing vpcsw0 open")
-	if err := vpcsw0OpenFD.Close(); err != nil {
+	if err := vpcsw0OHandle.Close(); err != nil {
 		t.Fatalf("unable to close(2) VPC Handle : %v", err)
 	}
 
@@ -207,38 +207,39 @@ func TestVPCCreateOpenCloseParallel(t *testing.T) {
 		t.Fatalf("unable to construct a HandleType: %v", err)
 	}
 
+	log.Debug().Int("num test cases", len(testCases)).Msg("")
 	for _, testCase := range testCases {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			vpcswID := vpc.GenID()
 
-			vpcswCreateFD, err := vpc.Open(vpcswID, ht, vpc.FlagCreate)
+			vpcswCHandle, err := vpc.Open(vpcswID, ht, vpc.FlagCreate)
 			if err != nil {
 				t.Fatalf("vpc_open(2) failed: %v", err)
 			}
-			defer func() {
-				if err := vpcswCreateFD.Close(); err != nil {
-					t.Fatalf("unable to close(2) VPC Handle : %v", err)
+			defer func(h *vpc.Handle) {
+				if err := h.Close(); err != nil {
+					t.Fatalf("unable to close(2) VPC Handle : %v c%v", err, h)
 				}
-			}()
+			}(vpcswCHandle)
 
 			// NOTE(seanc@): This could conceivably be 0 if we've closed stdin before
 			// this test runs.
-			if vpcswCreateFD == 0 {
-				t.Errorf("vpc_open(2) return an FD of 0")
+			if vpcswCHandle.FD() == 0 {
+				t.Fatalf("vpc_open(2) return an FD of 0")
 			}
 
 			allInterfaces, err := testGetAllInterfaces()
 			if err != nil {
-				t.Errorf("unable to get all interfaces: %v", err)
+				t.Fatalf("unable to get all interfaces: %v", err)
 			}
 
 			// For the sake of testing, call this `vpcsw0` even though the name may be
 			// different.
 			vpcsw0, err := allInterfaces.FindMAC(net.HardwareAddr(vpcswID.Node[:]))
 			if err != nil {
-				t.Errorf("unable to find self: %v", err)
+				t.Fatalf("unable to find self: %v", err)
 			}
 
 			if bytes.Compare(vpcsw0.HardwareAddr[:], net.HardwareAddr{}[:]) == 0 {
@@ -262,21 +263,21 @@ func TestVPCCreateOpenCloseParallel(t *testing.T) {
 				if err != nil {
 					t.Fatalf("vpc_open(2) failed: %v", err)
 				}
-				defer func() {
-					if err := vpcswOpenFD.Close(); err != nil {
-						t.Fatalf("unable to close(2) VPC Handle : %v", err)
+				defer func(h *vpc.Handle) {
+					if err := h.Close(); err != nil {
+						t.Fatalf("unable to close(2) VPC Handle : %v o%v", err, h)
 					}
-				}()
+				}(vpcswOpenFD)
 
 				openHandles[i] = vpcswOpenFD
 			}
 
-			openHandles = append(openHandles, vpcswCreateFD)
+			openHandles = append(openHandles, vpcswCHandle)
 			openHandles.Shuffle()
 
 			for i := range openHandles {
 				if err := openHandles[i].Close(); err != nil {
-					t.Fatalf("unable to close(2) VPC Handle : %v", err)
+					t.Fatalf("unable to close(2) VPC Handle : %v b%v", err, openHandles[i])
 				}
 			}
 		})
@@ -295,30 +296,30 @@ func TestVPCCreateCommitDestroyClose(t *testing.T) {
 	}
 
 	log.Debug().Msg("creating vpcsw0")
-	vpcsw0CreateFD, err := vpc.Open(vpcsw0ID, ht, vpc.FlagCreate|vpc.FlagWrite)
+	vpcsw0CHandle, err := vpc.Open(vpcsw0ID, ht, vpc.FlagCreate|vpc.FlagWrite)
 	if err != nil {
 		t.Fatalf("vpc_open(2) failed: %v", err)
 	}
 
 	// NOTE(seanc@): This could conceivably be 0 if we've closed stdin before this
 	// test runs.
-	if vpcsw0CreateFD == 0 {
+	if vpcsw0CHandle.FD() == 0 {
 		t.Errorf("vpc_open(2) return an FD of 0")
 	}
 
-	if err := vpcsw0CreateFD.Commit(); err != nil {
+	if err := vpcsw0CHandle.Commit(); err != nil {
 		t.Fatalf("vpc_open(2) unable to commit: %v", err)
 	}
 
-	if err := vpcsw0CreateFD.Destroy(); err != nil {
+	if err := vpcsw0CHandle.Destroy(); err != nil {
 		t.Fatalf("vpc_open(2) unable to destroy: %v", err)
 	}
 
-	log.Debug().Int("vpcsw0CreateFD", int(vpcsw0CreateFD)).Msg("closing vpcsw0 create")
-	if err := vpcsw0CreateFD.Close(); err != nil {
+	log.Debug().Int("vpcsw0CreateFD", int(vpcsw0CHandle.FD())).Msg("closing vpcsw0 create")
+	if err := vpcsw0CHandle.Close(); err != nil {
 		t.Fatalf("unable to close(2) VPC Handle : %v", err)
 	}
-	if vpcsw0CreateFD != vpc.ClosedHandle {
+	if vpc.HandleFD(vpcsw0CHandle.FD()) != vpc.HandleClosedFD {
 		t.Fatalf("handle set to wrong value in vpc.Close()")
 	}
 }

@@ -43,7 +43,7 @@ func init() {
 	seed.MustInit()
 }
 
-type vpcHandleSlice []vpc.Handle
+type vpcHandleSlice []*vpc.Handle
 
 // Shuffle pseudo-randomizes the order of elements using Fisher-Yates shuffle
 // function.
