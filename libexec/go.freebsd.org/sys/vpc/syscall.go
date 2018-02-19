@@ -96,6 +96,8 @@ func GenID() ID {
 		if _, err := rand.Read(b[:]); err != nil {
 			panic("bad")
 		}
+		// #define    ETHER_IS_MULTICAST(addr) (*(addr) & 0x01) /* is address mcast/bcast? */
+		b[0] = b[0] &^ 0x01
 		return b
 	}
 
