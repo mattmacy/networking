@@ -242,7 +242,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	vbs->vbs_nvqs = 2*nqs + 1;
 
 #ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_VPC_CTL);
+	cap_rights_init(&rights, CAP_VPC_READ|CAP_VPC_PRIVWRITE);
 	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
