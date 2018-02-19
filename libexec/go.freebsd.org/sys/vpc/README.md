@@ -21,9 +21,10 @@ bhyve guests.
 
 Run the VPC tests:
 
-    ```
+```
 cd src/libexec/go.freebsd.org/sys/vpc
-go test -v ./...
+doas go test -v ./...
+doas go test -bench . -benchtime 15s ./...
 ```
 
 ## Development
@@ -37,11 +38,11 @@ set -e
 
 cd /usr/src
 git pull
-cd /usr/src/sys/modules/vmmnet
-make
-doas make install
-doas kldunload /boot/modules/vmmnet.ko
-doas kldload /boot/modules/vmmnet.ko
+cd /usr/src
+make -j`sysctl -n hw.ncpu` buildkernel KERNCONF=BHYVE -DNO_KERNELCLEAN -s COPTFLAGS=-O0
+doas make installkernel KERNCONF=BHYVE
+doas kldunload vmmnet
+doas kldload vmmnet
 cd /usr/src/libexec/go.freebsd.org/sys/vpc
 doas go test ./...
 ```
@@ -49,6 +50,27 @@ doas go test ./...
 ### Debugging
 
 - `doas truss -faDH go test ./...`
+
+### Enabling `MemGuard(9)`
+
+Add the following kernel option:
+
+```
+options         DEBUG_MEMGUARD
+```
+
+and install the new kernel.  Once restarted and up and running, enable
+`MemGuard(9)` for `ifnet` or `vmmnet`.
+
+```
+$ doas sysctl vm.memguard.desc="ifnet"
+$ doas sysctl vm.memguard.desc="vmmnet"
+```
+
+NOTE: It is required to enable this `sysctl(8)` *BEFORE* loading `vmmnet.ko`
+below.
+
+If a panic occurs during testing, `dump` a core and `reboot`.
 
 #### TODO
 
