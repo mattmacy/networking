@@ -115,10 +115,18 @@ func GenID() ID {
 	}
 }
 
+// ParseID parses a UUID string and converts it into an ID.  ParseID will return
+// an error if the UUID is malformed or if the Node portion of the UUID has its
+// multicast/broadcast bit set.
 func ParseID(idStr string) (ID, error) {
 	uuidRaw, err := uuid.FromString(idStr)
 	if err != nil {
 		return ID{}, errors.Wrapf(err, "unable to parse UUID: %q", idStr)
+	}
+
+	// #define    ETHER_IS_MULTICAST(addr) (*(addr) & 0x01) /* is address mcast/bcast? */
+	if uuidRaw[10]&0x01 == 1 {
+		return ID{}, errors.New("broadcast bit set in Node portion of UUID")
 	}
 
 	id := ID{
