@@ -86,6 +86,21 @@ static MALLOC_DEFINE(M_VPCSW, "vpcsw", "virtual private cloud bridge");
  * ifconfig vpcsw0 addm vmi7
  * ifconfig vpcsw0 pathcost vmi7 2000000
  */
+#define ARPHRD_ETHER 	1	/* ethernet hardware format */
+#define	ARPOP_REPLY	2	/* response to previous request */
+struct arphdr_ether {
+	u_short	ar_hrd;		/* format of hardware address */
+	u_short	ar_pro;		/* format of protocol address */
+	u_char	ar_hln;		/* length of hardware address */
+	u_char	ar_pln;		/* length of protocol address */
+	u_short	ar_op;		/* one of: */
+	u_char	ar_sha[ETHER_ADDR_LEN];	/* sender hardware address */
+	in_addr_t	ar_spa;	/* sender protocol address */
+	u_char	ar_tha[ETHER_ADDR_LEN];	/* target hardware address */
+	in_addr_t	ar_tpa;	/* target protocol address */
+	u_char ar_pad[60 - ETHER_HDR_LEN - 24 /*arphdr*/];
+};
+
 
 struct vpcsw_source {
 	uint16_t vs_dmac[3]; /* destination mac address */
@@ -97,10 +112,6 @@ struct vpcsw_cache_ent {
 	struct vpcsw_source vce_src;
 	uint16_t vce_ifindex;	/* interface index */
 	int vce_ticks;		/* time when entry was created */
-};
-
-struct pinfo {
-	uint16_t etype;
 };
 
 static volatile int32_t modrefcnt;
@@ -122,12 +133,15 @@ struct vpcsw_softc {
 	art_tree *vs_ftable_ro;
 	art_tree *vs_ftable_rw;
 	struct ifnet *vs_ifdefault;
+	struct vpcsw_cache_ent *vs_pcpu_cache;
 	vpc_id_t vs_uplink_id;
 	struct knlist vs_knlist;
 	struct mtx vs_vtep_mtx;
 	struct grouptask vs_vtep_gtask;
-	struct vpcsw_request vs_req_pending;
 	bool vs_req_read;
+	/* pad */
+	struct vpcsw_request vs_req_pending;
+	struct arphdr_ether vs_arp_template;
 };
 
 static int      filt_vpcswattach(struct knote *kn);
@@ -177,7 +191,7 @@ vpcsw_update_req(struct vpcsw_softc *vs)
 	if (m->m_flags & M_VXLANTAG)
 		vr->vrq_context.voc_vni = m->m_pkthdr.vxlanid;
 	if (m->m_flags & M_VLANTAG)
-		vr->vrq_context.voc_vlanid = m->m_pkthdr.ether_vtag;
+		vr->vrq_context.voc_vtag = m->m_pkthdr.ether_vtag;
 	vpc_parse_pkt(m, &pinfo);
 	eh = (void*)m->m_data;
 	memcpy(vr->vrq_context.voc_smac, eh->ether_shost, ETHER_ADDR_LEN);
@@ -324,7 +338,7 @@ vpcsw_response_dispatch(struct vpcsw_softc *vs, unsigned long cmd, struct vpcsw_
 		   vrs->vrs_header.voh_version,
 		   opcode_map[vrs->vrs_header.voh_op],
 		   vrs->vrs_context.voc_vni,
-		   vrs->vrs_context.voc_vlanid);
+		   vrs->vrs_context.voc_vtag);
 	switch (cmd) {
 		case VPCSW_RESPONSE_NDv4:
 			break;
@@ -628,6 +642,19 @@ vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
 
+static void
+vpcsw_arp_tmpl_init(struct vpcsw_softc *vs)
+{
+	struct arphdr_ether *ae = &vs->vs_arp_template;
+
+	bzero(ae, sizeof(*ae));
+	ae->ar_hrd = htons(ARPHRD_ETHER);
+	ae->ar_pro = htons(ETHERTYPE_IP);
+	ae->ar_hln = ETHER_ADDR_LEN;
+	ae->ar_pln = sizeof(in_addr_t);
+	ae->ar_op = htons(ARPOP_REPLY);
+}
+
 static int
 vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
@@ -657,6 +684,8 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	mtx_init(&vs->vs_vtep_mtx, "vtep mtx", NULL, MTX_DEF);
 	knlist_init_mtx(&vs->vs_knlist, &vs->vs_vtep_mtx);
 	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_vtep_gtask, _task_fn_vtep, "vtep task");
+	vs->vs_pcpu_cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
+	vpcsw_arp_tmpl_init(vs);
 	return (0);
 }
 
@@ -814,6 +843,44 @@ vpcsw_port_uplink_get(struct vpcsw_softc *vs, vpc_id_t *vp_id)
 	return (0);
 }
 
+static int
+vpcsw_ndv4_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
+{
+	struct mbuf *m;
+	struct ether_header *eh;
+	struct arphdr_ether *ae;
+
+	m = m_gethdr(M_WAITOK, MT_DATA);
+	eh = (void*)m->m_data;
+
+	bcopy(rsp->vrs_context.voc_smac, eh->ether_dhost, ETHER_ADDR_LEN);
+	bcopy(rsp->vrs_data.vrsd_ndv4.ether_addr, eh->ether_shost, ETHER_ADDR_LEN);
+	eh->ether_type = htons(ETHERTYPE_ARP);
+
+	ae = (void *)(eh + 1);
+	bcopy(&vs->vs_arp_template, ae, sizeof(*ae));
+
+	ae->ar_tpa = rsp->vrs_data.vrsd_ndv4.target.s_addr;
+	bcopy(rsp->vrs_data.vrsd_ndv4.ether_addr, ae->ar_tha, ETHER_ADDR_LEN);
+	ae->ar_spa = rsp->vrs_data.vrsd_ndv4.target.s_addr;
+	bcopy(rsp->vrs_data.vrsd_ndv4.ether_addr, ae->ar_sha, ETHER_ADDR_LEN);
+	if (rsp->vrs_context.voc_vni) {
+		m->m_pkthdr.vxlanid = rsp->vrs_context.voc_vni;
+		m->m_flags |= M_VXLANTAG;
+	}
+	if (rsp->vrs_context.voc_vtag) {
+		m->m_pkthdr.ether_vtag = rsp->vrs_context.voc_vtag;
+		m->m_flags |= M_VLANTAG;
+	}
+	return (vpcsw_transit(vs, vs->vs_pcpu_cache, m));
+}
+
+static int
+vpcsw_dhcpv4_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
+{
+	return (EOPNOTSUPP);
+}
+
 int
 vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
@@ -828,10 +895,14 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 		case VPC_VPCSW_OP_PORT_DEL:
 		case VPC_VPCSW_OP_PORT_UPLINK_SET:
 			if (inlen != sizeof(vpc_id_t))
-				return (EINVAL);
+				return (EBADRPC);
 			break;
-		default:
-			;
+		case VPC_VPCSW_OP_RESPONSE_NDV4:
+		case VPC_VPCSW_OP_RESPONSE_DHCPV4:
+		case VPC_VPCSW_OP_RESPONSE_NDV6:
+		case VPC_VPCSW_OP_RESPONSE_DHCPV6:
+			if (inlen != sizeof(struct vpcsw_response))
+				return (EBADRPC);
 	}
 	switch (op) {
 		case VPC_VPCSW_OP_PORT_ADD:
@@ -860,7 +931,7 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 		case VPC_VPCSW_OP_STATE_SET: {
 			//const uint64_t *flags = in;
 
-			if (*outlen != sizeof(uint64_t))
+			if (inlen != sizeof(uint64_t))
 				return (EBADRPC);
 			/* do something with the flags */
 		}
@@ -868,7 +939,9 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			/* hrrrm.... */
 			break;
 		case VPC_VPCSW_OP_RESPONSE_NDV4:
+			return (vpcsw_ndv4_resp_send(vs, in));
 		case VPC_VPCSW_OP_RESPONSE_DHCPV4:
+			return (vpcsw_dhcpv4_resp_send(vs, in));
 		case VPC_VPCSW_OP_RESPONSE_NDV6:
 		case VPC_VPCSW_OP_RESPONSE_DHCPV6:
 		default:
@@ -932,6 +1005,7 @@ vpcsw_detach(if_ctx_t ctx)
 	mtx_destroy(&vs->vs_vtep_mtx);
 	vpc_art_free(vs->vs_ftable_ro, M_VPCSW);
 	vpc_art_free(vs->vs_ftable_rw, M_VPCSW);
+	free(vs->vs_pcpu_cache, M_VPCSW);
 	refcount_release(&modrefcnt);
 	return (0);
 }
