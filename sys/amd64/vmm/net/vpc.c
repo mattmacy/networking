@@ -91,8 +91,6 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/in_cksum.h>
 
-
-
 /*
  * Generic VPC services
  */
@@ -116,6 +114,21 @@ ck_epoch_record_t vpc_global_record;
 
 
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud utilities");
+
+int
+vpc_aio_copyout(struct knote *kn, const void *kaddr, void *uaddr, size_t len)
+{
+	struct proc *p = kn->kn_hook;
+	struct vmspace *myvm = curproc->p_vmspace;
+	int rc;
+
+	if (myvm != p->p_vmspace)
+		vmspace_switch_aio(p->p_vmspace);
+	rc = copyout(kaddr, uaddr, len);
+	if (myvm != p->p_vmspace)
+		vmspace_switch_aio(myvm);
+	return (rc);
+}
 
 static __inline int
 alloc_size(void *addr)
