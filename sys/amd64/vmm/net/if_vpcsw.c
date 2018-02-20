@@ -168,6 +168,7 @@ vpcsw_update_req(struct vpcsw_softc *vs)
 	vmq->vmq_mh = m->m_nextpkt;
 	if (vmq->vmq_mh == NULL)
 		vmq->vmq_mt = NULL;
+	vmq->vmq_mcount--;
 	mtx_unlock(&vs->vs_lock);
 
 	if (m->m_flags & M_VXLANTAG)
@@ -218,18 +219,20 @@ vpcsw_knote_event(if_ctx_t ctx, struct knote *kn, int hint)
 	int op;
 
 	vs = iflib_get_softc(ctx);
+	if (hint == 0) {
+		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
+		return (0);
+	}
 	vr = &vs->vs_req_pending;
 	op = vr->vrq_header.voh_op;
 	if (op == 0)
 		return (0);
 
-	if (hint == 0)
-		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
 	kev = &kn->kn_kevent;
 	kev->fflags |= op;
 	uaddr = (void*)kev->ext[0];
 	if (uaddr != NULL) {
-		copyout(vr, uaddr, sizeof(*vr));
+		vpc_aio_copyout(kn, vr, uaddr, sizeof(*vr));
 	}
 	return (kn->kn_fflags != 0);
 }
