@@ -644,7 +644,61 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 	return (rc);
 }
 
-extern struct filterops vpcsw_filtops;
+static int      filt_vpcattach(struct knote *kn);
+static void     filt_vpcdetach(struct knote *kn);
+static int      filt_vpcevent(struct knote *kn, long hint);
+
+static struct filterops vpc_filtops = {
+       .f_isfd = 1,
+       .f_attach = filt_vpcattach,
+       .f_detach = filt_vpcdetach,
+       .f_event = filt_vpcevent,
+};
+
+int
+filt_vpcattach(struct knote *kn)
+{
+	vpc_ctx_t vctx;
+	if_ctx_t ctx;
+
+	if (kn->kn_fp->f_type != DTYPE_VPCFD)
+		return (EBADF);
+
+	vctx = kn->kn_fp->f_data;
+	if (vctx->v_obj_type == VPC_OBJ_MGMT ||
+		vctx->v_obj_type == VPC_OBJ_L2LINK)
+		return (EBADF);
+	ctx = vctx->v_ifp->if_softc;
+	return (iflib_knlist_add(ctx, kn));
+}
+
+static void
+filt_vpcdetach(struct knote *kn)
+{
+	vpc_ctx_t vctx;
+	if_ctx_t ctx;
+
+	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
+	vctx = kn->kn_fp->f_data;
+	MPASS(vctx->v_obj_type != VPC_OBJ_SWITCH &&
+		  vctx->v_obj_type != VPC_OBJ_L2LINK);
+	ctx = vctx->v_ifp->if_softc;
+	iflib_knlist_remove(ctx, kn);
+}
+
+static int
+filt_vpcevent(struct knote *kn, long hint)
+{
+	if_ctx_t ctx;
+	vpc_ctx_t vctx;
+
+	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
+	vctx = kn->kn_fp->f_data;
+	MPASS(vctx->v_obj_type == VPC_OBJ_SWITCH);
+	ctx = vctx->v_ifp->if_softc;
+
+	return (iflib_knote_event(ctx, kn, hint));
+}
 
 static struct syscall_helper_data vmmnet_syscalls[] = {
 	SYSCALL_INIT_HELPER(vpc_open),
@@ -661,7 +715,7 @@ vmmnet_module_init(void)
 		printf("vmmnet syscall register failed %d\n", rc);
 		return (rc);
 	}
-	if ((rc = kqueue_add_filteropts(EVFILT_VPCSW, &vpcsw_filtops))) {
+	if ((rc = kqueue_add_filteropts(EVFILT_VPC, &vpc_filtops))) {
 		syscall_helper_unregister(vmmnet_syscalls);
 		printf("failed to register vpcsw_filtops %d\n", rc);
 		return (rc);
@@ -674,7 +728,7 @@ static void
 vmmnet_module_deinit(void)
 {
 	syscall_helper_unregister(vmmnet_syscalls);
-	kqueue_del_filteropts(EVFILT_VPCSW);
+	kqueue_del_filteropts(EVFILT_VPC);
 }
 
 static int
