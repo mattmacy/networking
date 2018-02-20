@@ -47,7 +47,7 @@
 #define EVFILT_USER		(-11)	/* User events */
 #define EVFILT_SENDFILE		(-12)	/* attached to sendfile requests */
 #define EVFILT_EMPTY		(-13)	/* empty send socket buf */
-#define EVFILT_VPCSW		(-14)	/* VTEP and overlay DHCP */
+#define EVFILT_VPC		(-14)	/* VTEP and overlay DHCP */
 #define EVFILT_SYSCOUNT		14
 
 #define EV_SET(kevp_, a, b, c, d, e, f) do {	\
