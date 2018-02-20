@@ -135,7 +135,6 @@ struct vpcsw_softc {
 	struct ifnet *vs_ifdefault;
 	struct vpcsw_cache_ent *vs_pcpu_cache;
 	vpc_id_t vs_uplink_id;
-	struct knlist vs_knlist;
 	struct mtx vs_vtep_mtx;
 	struct grouptask vs_vtep_gtask;
 	bool vs_req_read;
@@ -143,23 +142,6 @@ struct vpcsw_softc {
 	struct vpcsw_request vs_req_pending;
 	struct arphdr_ether vs_arp_template;
 };
-
-static int      filt_vpcswattach(struct knote *kn);
-static void     filt_vpcswdetach(struct knote *kn);
-static int      filt_vpcsw(struct knote *kn, long hint);
-
-struct filterops vpcsw_filtops = {
-	.f_isfd = 1,
-	.f_attach = filt_vpcswattach,
-	.f_detach = filt_vpcswdetach,
-	.f_event = filt_vpcsw,
-};
-
-static void
-vpcsw_event_signal(struct vpcsw_softc *vs)
-{
-	KNOTE_LOCKED(&vs->vs_knlist, 1);
-}
 
 static int
 vpcsw_update_req(struct vpcsw_softc *vs)
@@ -226,74 +208,15 @@ vpcsw_update_req(struct vpcsw_softc *vs)
 	return (0);
 }
 
-static void
-_task_fn_vtep(void *arg)
-{
-	struct vpcsw_softc *vs;
-	if_ctx_t ctx;
-
-	ctx = arg;
-	vs = iflib_get_softc(ctx);
-	mtx_lock(&vs->vs_vtep_mtx);
-	if(!vs->vs_req_read ||
-	   (vpcsw_update_req(vs) != 0)) {
-		mtx_unlock(&vs->vs_vtep_mtx);
-		return;
-	}
-	vs->vs_req_read = false;
-	vpcsw_event_signal(vs);
-	mtx_unlock(&vs->vs_vtep_mtx);
-}
-
 static int
-filt_vpcswattach(struct knote *kn)
-{
-	vpc_ctx_t vctx;
-	if_ctx_t ctx;
-	struct vpcsw_softc *vs;
-
-	if (kn->kn_fp->f_type != DTYPE_VPCFD)
-		return (EBADF);
-
-	vctx = kn->kn_fp->f_data;
-	if (vctx->v_obj_type != VPC_OBJ_SWITCH)
-		return (EBADF);
-	ctx = vctx->v_ifp->if_softc;
-	vs = iflib_get_softc(ctx);
-	knlist_add(&vs->vs_knlist, kn, 0);
-	return (0);
-}
-
-static void
-filt_vpcswdetach(struct knote *kn)
-{
-	vpc_ctx_t vctx;
-	if_ctx_t ctx;
-	struct vpcsw_softc *vs;
-
-	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
-	vctx = kn->kn_fp->f_data;
-	MPASS(vctx->v_obj_type == VPC_OBJ_SWITCH);
-	ctx = vctx->v_ifp->if_softc;
-	vs = iflib_get_softc(ctx);
-	knlist_remove(&vs->vs_knlist, kn, 0);
-}
-
-static int
-filt_vpcsw(struct knote *kn, long hint)
+vpcsw_knote_event(if_ctx_t ctx, struct knote *kn, int hint)
 {
 	void *uaddr;
-	if_ctx_t ctx;
-	vpc_ctx_t vctx;
 	struct kevent *kev;
 	struct vpcsw_softc *vs;
 	struct vpcsw_request *vr;
 	int op;
 
-	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
-	vctx = kn->kn_fp->f_data;
-	MPASS(vctx->v_obj_type == VPC_OBJ_SWITCH);
-	ctx = vctx->v_ifp->if_softc;
 	vs = iflib_get_softc(ctx);
 	vr = &vs->vs_req_pending;
 	op = vr->vrq_header.voh_op;
@@ -311,6 +234,25 @@ filt_vpcsw(struct knote *kn, long hint)
 	return (kn->kn_fflags != 0);
 }
 
+static void
+_task_fn_vtep(void *arg)
+{
+	struct vpcsw_softc *vs;
+	if_ctx_t ctx;
+
+	ctx = arg;
+	vs = iflib_get_softc(ctx);
+	mtx_lock(&vs->vs_vtep_mtx);
+	if(!vs->vs_req_read ||
+	   (vpcsw_update_req(vs) != 0)) {
+		mtx_unlock(&vs->vs_vtep_mtx);
+		return;
+	}
+	vs->vs_req_read = false;
+	mtx_unlock(&vs->vs_vtep_mtx);
+	iflib_event_signal(ctx, 1);
+}
+
 #ifdef notyet
 static const char *opcode_map[] = {
 	"",
@@ -319,37 +261,6 @@ static const char *opcode_map[] = {
 	"VPCSW_REQ_DHCPv4",
 	"VPCSW_REQ_DHCPv6",
 };
-
-static int 
-vpcsw_response_dispatch(struct vpcsw_softc *vs, unsigned long cmd, struct vpcsw_response *vrs)
-{
-	if (vrs->vrs_header.voh_version != VPCSW_VERSION) {
-		printf("invalid version %d\n",
-			   vrs->vrs_header.voh_version);
-		return (EINVAL);
-	}
-	if (vrs->vrs_header.voh_op < 1 ||
-		vrs->vrs_header.voh_op > VPCSW_REQ_MAX) {
-		printf("invalid opcode %d\n",
-			   vrs->vrs_header.voh_op);
-		return (EINVAL);
-	}
-	printf("version: %x opcode: %s vni: %d vlanid: %d\n",
-		   vrs->vrs_header.voh_version,
-		   opcode_map[vrs->vrs_header.voh_op],
-		   vrs->vrs_context.voc_vni,
-		   vrs->vrs_context.voc_vtag);
-	switch (cmd) {
-		case VPCSW_RESPONSE_NDv4:
-			break;
-		case VPCSW_RESPONSE_NDv6:
-		case VPCSW_RESPONSE_DHCPv4:
-		case VPCSW_RESPONSE_DHCPv6:
-			printf("not yet supported %lx\n", cmd);
-			break;
-	}
-	return (0);
-}
 #endif
 
 static __inline int
@@ -682,12 +593,12 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	art_tree_init(vs->vs_ftable_rw, ETHER_ADDR_LEN);
 	vs->vs_req_read = true;
 	mtx_init(&vs->vs_vtep_mtx, "vtep mtx", NULL, MTX_DEF);
-	knlist_init_mtx(&vs->vs_knlist, &vs->vs_vtep_mtx);
 	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_vtep_gtask, _task_fn_vtep, "vtep task");
 	vs->vs_pcpu_cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	vpcsw_arp_tmpl_init(vs);
 	return (0);
 }
+
 
 static int
 vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
@@ -1026,6 +937,7 @@ static device_method_t vpcsw_if_methods[] = {
 	DEVMETHOD(ifdi_detach, vpcsw_detach),
 	DEVMETHOD(ifdi_init, vpcsw_init),
 	DEVMETHOD(ifdi_stop, vpcsw_stop),
+	DEVMETHOD(ifdi_knote_event, vpcsw_knote_event),
 	DEVMETHOD_END
 };
 
