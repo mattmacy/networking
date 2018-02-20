@@ -1,4 +1,6 @@
-package vpc_test
+// Testing helpers
+
+package vpctest
 
 import (
 	"bytes"
@@ -7,16 +9,16 @@ import (
 	"github.com/pkg/errors"
 )
 
-type _InterfaceMap map[string]net.Interface
+type InterfaceMap map[string]net.Interface
 
-// testGetAllInterfaces returns a set of interfaces.
-func testGetAllInterfaces() (_InterfaceMap, error) {
+// GetAllInterfaces returns a set of interfaces.
+func GetAllInterfaces() (InterfaceMap, error) {
 	ifacesRaw, err := net.Interfaces()
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get all interfaces")
 	}
 
-	m := make(_InterfaceMap, len(ifacesRaw))
+	m := make(InterfaceMap, len(ifacesRaw))
 	for _, ifaceRaw := range ifacesRaw {
 		ifaceRaw := ifaceRaw
 		m[ifaceRaw.Name] = ifaceRaw
@@ -25,7 +27,7 @@ func testGetAllInterfaces() (_InterfaceMap, error) {
 	return m, nil
 }
 
-func (im _InterfaceMap) Difference(newIM _InterfaceMap) (onlyOrig, onlyNew, both _InterfaceMap) {
+func (im InterfaceMap) Difference(newIM InterfaceMap) (onlyOrig, onlyNew, both InterfaceMap) {
 	type iface struct {
 		iface net.Interface
 
@@ -52,9 +54,9 @@ func (im _InterfaceMap) Difference(newIM _InterfaceMap) (onlyOrig, onlyNew, both
 		}
 	}
 
-	onlyOrig = make(_InterfaceMap, len(mergedList))
-	onlyNew = make(_InterfaceMap, len(mergedList))
-	both = make(_InterfaceMap, len(mergedList))
+	onlyOrig = make(InterfaceMap, len(mergedList))
+	onlyNew = make(InterfaceMap, len(mergedList))
+	both = make(InterfaceMap, len(mergedList))
 	for k, v := range mergedList {
 		switch v.state {
 		case 'b':
@@ -71,7 +73,7 @@ func (im _InterfaceMap) Difference(newIM _InterfaceMap) (onlyOrig, onlyNew, both
 	return onlyOrig, onlyNew, both
 }
 
-func (im _InterfaceMap) FindMAC(mac net.HardwareAddr) (net.Interface, error) {
+func (im InterfaceMap) FindMAC(mac net.HardwareAddr) (net.Interface, error) {
 	for _, v := range im {
 		if bytes.Compare(v.HardwareAddr[:], mac[:]) == 0 {
 			return v, nil
@@ -81,7 +83,7 @@ func (im _InterfaceMap) FindMAC(mac net.HardwareAddr) (net.Interface, error) {
 	return net.Interface{}, errors.Errorf("unable to find MAC %q", mac)
 }
 
-func (im _InterfaceMap) First() net.Interface {
+func (im InterfaceMap) First() net.Interface {
 	switch len(im) {
 	case 0:
 		panic("First on empty list")
