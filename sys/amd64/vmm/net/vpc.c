@@ -116,18 +116,43 @@ ck_epoch_record_t vpc_global_record;
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud utilities");
 
 int
-vpc_aio_copyout(struct knote *kn, const void *kaddr, void *uaddr, size_t len)
+vpc_aio_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len)
 {
+	struct knote *kn = vci->vci_kn;
 	struct proc *p = kn->kn_hook;
-	struct vmspace *myvm = curproc->p_vmspace;
-	int rc;
+	vm_page_t *pages = vci->vci_pages;
+	const char *ckaddr = kaddr;
+	int off, count, rem, copylen;
 
-	if (myvm != p->p_vmspace)
-		vmspace_switch_aio(p->p_vmspace);
-	rc = copyout(kaddr, uaddr, len);
-	if (myvm != p->p_vmspace)
-		vmspace_switch_aio(myvm);
-	return (rc);
+	if (vci->vci_max_count*PAGE_SIZE < len)
+		return (E2BIG);
+
+	if (len == 0)
+		return (0);
+	count = vm_fault_quick_hold_pages(&p->p_vmspace->vm_map, (vm_offset_t)uaddr, len, VM_PROT_WRITE, pages,
+								   vci->vci_max_count);
+	if (count == 0)
+		return (0);
+	if (count == -1)
+		return (EFAULT);
+	rem = len;
+	off = 0;
+	do { 
+		copylen = min(rem, PAGE_SIZE);
+		bcopy(ckaddr + off, (void*)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(*pages)), copylen);
+		off += copylen;
+		rem -= copylen;
+		pages++;
+	} while (rem);
+	pages = vci->vci_pages;
+	do {
+		vm_page_lock(*pages);
+		vm_page_unhold(*pages);
+		vm_page_unlock(*pages);
+		pages++;
+		count--;
+	} while (count);
+	return (0);
 }
 
 static __inline int
