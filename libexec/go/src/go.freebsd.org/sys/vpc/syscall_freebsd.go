@@ -107,7 +107,7 @@ func ctl(h *Handle, cmd Cmd, in []byte, out *[]byte) error {
 		panic("invalid args to vpc.Ctl()")
 	}
 	if r1 != 0 {
-		return e1
+		return syscall.Errno(e1)
 	}
 
 	return nil
