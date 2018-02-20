@@ -43,16 +43,17 @@ import (
 	"github.com/kylelemons/godebug/pretty"
 	"github.com/rs/zerolog/log"
 	"go.freebsd.org/sys/vpc"
+	"go.freebsd.org/sys/vpc/vpctest"
 )
 
 // TestVPCCreateOpenClose performs a serialized and strict test of the Create,
 // Open, Close semantics.  Most per-interface tests should go into
 // TestVPCCreateOpenCloseParallel.  Serialization is required because of the
-// use of testGetAllInterfaces().
+// use of vpctest.GetAllInterfaces().
 func TestVPCCreateOpenClose(t *testing.T) {
 	vpcsw0ID := vpc.GenID()
 
-	existingIfaces, err := testGetAllInterfaces()
+	existingIfaces, err := vpctest.GetAllInterfaces()
 	if err != nil {
 		t.Fatalf("unable to get all interfaces")
 	}
@@ -77,7 +78,7 @@ func TestVPCCreateOpenClose(t *testing.T) {
 	}
 
 	// Get the before/after
-	ifacesAfterCreate, err := testGetAllInterfaces()
+	ifacesAfterCreate, err := vpctest.GetAllInterfaces()
 	if err != nil {
 		t.Fatalf("unable to get all interfaces")
 	}
@@ -119,7 +120,7 @@ func TestVPCCreateOpenClose(t *testing.T) {
 
 	{
 		// Get a new before/after: there should be no change
-		ifacesAfterOpen, err := testGetAllInterfaces()
+		ifacesAfterOpen, err := vpctest.GetAllInterfaces()
 		if err != nil {
 			t.Fatalf("unable to get all interfaces")
 		}
@@ -230,7 +231,7 @@ func TestVPCCreateOpenCloseParallel(t *testing.T) {
 				t.Fatalf("vpc_open(2) return an FD of 0")
 			}
 
-			allInterfaces, err := testGetAllInterfaces()
+			allInterfaces, err := vpctest.GetAllInterfaces()
 			if err != nil {
 				t.Fatalf("unable to get all interfaces: %v", err)
 			}

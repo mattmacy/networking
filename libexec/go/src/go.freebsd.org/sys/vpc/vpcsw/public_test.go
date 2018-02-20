@@ -30,12 +30,174 @@
 package vpcsw_test
 
 import (
+	"math/rand"
 	"testing"
 
+	"github.com/sean-/seed"
+	"go.freebsd.org/sys/vpc"
 	"go.freebsd.org/sys/vpc/vpcsw"
+	"go.freebsd.org/sys/vpc/vpctest"
 )
 
-func TestCreate(t *testing.T) {
-	sw := vpcsw.VPCSW{}
-	_ = sw
+func init() {
+	seed.MustInit()
+}
+
+// TestVPCSW_CreateCommitDestroy is intended to verify the basic lifecycle
+// functionality of a switch.
+func TestVPCSW_CreateCommitDestroy(t *testing.T) {
+	cfg := vpcsw.Config{
+		ID:  vpc.GenID(),
+		VNI: vpc.VNI(rand.Intn(int(vpc.VNIMax))),
+	}
+
+	existingIfaces, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+
+	func() { // Create + close switch w/o commit
+		sw, err := vpcsw.Create(cfg)
+		if err != nil {
+			t.Fatalf("unable to create switch: %v", err)
+		}
+
+		{ // Get the before/after
+			ifacesAfterCreate, err := vpctest.GetAllInterfaces()
+			if err != nil {
+				t.Fatalf("unable to get all interfaces")
+			}
+			_, newIfaces, _ := existingIfaces.Difference(ifacesAfterCreate)
+			if len(newIfaces) != 1 {
+				t.Fatalf("one interface should have been added")
+			}
+		}
+
+		// Close the descriptor, the switch should still exist
+		if err := sw.Close(); err != nil {
+			t.Fatalf("unable to close switch: %v", err)
+		}
+
+		{ // Make sure the iface is still available
+			ifacesAfterClose, err := vpctest.GetAllInterfaces()
+			if err != nil {
+				t.Fatalf("unable to get all interfaces")
+			}
+			_, n, _ := existingIfaces.Difference(ifacesAfterClose)
+			if len(n) != 0 {
+				t.Fatalf("no new interfaces should have been created")
+			}
+		}
+	}()
+
+	func() { // Create switch scope
+		sw, err := vpcsw.Create(cfg)
+		if err != nil {
+			t.Fatalf("unable to create switch: %v", err)
+		}
+
+		{ // Get the before/after
+			ifacesAfterCreate, err := vpctest.GetAllInterfaces()
+			if err != nil {
+				t.Fatalf("unable to get all interfaces")
+			}
+			_, newIfaces, _ := existingIfaces.Difference(ifacesAfterCreate)
+			if len(newIfaces) != 1 {
+				t.Fatalf("one interface should have been added")
+			}
+		}
+
+		// Attempt to be nice and clean up after ourselves in the event of a failure.
+		defer func() {
+			if err := sw.Destroy(); err != nil {
+				t.Fatalf("unable to destroy switch in defer: %v", err)
+			}
+
+			if err := sw.Close(); err != nil {
+				t.Fatalf("unable to close switch in defer: %v", err)
+			}
+		}()
+
+		// Commit the switch
+		if err := sw.Commit(); err != nil {
+			t.Fatalf("unable to commit switch: %v", err)
+		}
+
+		// Close the descriptor, the switch should still exist
+		if err := sw.Close(); err != nil {
+			t.Fatalf("unable to close switch: %v", err)
+		}
+
+		{ // Make sure the iface is still available
+			ifacesAfterClose, err := vpctest.GetAllInterfaces()
+			if err != nil {
+				t.Fatalf("unable to get all interfaces")
+			}
+			_, newIfaces, _ := existingIfaces.Difference(ifacesAfterClose)
+			if len(newIfaces) != 1 {
+				t.Fatalf("one interface should have persisted added")
+			}
+		}
+	}()
+
+	func() { // Open + Close switch scope
+		sw, err := vpcsw.Open(cfg)
+		if err != nil {
+			t.Fatalf("unable to open switch: %v", err)
+		}
+
+		// Attempt to be nice and clean up after ourselves in the event of a failure.
+		defer func() {
+			if err := sw.Destroy(); err != nil {
+				t.Fatalf("unable to destroy switch in defer: %v", err)
+			}
+
+			if err := sw.Close(); err != nil {
+				t.Fatalf("unable to close switch in defer: %v", err)
+			}
+		}()
+
+		if err := sw.Close(); err != nil {
+			t.Fatalf("unable to close switch: %v", err)
+		}
+	}()
+
+	{ // Make sure the iface is still available
+		ifacesAfterOpenClose, err := vpctest.GetAllInterfaces()
+		if err != nil {
+			t.Fatalf("unable to get all interfaces")
+		}
+		o, n, _ := existingIfaces.Difference(ifacesAfterOpenClose)
+		if len(o) != 0 || len(n) != 0 {
+			t.Fatalf("no interfaces should have been added or removed")
+		}
+	}
+
+	func() { // Open + Destroy switch scope
+		sw, err := vpcsw.Open(cfg)
+		if err != nil {
+			t.Fatalf("unable to open switch: %v", err)
+		}
+
+		// Destroy
+		if err := sw.Destroy(); err != nil {
+			t.Fatalf("unable to destroy switch: %v", err)
+		}
+
+		if err := sw.Close(); err != nil {
+			t.Fatalf("unable to close switch: %v", err)
+		}
+	}()
+
+	{ // Make sure the iface is still available
+		ifacesAfterDestroy, err := vpctest.GetAllInterfaces()
+		if err != nil {
+			t.Fatalf("unable to get all interfaces")
+		}
+		o, n, _ := existingIfaces.Difference(ifacesAfterDestroy)
+		if len(o) != 0 || len(n) != 0 {
+			t.Fatalf("interface count didn't return to original values")
+		}
+	}
+
 }
