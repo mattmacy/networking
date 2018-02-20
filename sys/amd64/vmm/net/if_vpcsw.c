@@ -141,6 +141,7 @@ struct vpcsw_softc {
 	/* pad */
 	struct vpcsw_request vs_req_pending;
 	struct arphdr_ether vs_arp_template;
+	struct vpc_copy_info vs_vci;
 };
 
 static int
@@ -232,7 +233,9 @@ vpcsw_knote_event(if_ctx_t ctx, struct knote *kn, int hint)
 	kev->fflags |= op;
 	uaddr = (void*)kev->ext[0];
 	if (uaddr != NULL) {
-		vpc_aio_copyout(kn, vr, uaddr, sizeof(*vr));
+		vs->vs_vci.vci_kn = kn;
+		vpc_aio_copyout(&vs->vs_vci, vr, uaddr, sizeof(*vr));
+		vs->vs_vci.vci_kn = NULL;
 	}
 	return (kn->kn_fflags != 0);
 }
@@ -598,6 +601,8 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	mtx_init(&vs->vs_vtep_mtx, "vtep mtx", NULL, MTX_DEF);
 	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_vtep_gtask, _task_fn_vtep, "vtep task");
 	vs->vs_pcpu_cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
+	vs->vs_vci.vci_pages = malloc(sizeof(vm_page_t *)*(ARG_MAX/PAGE_SIZE), M_VPCSW, M_WAITOK|M_ZERO);
+	vs->vs_vci.vci_max_count = ARG_MAX/PAGE_SIZE;
 	vpcsw_arp_tmpl_init(vs);
 	return (0);
 }
