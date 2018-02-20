@@ -31,6 +31,7 @@ package vpcsw_test
 
 import (
 	"math/rand"
+	"syscall"
 	"testing"
 
 	"github.com/sean-/seed"
@@ -169,7 +170,7 @@ func TestVPCSW_CreateCommitDestroy(t *testing.T) {
 		}
 		o, n, _ := existingIfaces.Difference(ifacesAfterOpenClose)
 		if len(o) != 0 || len(n) != 0 {
-			t.Fatalf("no interfaces should have been added or removed")
+			t.Fatalf("no interfaces should have been added or removed: %d/%d", len(o), len(n))
 		}
 	}
 
@@ -199,5 +200,141 @@ func TestVPCSW_CreateCommitDestroy(t *testing.T) {
 			t.Fatalf("interface count didn't return to original values")
 		}
 	}
+}
 
+func TestVPCSW_CreateClose(t *testing.T) {
+	existingIfaces, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get existing interfaces")
+	}
+
+	cfg := vpcsw.Config{
+		ID:  vpc.GenID(),
+		VNI: vpc.VNI(rand.Intn(int(vpc.VNIMax))),
+	}
+
+	sw, err := vpcsw.Create(cfg)
+	if err != nil {
+		t.Fatalf("unable to create switch: %v", err)
+	}
+
+	// Get the ifaces after create
+	ifacesAfterCreate, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+	_, newIfaces, _ := existingIfaces.Difference(ifacesAfterCreate)
+	if len(newIfaces) != 1 {
+		t.Fatalf("one VPC Switch should have been added")
+	}
+
+	if err := sw.Close(); err != nil {
+		t.Fatalf("unable to close switch: %v", err)
+	}
+
+	ifacesAfterClose, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+	o, n, _ := existingIfaces.Difference(ifacesAfterClose)
+	if len(o) != 0 || len(n) != 0 {
+		t.Fatalf("no interfaces should have been added or removed: %d/%d", len(o), len(n))
+	}
+}
+
+func TestVPCSW_CreateDestroyClose(t *testing.T) {
+	existingIfaces, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get existing interfaces")
+	}
+
+	cfg := vpcsw.Config{
+		ID:  vpc.GenID(),
+		VNI: vpc.VNI(rand.Intn(int(vpc.VNIMax))),
+	}
+
+	sw, err := vpcsw.Create(cfg)
+	if err != nil {
+		t.Fatalf("unable to create switch: %v", err)
+	}
+
+	// Get the ifaces after create
+	ifacesAfterCreate, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+	_, newIfaces, _ := existingIfaces.Difference(ifacesAfterCreate)
+	if len(newIfaces) != 1 {
+		t.Fatalf("one VPC Switch should have been added")
+	}
+
+	// Destroy
+	if err := sw.Destroy(); err != nil {
+		if errno, ok := err.(syscall.Errno); ok && errno != 35 {
+			t.Fatalf("unable to destroy switch: %v", err)
+		}
+	}
+
+	if err := sw.Close(); err != nil {
+		t.Fatalf("unable to close switch: %v", err)
+	}
+
+	ifacesAfterClose, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+	o, n, _ := existingIfaces.Difference(ifacesAfterClose)
+	if len(o) != 0 || len(n) != 0 {
+		t.Fatalf("no interfaces should have been added or removed: %d/%d", len(o), len(n))
+	}
+}
+
+func TestVPCSW_CreateCommitDestroyClose(t *testing.T) {
+	existingIfaces, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get existing interfaces")
+	}
+
+	cfg := vpcsw.Config{
+		ID:  vpc.GenID(),
+		VNI: vpc.VNI(rand.Intn(int(vpc.VNIMax))),
+	}
+
+	sw, err := vpcsw.Create(cfg)
+	if err != nil {
+		t.Fatalf("unable to create switch: %v", err)
+	}
+
+	// Get the ifaces after create
+	ifacesAfterCreate, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+	_, newIfaces, _ := existingIfaces.Difference(ifacesAfterCreate)
+	if len(newIfaces) != 1 {
+		t.Fatalf("one VPC Switch should have been added")
+	}
+
+	// Commit the switch
+	if err := sw.Commit(); err != nil {
+		t.Fatalf("unable to commit switch: %v", err)
+	}
+
+	// Destroy
+	if err := sw.Destroy(); err != nil {
+		t.Fatalf("unable to destroy switch: %v", err)
+	}
+
+	if err := sw.Close(); err != nil {
+		t.Fatalf("unable to close switch: %v", err)
+	}
+
+	ifacesAfterClose, err := vpctest.GetAllInterfaces()
+	if err != nil {
+		t.Fatalf("unable to get all interfaces")
+	}
+	o, n, _ := existingIfaces.Difference(ifacesAfterClose)
+	if len(o) != 0 || len(n) != 0 {
+		t.Fatalf("no interfaces should have been added or removed: %d/%d", len(o), len(n))
+	}
 }
