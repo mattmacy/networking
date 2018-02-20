@@ -234,7 +234,7 @@ vpcsw_knote_event(if_ctx_t ctx, struct knote *kn, int hint)
 	uaddr = (void*)kev->ext[0];
 	if (uaddr != NULL) {
 		vs->vs_vci.vci_kn = kn;
-		vpc_aio_copyout(&vs->vs_vci, vr, uaddr, sizeof(*vr));
+		vpc_async_copyout(&vs->vs_vci, vr, uaddr, sizeof(*vr));
 		vs->vs_vci.vci_kn = NULL;
 	}
 	return (kn->kn_fflags != 0);

@@ -116,7 +116,7 @@ ck_epoch_record_t vpc_global_record;
 static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud utilities");
 
 int
-vpc_aio_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len)
+vpc_async_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len)
 {
 	struct knote *kn = vci->vci_kn;
 	struct proc *p = kn->kn_hook;
