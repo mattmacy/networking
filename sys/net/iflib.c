@@ -1301,7 +1301,8 @@ iflib_knlist_add(if_ctx_t ctx, struct knote *kn)
 
 	if ((rc = IFDI_KNLIST_ADD(ctx, kn)))
 		return (rc);
-
+	PHOLD(curproc);
+	kn->kn_hook = curproc;
 	knlist_add(&ctx->ifc_knlist, kn, 0);
 	return (0);
 }
@@ -1309,7 +1310,9 @@ iflib_knlist_add(if_ctx_t ctx, struct knote *kn)
 void
 iflib_knlist_remove(if_ctx_t ctx, struct knote *kn)
 {
+	struct proc *p = kn->kn_hook;
 
+	PRELE(p);
 	knlist_remove(&ctx->ifc_knlist, kn, 0);
 }
 
