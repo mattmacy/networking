@@ -90,7 +90,7 @@ struct vpcsw_op_header {
 
 struct vpcsw_op_context {
 	uint32_t voc_vni;
-	uint16_t voc_vlanid;
+	uint16_t voc_vtag;
 	uint8_t voc_smac[ETHER_ADDR_LEN];
 };
 
@@ -111,9 +111,11 @@ struct vpcsw_request {
 
 union vpcsw_response_data {
 	struct {
+		struct in_addr target;
 		uint8_t ether_addr[ETHER_ADDR_LEN];
 	} vrsd_ndv4;
 	struct {
+		struct in6_addr target;
 		uint8_t ether_addr[ETHER_ADDR_LEN];
 	} vrsd_ndv6;
 	struct {
