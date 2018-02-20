@@ -460,4 +460,10 @@ void iflib_clone_deregister(if_pseudo_t);
 void iflib_set_pcpu_cache(if_ctx_t ctx, void *cache);
 void *iflib_get_pcpu_cache(if_ctx_t ctx);
 
+int iflib_knlist_add(if_ctx_t ctx, struct knote *kn);
+void iflib_knlist_remove(if_ctx_t ctx, struct knote *kn);
+void iflib_event_signal(if_ctx_t ctx, int hint);
+int iflib_knote_event(if_ctx_t ctx, struct knote *kn, int hint);
+
+
 #endif /*  __IFLIB_H_ */
