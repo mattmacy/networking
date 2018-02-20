@@ -52,6 +52,18 @@ CODE {
 	{
 	}
 
+	static int
+	null_knlist_add(if_ctx_t _ctx __unused, struct knote *_kn)
+	{
+	    return (0);
+	}
+
+	static int
+	null_knote_event(if_ctx_t _ctx __unused, struct knote *_kn, int _hint)
+	{
+	    return (0);
+	}
+
 	static void
 	null_timer_op(if_ctx_t _ctx __unused, uint16_t _qsidx __unused)
 	{
@@ -154,6 +166,21 @@ CODE {
 	    return (0);
 	}
 };
+
+#
+# kevent interfaces
+#
+
+METHOD int knlist_add {
+	if_ctx_t _ctx;
+	struct knote *_kn;
+} DEFAULT null_knlist_add;
+
+METHOD int knote_event {
+	if_ctx_t _ctx;
+	struct knote *_kn;
+	int hint;
+} DEFAULT null_knote_event;
 
 #
 # bus interfaces
