@@ -38,6 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/eventhandler.h>
+#include <sys/event.h>
 #include <sys/sockio.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -232,6 +233,9 @@ struct iflib_ctx {
 	eventhandler_tag ifc_vlan_detach_event;
 	uint8_t ifc_mac[ETHER_ADDR_LEN];
 	char ifc_mtx_name[16];
+
+	struct sx ifc_knlist_sx;
+	struct knlist ifc_knlist;
 };
 
 
@@ -1284,6 +1288,42 @@ iflib_set_mac(if_ctx_t ctx, const uint8_t mac[ETHER_ADDR_LEN])
 	if ((ctx->ifc_flags & IFC_INIT_DONE)  && (rc = IFDI_MAC_SET(ctx, mac)))
 		return (rc);
 	return (0);
+}
+
+int
+iflib_knlist_add(if_ctx_t ctx, struct knote *kn)
+{
+	int rc;
+
+	if (__predict_false(ctx->ifc_in_detach))
+		return (EBUSY);
+
+	if ((rc = IFDI_KNLIST_ADD(ctx, kn)))
+		return (rc);
+
+	knlist_add(&ctx->ifc_knlist, kn, 0);
+	return (0);
+}
+
+void
+iflib_knlist_remove(if_ctx_t ctx, struct knote *kn)
+{
+
+	knlist_remove(&ctx->ifc_knlist, kn, 0);
+}
+
+int
+iflib_knote_event(if_ctx_t ctx, struct knote *kn, int hint)
+{
+
+	return (IFDI_KNOTE_EVENT(ctx, kn, hint));
+}
+
+void
+iflib_event_signal(if_ctx_t ctx, int hint)
+{
+
+	KNOTE_UNLOCKED(&ctx->ifc_knlist, hint);
 }
 
 int
@@ -5370,6 +5410,8 @@ iflib_device_deregister(if_ctx_t ctx)
 	ether_ifdetach(ifp);
 	/* ether_ifdetach calls if_qflush - lock must be destroy afterwards*/
 	CTX_LOCK_DESTROY(ctx);
+	knlist_clear(&ctx->ifc_knlist, 0);
+	sx_destroy(&ctx->ifc_knlist_sx);
 	if (ctx->ifc_led_dev != NULL)
 		led_destroy(ctx->ifc_led_dev);
 	/* XXX drain any dependent tasks */
@@ -5436,6 +5478,8 @@ iflib_pseudo_deregister(if_ctx_t ctx)
 	ether_ifdetach(ifp);
 	/* ether_ifdetach calls if_qflush - lock must be destroy afterwards*/
 	CTX_LOCK_DESTROY(ctx);
+	knlist_clear(&ctx->ifc_knlist, 0);
+	sx_destroy(&ctx->ifc_knlist_sx);
 	/* XXX drain any dependent tasks */
 	tqg = qgroup_if_io_tqg;
 	for (txq = ctx->ifc_txqs, i = 0; i < NTXQSETS(ctx); i++, txq++) {
@@ -5622,6 +5666,29 @@ _iflib_pre_assert(if_softc_ctx_t scctx)
 	MPASS(scctx->isc_txrx->ift_rxd_refill);
 	MPASS(scctx->isc_txrx->ift_rxd_flush);
 }
+static void
+ifc_xlock(void *arg)
+{
+	sx_xlock(arg);
+}
+
+static void
+ifc_xunlock(void *arg)
+{
+	sx_xunlock(arg);
+}
+
+static void
+ifc_xassert_locked(void *arg)
+{
+	sx_assert(arg, SA_XLOCKED);
+}
+
+static void
+ifc_xassert_unlocked(void *arg)
+{
+	sx_assert(arg, SA_UNLOCKED);
+}
 
 static int
 iflib_register(if_ctx_t ctx)
@@ -5635,7 +5702,10 @@ iflib_register(if_ctx_t ctx)
 		_iflib_assert(sctx);
 
 	CTX_LOCK_INIT(ctx, device_get_nameunit(ctx->ifc_dev));
-
+	sx_init(&ctx->ifc_knlist_sx, "iflib knlist");
+	knlist_init(&ctx->ifc_knlist, &ctx->ifc_knlist_sx,
+				ifc_xlock, ifc_xunlock, ifc_xassert_locked,
+				ifc_xassert_unlocked);
 	ifp = ctx->ifc_ifp = if_gethandle(IFT_ETHER);
 	if (ifp == NULL) {
 		if (dev != NULL)
