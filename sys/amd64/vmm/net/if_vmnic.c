@@ -1183,11 +1183,12 @@ static void
 vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 {
 	vm_offset_t vaddr;
-	uint64_t gpa;
+	uint64_t gpa, pfn64;
 	int qsz, len, qid;
 	struct ifnet *ifp;
 
-	gpa = pfn << PAGE_SHIFT;
+	pfn64 = pfn;
+	gpa = pfn64 << PAGE_SHIFT;
 
 	if (q >= vs->vs_nvqs)
 		return;
