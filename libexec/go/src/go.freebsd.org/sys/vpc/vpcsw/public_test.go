@@ -1,4 +1,4 @@
-// Test VPC Switch Objects.
+// Test VPC Switch objects.
 //
 // SPDX-License-Identifier: BSD-2-Clause-FreeBSD
 //

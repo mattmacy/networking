@@ -34,23 +34,11 @@ import (
 	"go.freebsd.org/sys/vpc"
 )
 
-/*
- * Cmd
- *   Direction
- *   ObjType
- *   Op
- *
- * InArg
- *   []byte
- * OutArg
- *   *[]byte
- */
-
 // _SwitchCmd is the encoded type of operations that can be performed on a VPC
 // Switch.
 type _SwitchCmd vpc.Cmd
 
-// _SwitchCmdSetArgType is the value used by a VPC Switch Set operation.
+// _SwitchCmdSetArgType is the value used by a VPC Switch set operation.
 type _SwitchSetOpArgType uint64
 
 const (
