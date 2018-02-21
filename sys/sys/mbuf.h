@@ -379,8 +379,10 @@ mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
 	rem = offset;
 
 	me += mh->mh_start + mc->mc_idx ;
+#ifdef INVARIANTS
 	MPASS(me->me_len);
 	MPASS(me->me_cl);
+#endif	
 	mc->mc_off += offset;
 	while (mc->mc_off >= me->me_len) {
 		mc->mc_off -= me->me_len;
