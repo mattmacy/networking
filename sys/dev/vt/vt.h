@@ -167,32 +167,9 @@ struct vt_device {
 #define	VD_PASTEBUFSZ(vd)	((vd)->vd_pastebuf.vpb_bufsz)
 #define	VD_PASTEBUFLEN(vd)	((vd)->vd_pastebuf.vpb_len)
 
-extern u_char kdb_active;
-
-static inline void
-vt_lock_(struct vt_device *vd)
-{
-	if (kdb_active == 0)
-		mtx_lock(&(vd)->vd_lock);
-}
-
-static inline void
-vt_unlock_(struct vt_device *vd)
-{
-	if (kdb_active == 0)
-		mtx_unlock(&(vd)->vd_lock);
-}
-
-static inline void
-vt_lock_assert_(struct vt_device *vd, int what)
-{
-	if (kdb_active == 0)
-		mtx_assert(&(vd)->vd_lock, what);
-}
-
-#define	VT_LOCK(vd)		  vt_lock_((vd))
-#define	VT_UNLOCK(vd)	vt_unlock_((vd))
-#define	VT_LOCK_ASSERT(vd, what)	vt_lock_assert_((vd), (what))
+#define	VT_LOCK(vd)	mtx_lock(&(vd)->vd_lock)
+#define	VT_UNLOCK(vd)	mtx_unlock(&(vd)->vd_lock)
+#define	VT_LOCK_ASSERT(vd, what)	mtx_assert(&(vd)->vd_lock, what)
 
 void vt_resume(struct vt_device *vd);
 void vt_resume_flush_timer(struct vt_device *vd, int ms);
