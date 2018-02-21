@@ -138,6 +138,33 @@ struct vpcsw_response {
 	union vpcsw_response_data vrs_data;
 };
 
+struct vpcrtr_request_v4 {
+	uint8_t vr_vpcsw_mac[ETHER_ADDR_LEN];
+	uint16_t vr_svtag;
+	uint32_t vr_svni;
+	struct in_addr vr_saddr;
+	struct in_addr vr_daddr;
+	uint8_t vr_smac[ETHER_ADDR_LEN];
+};
+
+struct vpcrtr_request_v6 {
+	uint8_t vr_vpcsw_smac[ETHER_ADDR_LEN];
+	uint16_t vr_svtag;
+	uint32_t vr_svni;
+	struct in6_addr vr_saddr;
+	struct in6_addr vr_daddr;
+	uint8_t vr_smac[ETHER_ADDR_LEN];
+};
+
+struct vpcrtr_response_v4 {
+	struct vpcrtr_request_v4 vr_context;
+	uint16_t vr_dvtag;
+	uint32_t vr_dvni;
+	struct in_addr vr_daddr;
+	uint8_t vr_dmac[ETHER_ADDR_LEN];
+	uint8_t vr_vpcsw_dmac[ETHER_ADDR_LEN];
+};
+
 #ifdef _KERNEL
 #include <sys/proc.h>
 #include <sys/sched.h>
@@ -217,7 +244,7 @@ typedef int (*vpc_ctl_fn) (vpc_ctx_t ctx, vpc_op_t op, size_t keylen,
 int vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type);
 vpc_ctx_t vmmnet_lookup(const vpc_id_t *id);
 struct ifnet *vpc_if_lookup(uint32_t ifindex);
-int vpc_aio_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len);
+int vpc_async_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len);
 
 
 
