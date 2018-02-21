@@ -1021,13 +1021,6 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 			if (__predict_false(m->m_len < minthlen + prehdrlen) &&
 				__predict_false(mvec_pullup(m, 0, prehdrlen + minthlen) == NULL))
 				return (ENOMEM);
-			if (prehdrlen == 0) {
-				th->th_sum = in_pseudo(ip->ip_src.s_addr,
-									   ip->ip_dst.s_addr, htons(IPPROTO_TCP));
-				ip->ip_sum = 0;
-				ip->ip_len = htons(pi->ipi_ip_hlen + pi->ipi_tcp_hlen + pi->ipi_tso_segsz);
-
-			}
 			break;
 		}
 		case ETHERTYPE_IPV6: {
@@ -1155,13 +1148,15 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	if (freesrc && (*refcnt == 1))
 		dofree = true;
 
-	segsz = m->m_pkthdr.tso_segsz;
 	mh = &mprev->me_mh;
 	me = mprev->me_ents;
 	dupref = mh->mh_multiref;
-	pi.ipi_tso_segsz = segsz;
 	if (mvec_parse_header(mprev, prehdrlen, &pi))
 		return (NULL);
+	if (m->m_pkthdr.tso_segsz)
+		segsz = m->m_pkthdr.tso_segsz;
+	else
+		segsz = m->m_pkthdr.rcvif->if_mtu - pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
 	hdrsize = prehdrlen + pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
 	pktrem = m->m_pkthdr.len - hdrsize;
 	nheaders = pktrem / segsz;
