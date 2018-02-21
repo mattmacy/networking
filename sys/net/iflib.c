@@ -7134,10 +7134,13 @@ iflib_clone_create(struct if_clone *ifc, int unit, caddr_t params)
 		MPASS(iflib_pseudodev != NULL);
 	}
 	ip = iflib_ip_lookup(name);
-	if (ip == NULL)
+	if (ip == NULL) {
+		printf("no ip found for %s\n", name);
 		return (ENOENT);
-	if (devclass_get_device(ip->ip_dc, unit) != NULL) {
+	}
+	if ((dev = devclass_get_device(ip->ip_dc, unit)) != NULL) {
 		printf("unit %d allocated\n", unit);
+		bus_generic_print_child(iflib_pseudodev, dev);
 		return (EBUSY);
 	}
 	PSEUDO_LOCK();
@@ -7150,8 +7153,11 @@ iflib_clone_create(struct if_clone *ifc, int unit, caddr_t params)
 	MPASS(dev != NULL);
 	MPASS(devclass_get_device(ip->ip_dc, unit) == dev);
 	rc = iflib_pseudo_register(dev, ip->ip_sctx, &ctx, &clctx);
-	if (rc == 0)
+	if (rc)
+		device_delete_child(iflib_pseudodev, dev);
+	else
 		device_set_softc(dev, ctx);
+
 	return (rc);
 }
 
@@ -7198,8 +7204,10 @@ iflib_clone_register(if_shared_ctx_t sctx)
 		goto fail_clone;
 	/* XXX --- we can handle clone_advanced later */
 	ip->ip_ifc  = if_clone_simple(sctx->isc_name, iflib_clone_create, iflib_clone_destroy, 0);
-	if (ip->ip_ifc == NULL)
+	if (ip->ip_ifc == NULL) {
+		printf("clone_simple failed -- cloned %s  devices will not be available\n", sctx->isc_name);
 		goto fail_clone;
+	}
 	ip->ip_lladdr_tag = EVENTHANDLER_REGISTER(iflladdr_event,
 											 iflib_iflladdr, NULL, EVENTHANDLER_PRI_ANY);
 	if (ip->ip_lladdr_tag == NULL)
