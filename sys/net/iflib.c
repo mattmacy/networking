@@ -7024,6 +7024,8 @@ iflib_pseudo_detach(device_t dev)
 	if_ctx_t ctx;
 
 	ctx = device_get_softc(dev);
+	if ((ctx->ifc_flags & IFC_INIT_DONE) == 0)
+		return (0);
 	return (IFDI_DETACH(ctx));
 }
 
@@ -7153,9 +7155,11 @@ iflib_clone_create(struct if_clone *ifc, int unit, caddr_t params)
 	MPASS(dev != NULL);
 	MPASS(devclass_get_device(ip->ip_dc, unit) == dev);
 	rc = iflib_pseudo_register(dev, ip->ip_sctx, &ctx, &clctx);
-	if (rc)
+	if (rc) {
+		mtx_lock(&Giant);
 		device_delete_child(iflib_pseudodev, dev);
-	else
+		mtx_unlock(&Giant);
+	} else
 		device_set_softc(dev, ctx);
 
 	return (rc);
