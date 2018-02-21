@@ -755,7 +755,8 @@ vm_gpa_to_kva(struct vm *vm, vm_paddr_t gpa, int len, uint16_t *hint)
 	vm_paddr_t curgpa;
 	vm_offset_t curkva;
 	struct mem_map *mm;
-	int i, curlen;
+	size_t curlen;
+	int i;
 
 	if (__predict_true(*hint < VM_MAX_MEMMAPS)) {
 		mm = &vm->mem_maps[*hint];
