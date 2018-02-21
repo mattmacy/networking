@@ -805,10 +805,6 @@ main(int argc, char *argv[])
 	mptgen = 1;
 	rtc_localtime = 1;
 	memflags = 0;
-	/*
-	 * XXX don't upstream --- just for testing vtnet_be
-	 */
-	memflags |= VM_MEM_F_WIRED;
 
 	optstr = "abehuwxACHIPSWYp:g:c:s:m:l:U:";
 	while ((c = getopt(argc, argv, optstr)) != -1) {
