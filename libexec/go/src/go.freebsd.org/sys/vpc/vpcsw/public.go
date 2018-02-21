@@ -30,6 +30,8 @@
 package vpcsw
 
 import (
+	"net"
+
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"go.freebsd.org/sys/vpc"
@@ -38,11 +40,13 @@ import (
 // Config is the configuration used to populate a given VPC Switch.
 type Config struct {
 	ID  vpc.ID
+	MAC net.HardwareAddr
 	VNI vpc.VNI
 }
 
 func (c Config) MarshalZerologObject(e *zerolog.Event) {
 	e.Str("id", c.ID.String()).
+		Str("mac", c.MAC.String()).
 		Int32("vni", int32(c.VNI))
 }
 
@@ -52,6 +56,7 @@ type VPCSW struct {
 	ht  vpc.HandleType
 	vni vpc.VNI
 	id  vpc.ID
+	mac net.HardwareAddr
 }
 
 // Create creates a new VPC Switch using the Config parameters.  Callers are
@@ -80,6 +85,8 @@ func Create(cfg Config) (*VPCSW, error) {
 	return &VPCSW{
 		h:   h,
 		ht:  ht,
+		id:  cfg.ID,
+		mac: cfg.MAC,
 		vni: cfg.VNI,
 	}, nil
 }
