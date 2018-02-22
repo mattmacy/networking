@@ -280,7 +280,7 @@ leaf_matches(const art_leaf *n, const unsigned char *key, int key_len)
 {
 	switch (key_len) {
 		case 4:
-			return !((int)n->key == (int)key);
+			return (uintptr_t)n->key == (uintptr_t)key;
 		case 6:
 			return CMP6(n->key, key);
 		case 16:
