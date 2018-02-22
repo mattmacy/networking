@@ -372,11 +372,9 @@ mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
 	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
 	const struct mvec_ent *me = mext->me_ents;
 	const struct mvec_header *mh = &mext->me_mh;
-	int rem;
 
 	if (offset >= m->m_pkthdr.len)
 		return (NULL);
-	rem = offset;
 
 	me += mh->mh_start + mc->mc_idx ;
 #ifdef INVARIANTS
