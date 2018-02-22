@@ -1982,7 +1982,7 @@ static moduledata_t vmnic_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(vmnic, vmnic_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+DECLARE_MODULE(vmnic, vmnic_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(vmnic, 1);
 MODULE_DEPEND(vmnic, iflib, 1, 1, 1);
 MODULE_DEPEND(vmnic, vmm, 1, 1, 1);
