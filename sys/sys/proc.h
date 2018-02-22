@@ -59,6 +59,7 @@
 #include <sys/sigio.h>
 #include <sys/signal.h>
 #include <sys/signalvar.h>
+#include <sys/kdb.h>
 #ifndef _KERNEL
 #include <sys/time.h>			/* For structs itimerval, timeval. */
 #else
@@ -1147,11 +1148,10 @@ td_softdep_cleanup(struct thread *td)
 		softdep_ast_cleanup(td);
 }
 
-extern u_char kdb_active;
 void critical_preempt(struct thread *td);
 
-static __inline void
-_critical_enter()
+static inline void
+_critical_enter(void)
 {
 	struct thread *td;
 
@@ -1163,8 +1163,8 @@ _critical_enter()
 	    (long)td->td_proc->p_pid, td->td_name, td->td_critnest);
 }
 
-static __inline void
-_critical_exit()
+static inline void
+_critical_exit(void)
 {
 	struct thread *td;
 
