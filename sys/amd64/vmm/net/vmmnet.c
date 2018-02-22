@@ -237,7 +237,7 @@ vmmnet_lookup(const vpc_id_t *id)
 
 static int
 kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
-			  vpc_type_t obj_type, vpc_flags_t flags,
+			  vpc_type_t obj_type_full, vpc_flags_t flags,
 			  int *vpcd)
 {
 	struct filedesc *fdp;
@@ -247,13 +247,15 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	vpc_handle_type_t *type;
 	char buf[IFNAMSIZ];
 	int rc, fflags, fd;
+	uint8_t obj_type;
 
-	type = (vpc_handle_type_t*)&obj_type;
+	type = (vpc_handle_type_t*)&obj_type_full;
+	obj_type = type->vht_obj_type;
 	ifp = NULL;
 	if (ETHER_IS_MULTICAST(vpc_id->node))
 		return (EADDRNOTAVAIL);
-	if (type->vht_obj_type == 0 || type->vht_obj_type > VPC_OBJ_TYPE_MAX ||
-		type->vht_obj_type == VPC_OBJ_MGMT) {
+	if (obj_type == 0 || obj_type > VPC_OBJ_TYPE_MAX ||
+		obj_type == VPC_OBJ_MGMT) {
 		printf("type->vht_obj_type=%d\n", type->vht_obj_type);
 		return (ENOPROTOOPT);
 	}
@@ -281,7 +283,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		refcount_acquire(&ctx->v_refcnt);
 	} else {
 		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK|M_ZERO);
-		strncpy(buf, if_names[type->vht_obj_type], IFNAMSIZ-1);
+		strncpy(buf, if_names[obj_type], IFNAMSIZ-1);
 		ctx->v_ifp = NULL;
 		if (type->vht_obj_type != VPC_OBJ_L2LINK) {
 			rc = if_clone_create(buf, sizeof(buf), NULL);
