@@ -30,6 +30,9 @@
 package vpcsw
 
 import (
+	"bytes"
+	"encoding/binary"
+
 	"github.com/pkg/errors"
 	"go.freebsd.org/sys/vpc"
 )
@@ -57,12 +60,13 @@ const (
 	_OpStateGet      = vpc.Op(5)
 	_OpStateSet      = vpc.Op(6)
 	_OpReset         = vpc.Op(7)
+
+	_PortAddCmd vpc.Cmd = vpc.InBit | vpc.PrivBit | vpc.MutateBit | (vpc.Cmd(vpc.ObjTypeSwitch) << 16) | vpc.Cmd(_OpPortAdd)
 )
 
 // Template commands that can be passed to vpc.Ctl() with a valid VPC Switch
 // Handle.
 var (
-	_PortAddCmd    _SwitchCmd
 	_PortDelCmd    _SwitchCmd
 	_PortUplinkSet _SwitchCmd
 	_PortUplinkGet _SwitchCmd
@@ -86,6 +90,23 @@ func init() {
 	// 	resetCmd := vpc.MutateBit | _ResetCmd
 	// 	_ResetCmd = _SwitchCmd(resetCmd)
 	// }
+}
+
+// PortAdd adds a new VPC Port to this VPC Switch.  Uses the PortID member of
+// Config.
+func (sw *VPCSW) PortAdd(cfg Config) error {
+	// TODO(seanc@): Test to see make sure the descriptor has the mutate bit set.
+
+	var binBuf bytes.Buffer
+	binBuf.Grow(16)
+	binary.Write(&binBuf, binary.LittleEndian, cfg.PortID)
+	vpcID := binBuf.Bytes()
+
+	if err := vpc.Ctl(sw.h, vpc.Cmd(_PortAddCmd), vpcID, nil); err != nil {
+		return errors.Wrap(err, "unable to add a VPC Port to VPC Switch")
+	}
+
+	return nil
 }
 
 // Reset resets the VPC Switch.

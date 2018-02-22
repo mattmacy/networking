@@ -118,3 +118,14 @@ func TestObjType(t *testing.T) {
 		t.Fatal("open flags must be 1 byte")
 	}
 }
+
+func TestSizeofID(t *testing.T) {
+	if vpc.IDSize != 16 {
+		t.Errorf("size of vpc.ID is a UUID and expected to be 16B,not %d", vpc.IDSize)
+	}
+
+	dynSize := unsafe.Sizeof(vpc.ID{})
+	if dynSize != vpc.IDSize {
+		t.Errorf("size of vpc.ID changed from %d to %d, ABI mismatch with the kernel guaranteed", vpc.IDSize, dynSize)
+	}
+}
