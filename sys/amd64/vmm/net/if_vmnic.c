@@ -741,11 +741,9 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	struct vring_desc *rxd;
 	int i, cidx, vcidx, count, mask, used_mask;
 	caddr_t data;
-	bool parse_header;
 
 	MPASS(ri->iri_cidx < scctx->isc_nrxd[0]);
 	i = 0;
-	parse_header = false;
 	cidx = ri->iri_cidx;
 	vcidx = rxq->vr_avail[cidx];
 	mask = scctx->isc_nrxd[0]-1;
@@ -844,7 +842,7 @@ vb_rx_completion(struct mbuf *m)
 	rxq = (struct vb_rxq *)m->m_ext.ext_arg1;
 	MPASS(rxq != NULL);
 	vs = rxq->vr_vs;
-	cidx = (int)m->m_ext.ext_arg2;
+	cidx = (uintptr_t)m->m_ext.ext_arg2;
 	/*
 	 * Is this just a buffer post-processing?
 	 */
@@ -976,8 +974,9 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 	struct vb_softc *vs = arg;
 	int cfgoffset;
 	uint16_t offset;
+#ifdef VB_DEBUG
 	const char *cmd;
-
+#endif
 	offset = port - vs->vs_io_start;
 
 	cfgoffset = VIRTIO_PCI_CONFIG_OFF(vs->vs_msix_enabled);
@@ -987,7 +986,9 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 		offset -= cfgoffset;
 		return (vb_handle_config(vs, offset, in, bytes, val));
 	}
+#ifdef VB_DEBUG
 	cmd = offset > VIRTIO_CMD_MAX ? "invalid offset" : pci_cmds[offset];
+#endif
 	if (in) {
 		switch (offset) {
 		case VIRTIO_PCI_HOST_FEATURES:
@@ -1111,13 +1112,12 @@ vb_intr_msix(struct vb_softc *vs, int q)
 static void
 vb_if_input(struct ifnet *ifp, struct mbuf *m)
 {
-	int rc;
 
 	if (ifp->if_bridge == NULL) {
 		m_freechain(m);
 		return;
 	}
-	BRIDGE_OUTPUT(ifp, m, rc);
+	(void)(*(ifp)->if_bridge_output)(ifp, m, NULL, NULL);
 }
 
 static void

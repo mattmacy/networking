@@ -98,7 +98,6 @@ struct grouptask vpc_ifp_task;
 struct ifp_cache *vpc_ic;
 ck_epoch_t vpc_epoch;
 
-extern int mp_ncpus;
 static int vpc_ifindex_target;
 static bool exiting = false;
 
@@ -238,14 +237,14 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	struct tcphdr *th;
 	struct mvec_cursor mc;
 	struct mbuf *m;
-	int eh_type, offset, ipproto;
+	int eh_type, ipproto;
 	int l2len, l3len;
 	void *l3hdr;
 	void *l4hdr;
 
 	MPASS(!(m0->m_flags & M_EXT) || m_ismvec(m0));
 
-	offset = mc.mc_idx = mc.mc_off = 0;
+	mc.mc_off = mc.mc_idx = 0;
 	m = m0;
 	if (m0->m_len < ETHER_HDR_LEN)
 		return (0);

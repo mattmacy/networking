@@ -158,27 +158,21 @@ vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
 static int
 vmi_transmit(if_t ifp, struct mbuf *m)
 {
-	int rc;
 
 	MPASS(ifp->if_bridge);
 	/*
 	 * Preprocess
 	 */
 	vmi_input_process(ifp, m, true);
-	
-	BRIDGE_OUTPUT(ifp, m, rc);
-	return (rc);
+	return ((*(ifp)->if_bridge_output)(ifp, m, NULL, NULL));
 }
 
 static void
 vmi_input(if_t ifp, struct mbuf *m)
 {
-	struct vpcp_softc *vs;
-	int rc;
 
 	vmi_input_process(ifp, m, false);
-	vs = iflib_get_softc((if_ctx_t)ifp->if_softc);
-	BRIDGE_OUTPUT(vs->vs_ifport, m, rc);
+	(void)(*(ifp)->if_bridge_output)(ifp, m, NULL, NULL);
 }
 
 
@@ -282,7 +276,7 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 		mp->m_nextpkt = NULL;
 		mp->m_flags |= M_TRUNK;
 		if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost) &&
-							!(m->m_flags & M_VXLANTAG|M_VLANTAG))) {
+							!(m->m_flags & (M_VXLANTAG|M_VLANTAG)))) {
 			/* Order doesn't matter for broadcast packets */
 			mp->m_nextpkt = mret;
 			mret = mp;
