@@ -37,6 +37,9 @@ import (
 	"go.freebsd.org/sys/vpc"
 )
 
+// DeviceNamePrefix is the prefix of the device name (i.e. "vmnic0").
+const DeviceNamePrefix = "vmnic"
+
 // Config is the configuration used to populate a given VM NIC.
 type Config struct {
 	ID  vpc.ID

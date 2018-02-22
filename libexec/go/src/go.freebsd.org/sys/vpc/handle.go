@@ -61,8 +61,9 @@ type HandleVersion uint64
 
 // HandleTypeInput is passed to the constructor NewHandleType
 type HandleTypeInput struct {
-	Version HandleVersion
-	Type    ObjType
+	Version  HandleVersion
+	Type     ObjType
+	Writable bool
 }
 
 // HandleType is the Object Type.  In sys/amd64/vmm/net/vmmnet.c this is

@@ -47,6 +47,9 @@ import (
 type VNI int32
 
 const (
+	// IDSize is the sizeof(ID)
+	IDSize = 16
+
 	// VNIMax is the largest permitted VNI
 	VNIMax VNI = (1 << 24) - 1
 

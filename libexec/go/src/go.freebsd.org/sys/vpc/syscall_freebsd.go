@@ -30,6 +30,7 @@
 package vpc
 
 import (
+	"fmt"
 	"syscall"
 	"unsafe"
 
@@ -99,12 +100,16 @@ func ctl(h *Handle, cmd Cmd, in []byte, out *[]byte) error {
 		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(len(in)), uintptr(unsafe.Pointer(&in[0])),
 			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
+	case len(in) != 0 && out == nil:
+		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
+			uintptr(len(in)), uintptr(unsafe.Pointer(&in[0])),
+			uintptr(0), uintptr(0))
 	case len(in) == 0 && out != nil:
 		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(0), uintptr(0),
 			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
 	default:
-		panic("invalid args to vpc.Ctl()")
+		panic(fmt.Sprintf("invalid args to vpc.Ctl()\ncmd: %x\nin: %q\nout: %v", cmd, in, out))
 	}
 	if r1 != 0 {
 		return syscall.Errno(e1)
