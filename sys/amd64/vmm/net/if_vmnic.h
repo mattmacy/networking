@@ -31,7 +31,7 @@
 #define	_VTNETBE_H_
 struct iflib_ctx;
 
-struct vtnet_be *(*vtnet_be_init)(struct vm *);
+extern struct vtnet_be *(*vtnet_be_init)(struct vm *);
 extern void (*vtnet_be_cleanup)(struct vtnet_be *);
 
 #endif	/* _VTNETBE_H_ */

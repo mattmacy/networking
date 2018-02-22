@@ -139,8 +139,6 @@ struct vf_entry {
 	struct sockaddr ve_addr;
 };
 
-extern int mp_ncpus;
-
 static struct sx vpclink_lock;
 SX_SYSINIT(vpclink, &vpclink_lock, "VPC global");
 
@@ -573,6 +571,7 @@ vpclink_vxlan_encap_chain(struct vpclink_softc *vs, struct mbuf **mp, bool *can_
 	*can_batch = true;
 	m = *mp;
 	*mp = NULL;
+	ifp = NULL;
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
