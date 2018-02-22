@@ -77,6 +77,11 @@ func init() {
 	// 	_CreateOp = _SwitchOp(createOp)
 	// }
 
+	{
+		portAddOp := vpc.MutateBit | vpc.InBit
+		_PortAddCmd = _SwitchCmd(portAddOp)
+	}
+
 	// {
 	// 	resetCmd := vpc.MutateBit | _ResetCmd
 	// 	_ResetCmd = _SwitchCmd(resetCmd)
