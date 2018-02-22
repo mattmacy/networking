@@ -114,7 +114,7 @@ static fo_fill_kinfo_t vpcd_fill_kinfo;
 static fo_poll_t vpcd_poll;
 static fo_ioctl_t vpcd_ioctl;
 
-struct fileops vpcd_fileops  = {
+static struct fileops vpcd_fileops  = {
 	.fo_close = vpcd_close,
 	.fo_stat = vpcd_stat,
 	.fo_fill_kinfo = vpcd_fill_kinfo,
@@ -196,7 +196,8 @@ vpcd_ioctl(struct file *fp, u_long cmd, void *data,
 {
 	return (ENXIO);
 }
-char *if_names[] = {
+
+static char *if_names[] = {
 	"NONE",
 	"vpcsw",
 	"vpcp",
