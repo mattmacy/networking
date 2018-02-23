@@ -3915,9 +3915,11 @@ iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struc
 		txq->ift_txd_encap_efbig++;
 		if ((*m_headp = m_defrag(*m_headp, M_NOWAIT)) != NULL)
 			return (EFBIG);
-	} else
+	} else {
 		DBG_COUNTER_INC(encap_txd_encap_fail);
-	return (0);
+		m_freem(m_head);
+	}
+	return (err);
 }
 
 static int
