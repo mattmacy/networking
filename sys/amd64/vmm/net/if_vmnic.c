@@ -390,7 +390,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	DPRINTF("\n");
 	if (__predict_false(freespc < pi->ipi_len)) {
 		DPRINTF("freespc=%d < len=%d\n", freespc, pi->ipi_len);
-		return (EFBIG);
+		return (ENOBUFS);
 	}
 	vhd = (void *)tx_segs[0].ds_addr;
 	bzero(vhd, sizeof(*vhd));
