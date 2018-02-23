@@ -3985,7 +3985,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 		return (err);
 	for (segoff = i = 0; i < txq->ift_pktcount; i++) {
 		rc = iflib_encap_one(txq, desc_tag, map, m_headp, i);
-		if (_predict_false(rc == ENOSPC))
+		if (__predict_false(rc == ENOSPC))
 			return (rc);
 		err = rc ? rc : err;
 	}
