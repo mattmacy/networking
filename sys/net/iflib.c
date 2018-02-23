@@ -3918,6 +3918,7 @@ iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struc
 	} else {
 		DBG_COUNTER_INC(encap_txd_encap_fail);
 		m_freem(m_head);
+		*m_headp = NULL;
 	}
 	return (err);
 }
@@ -3984,6 +3985,8 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 		return (err);
 	for (segoff = i = 0; i < txq->ift_pktcount; i++) {
 		rc = iflib_encap_one(txq, desc_tag, map, m_headp, i);
+		if (_predict_false(rc == ENOSPC))
+			return (rc);
 		err = rc ? rc : err;
 	}
 	if ((err == EFBIG) && (txq->ift_pktcount == 1) && (remapped == false)) {
