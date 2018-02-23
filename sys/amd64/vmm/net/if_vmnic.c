@@ -1273,8 +1273,13 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 
 	if_setflagbits(ifp, IFF_UP, 0);
 	ifp->if_init(vs->vs_ctx);
-	vs->vs_flags |= VS_READY;
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
+	/*
+	 * Assume they're mapped first to last
+	 */
+	if (q == vs->vs_nvqs_max-1) {
+		vs->vs_flags |= VS_READY;
+		iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
+	}
 }
 
 static void
