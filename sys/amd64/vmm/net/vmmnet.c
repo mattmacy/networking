@@ -451,7 +451,9 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		goto done;
 	}
 	if (objtype != VPC_OBJ_MGMT) {
+		VMMNET_LOCK();
 		rc = vpc_ctl_dispatch[objtype]((vpc_ctx_t)ctx, op, innbyte, in, outnbyte, outp);
+		VMMNET_UNLOCK();
 		goto done;
 	}
 
