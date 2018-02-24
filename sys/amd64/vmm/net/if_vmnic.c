@@ -952,7 +952,7 @@ vb_status_change(struct vb_softc *vs, uint32_t val)
 	if (val & VIRTIO_CONFIG_STATUS_DRIVER_OK) {
 		SDPRINTF("VIRTIO_CONFIG_STATUS_DRIVER_OK ");
 		/* Up interface */
-		timeout(deferred_up_timer, vs, hz*4);
+		timeout(deferred_up_timer, vs, hz*5);
 	}
 	if (val & VIRTIO_CONFIG_STATUS_FEATURES_OK) {
 		SDPRINTF("VIRTIO_CONFIG_STATUS_FEATURES_OK ");
