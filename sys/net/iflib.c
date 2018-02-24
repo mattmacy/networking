@@ -6476,7 +6476,6 @@ iflib_link_state_change(if_ctx_t ctx, int link_state, uint64_t baudrate)
 	if_t ifp = ctx->ifc_ifp;
 	iflib_txq_t txq = ctx->ifc_txqs;
 
-	CTX_LOCK(ctx);
 	if_setbaudrate(ifp, baudrate);
 	if (baudrate >= IF_Gbps(10))
 		ctx->ifc_flags |= IFC_PREFETCH;
@@ -6488,8 +6487,8 @@ iflib_link_state_change(if_ctx_t ctx, int link_state, uint64_t baudrate)
 	}
 	ctx->ifc_link_state = link_state;
 	if_link_state_change(ifp, link_state);
-	CTX_UNLOCK(ctx);
 }
+
 
 static int
 iflib_tx_credits_update(if_ctx_t ctx, iflib_txq_t txq)
