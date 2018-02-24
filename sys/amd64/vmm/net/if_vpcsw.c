@@ -642,9 +642,10 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge = vs;
 	ifp->if_bridge_input = vpcsw_bridge_input;
 	ifp->if_bridge_output = vpcsw_bridge_output;
-	art_insert(vs->vs_ftable_rw, LLADDR(sdl), ifindexp);
-	vmmnet_insert(vp_id, ifp, VPC_OBJ_PORT);
+	printf("storing ifindexp= %d in switch ART for %6D\n", *ifindexp, vp_id->node, ":");
 	iflib_set_mac(ctx, vp_id->node);
+	art_insert(vs->vs_ftable_rw, vp_id->node, ifindexp);
+	vmmnet_insert(vp_id, ifp, VPC_OBJ_PORT);
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
 	if (rc)
 		goto fail;
@@ -890,11 +891,12 @@ vpcsw_attach_post(if_ctx_t ctx)
 }
 
 static int
-clear_bridge(void *data __unused, const unsigned char *key __unused, uint32_t key_len __unused, void *value)
+clear_bridge(void *data __unused, const unsigned char *key, uint32_t key_len __unused, void *value)
 {
 	uint16_t *ifindexp = value;
 	struct ifnet *ifp;
 
+	printf("clearing bridge for key %6D\n", key, ":");
 	if ((ifp = vpc_if_lookup(*ifindexp)) == NULL)
 		return (0);
 	ifp->if_bridge = NULL;
