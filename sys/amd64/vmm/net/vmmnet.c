@@ -212,9 +212,8 @@ vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type)
 {
 	struct vpcctx *ctx;
 
-	VMMNET_LOCK();
+	sx_assert(&vmmnet_lock, SA_XLOCKED);
 	if (art_search(&vpc_uuid_table, (const char*)id) != NULL) {
-		VMMNET_UNLOCK();
 		return (EEXIST);
 	}
 	ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK|M_ZERO);
@@ -224,7 +223,6 @@ vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type)
 	ctx->v_obj_type = type;
 	refcount_init(&ctx->v_refcnt, 1);
 	art_insert(&vpc_uuid_table, (const char *)id, ctx);
-	VMMNET_UNLOCK();
 	return (0);
 }
 
