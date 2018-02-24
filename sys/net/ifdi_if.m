@@ -413,6 +413,11 @@ METHOD void watchdog_reset {
 	if_ctx_t _ctx;
 } DEFAULT null_void_op;
 
+METHOD void watchdog_reset_queue {
+	if_ctx_t _ctx;
+	uint16_t _q;
+} DEFAULT null_timer_op;
+
 METHOD void led_func {
 	if_ctx_t _ctx;
 	int _onoff;
