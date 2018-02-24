@@ -549,6 +549,18 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			*mtu = ifp->if_mtu;
 			break;
 		}
+		case VPC_OBJ_OP_ID_GET: {
+			vpc_id_t *id;
+
+			if (*outnbyte < sizeof(*id)) {
+				rc = EOVERFLOW;
+				goto done;
+			}
+			*outnbyte = sizeof(*id);
+			id = malloc(sizeof(*id), M_TEMP, M_WAITOK);
+			memcpy(id, &ctx->v_id, sizeof(*id));
+			break;
+		}
 		default:
 			rc = ENOTSUP;
 			break;
