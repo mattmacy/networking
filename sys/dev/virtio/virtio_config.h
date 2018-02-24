@@ -35,7 +35,7 @@
 #define VIRTIO_CONFIG_STATUS_RESET	0x00 /* not in Linux any more */
 
 #define VIRTIO_CONFIG_STATUS_ACK	0x01
-#define VIRTIO_CONFIG_STATUS_DRIVER	0x03 /* actually 0x02, but flags are OR'd */
+#define VIRTIO_CONFIG_STATUS_DRIVER	0x2 /* actually 0x02, but flags are OR'd */
 #define VIRTIO_CONFIG_STATUS_DRIVER_OK	0x04
 #define VIRTIO_CONFIG_STATUS_FEATURES_OK	0x08
 
