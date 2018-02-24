@@ -644,6 +644,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge_output = vpcsw_bridge_output;
 	art_insert(vs->vs_ftable_rw, LLADDR(sdl), ifindexp);
 	vmmnet_insert(vp_id, ifp, VPC_OBJ_PORT);
+	iflib_set_mac(ctx, vp_id->node);
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
 	if (rc)
 		goto fail;
