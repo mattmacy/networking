@@ -132,7 +132,14 @@ const char * pci_cmds[] = {
 	 IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU)
 
 static MALLOC_DEFINE(M_VTNETBE, "vtnetbe", "virtio-net backend");
+
 static volatile int32_t modrefcnt;
+
+#ifdef VB_STATUS_DEBUG
+#define SDPRINTF printf
+#else
+#define SDPRINTF(...)
+#endif
 
 #ifdef VB_DEBUG
 
@@ -909,35 +916,36 @@ vb_status_change(struct vb_softc *vs, uint32_t val)
 	 * For legacy guest drivers - e.g. FreeBSD
 	 */
 	if (val == VIRTIO_CONFIG_STATUS_RESET) {
-		DPRINTF("VIRTIO_CONFIG_STATUS_RESET\n");
+		SDPRINTF("VIRTIO_CONFIG_STATUS_RESET\n");
 		if_setflagbits(ifp, 0, IFF_UP);
 		ifp->if_init(vs->vs_ctx);
 	}
 	if (val & VIRTIO_CONFIG_STATUS_DRIVER)
-		DPRINTF("VIRTIO_CONFIG_STATUS_DRIVER ");
+		SDPRINTF("VIRTIO_CONFIG_STATUS_DRIVER ");
 	if (val & VIRTIO_CONFIG_STATUS_ACK)
-		DPRINTF("VIRTIO_CONFIG_STATUS_ACK ");
+		SDPRINTF("VIRTIO_CONFIG_STATUS_ACK ");
 	if (val & VIRTIO_CONFIG_STATUS_NEEDS_RESET) {
-		DPRINTF("VIRTIO_CONFIG_STATUS_NEEDS_RESET ");
+		SDPRINTF("VIRTIO_CONFIG_STATUS_NEEDS_RESET ");
 		if_setflagbits(ifp, 0, IFF_UP);
 		ifp->if_init(vs->vs_ctx);
 	}
 	if (val & VIRTIO_CONFIG_STATUS_DRIVER_OK) {
-		DPRINTF("VIRTIO_CONFIG_STATUS_DRIVER_OK ");
+		SDPRINTF("VIRTIO_CONFIG_STATUS_DRIVER_OK ");
 		/* Up interface */
 		if_setflagbits(ifp, IFF_UP, 0);
 		ifp->if_init(vs->vs_ctx);
+		iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
 	}
 	if (val & VIRTIO_CONFIG_STATUS_FEATURES_OK) {
-		DPRINTF("VIRTIO_CONFIG_STATUS_FEATURES_OK\n");
+		SDPRINTF("VIRTIO_CONFIG_STATUS_FEATURES_OK ");
 		vs->vs_flags |= VS_VERS_1;
 	}
 	if (val & VIRTIO_CONFIG_STATUS_FAILED) {
-		DPRINTF("VIRTIO_CONFIG_STATUS_FAILED");
+		SDPRINTF("VIRTIO_CONFIG_STATUS_FAILED");
 		if_setflagbits(ifp, 0, IFF_UP);
 		ifp->if_init(vs->vs_ctx);
 	}
-	DPRINTF("\n");
+	SDPRINTF("\n");
 	vs->vs_status = val | VIRTIO_CONFIG_STATUS_FEATURES_OK;
 }
 
@@ -951,7 +959,7 @@ vb_handle_config(struct vb_softc *vs, int offset, bool in, int bytes,
 {
 	uint8_t *ptr;
 
-	DPRINTF("%s %s offset: %d len: %d val: %x\n", __func__, in ? "in" : "out",
+	SDPRINTF("%s %s offset: %d len: %d val: %x\n", __func__, in ? "in" : "out",
 		   offset, bytes, *val);
 
 	ptr = (uint8_t *)&vs->vs_cfg + offset;
@@ -974,7 +982,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 	struct vb_softc *vs = arg;
 	int cfgoffset;
 	uint16_t offset;
-#ifdef VB_DEBUG
+#ifdef VB_STATUS_DEBUG
 	const char *cmd;
 #endif
 	offset = port - vs->vs_io_start;
@@ -986,7 +994,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 		offset -= cfgoffset;
 		return (vb_handle_config(vs, offset, in, bytes, val));
 	}
-#ifdef VB_DEBUG
+#ifdef VB_STATUS_DEBUG
 	cmd = offset > VIRTIO_CMD_MAX ? "invalid offset" : pci_cmds[offset];
 #endif
 	if (in) {
@@ -1083,7 +1091,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 			break;
 		}
 	}
-	DPRINTF("%s %s cmd: %s val: %x\n", __func__, in ? "in" : "out",
+	SDPRINTF("%s %s cmd: %s val: %x\n", __func__, in ? "in" : "out",
 			cmd, *val);
 	return (0);
 }
@@ -1185,7 +1193,6 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	vm_offset_t vaddr;
 	uint64_t gpa, pfn64;
 	int qsz, len, qid;
-	struct ifnet *ifp;
 
 	pfn64 = pfn;
 	gpa = pfn64 << PAGE_SHIFT;
@@ -1265,21 +1272,6 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	vs->vs_queues[q].vq_used = (struct vring_used *)vaddr;
 	printf("[%d].vq_used = %p flags: %d qsize: %d len: %d\n", q, (void *)vaddr, vs->vs_queues[q].vq_used->flags, qsz, len);
 
-	ifp = iflib_get_ifp(vs->vs_ctx);
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(25));
-	/* XXX unsafe */
-	if_setflagbits(ifp, 0, IFF_UP);
-	ifp->if_init(vs->vs_ctx);
-
-	if_setflagbits(ifp, IFF_UP, 0);
-	ifp->if_init(vs->vs_ctx);
-	/*
-	 * Assume they're mapped first to last
-	 */
-	if (q == vs->vs_nvqs_max-1) {
-		vs->vs_flags |= VS_READY;
-		iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
-	}
 }
 
 static void
@@ -1896,11 +1888,20 @@ vb_update_admin_status(if_ctx_t ctx)
 	vb_intr_msix(vs, cvq->vq_id);
 }
 
+static void
+vmnic_watchdog_reset_queue(if_ctx_t ctx, uint16_t qid)
+{
+	struct vb_softc *vs = iflib_get_softc(ctx);
+
+	vb_intr_msix(vs, qid);
+}
+
 static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_rx_queue_intr_enable, vb_if_rxq_intr_enable),
 	DEVMETHOD(ifdi_tx_queue_intr_enable, vb_if_txq_intr_enable),
 	DEVMETHOD(ifdi_cloneattach, vb_cloneattach),
 	DEVMETHOD(ifdi_attach_post, vb_attach_post),
+	DEVMETHOD(ifdi_watchdog_reset_queue, vmnic_watchdog_reset_queue),
 	DEVMETHOD(ifdi_detach, vb_detach),
 	DEVMETHOD(ifdi_mtu_set, vmnic_mtu_set),
 	DEVMETHOD(ifdi_mac_set, vmnic_mac_set),
