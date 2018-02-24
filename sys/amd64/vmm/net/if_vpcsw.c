@@ -615,7 +615,6 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	struct ifreq ifr;
 	if_ctx_t ctx;
 	void *cache;
-	struct sockaddr_dl *sdl;
 	art_tree *newftable, *oldftable;
 	uint16_t *ifindexp;
 	int rc;
@@ -627,11 +626,6 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 		if (bootverbose)
 			printf("couldn't reference %s\n", ifr.ifr_name);
 		return (ENXIO);
-	}
-	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-	if (sdl->sdl_type != IFT_ETHER) {
-		if_clone_destroy(ifr.ifr_name);
-		return (EINVAL);
 	}
 	ifindexp = malloc(sizeof(uint16_t), M_VPCSW, M_WAITOK);
 	*ifindexp = ifp->if_index;
