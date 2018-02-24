@@ -300,6 +300,7 @@ struct vb_softc {
 	uint32_t   vs_negotiated_caps;
 
 	struct virtio_net_config vs_cfg;
+	struct grouptask vs_deferred_uptask;
 	struct vb_msix_vector *vs_msix;
 	struct vb_queue *vs_queues;
 	struct vb_queue *vs_cvq;
@@ -908,6 +909,25 @@ vb_find_vmname(const char *vmname)
 }
 
 static void
+deferred_up(void *arg)
+{
+	if_ctx_t ctx = arg;
+	struct ifnet *ifp = iflib_get_ifp(ctx);
+
+	if_setflagbits(ifp, IFF_UP, 0);
+	ifp->if_init(ctx);
+	iflib_link_state_change(ctx, LINK_STATE_UP, IF_Gbps(200));
+}
+
+static void
+deferred_up_timer(void *arg)
+{
+	struct vb_softc *vs = arg;
+
+	GROUPTASK_ENQUEUE(&vs->vs_deferred_uptask);
+}
+
+static void
 vb_status_change(struct vb_softc *vs, uint32_t val)
 {
 	struct ifnet *ifp = iflib_get_ifp(vs->vs_ctx);
@@ -932,9 +952,7 @@ vb_status_change(struct vb_softc *vs, uint32_t val)
 	if (val & VIRTIO_CONFIG_STATUS_DRIVER_OK) {
 		SDPRINTF("VIRTIO_CONFIG_STATUS_DRIVER_OK ");
 		/* Up interface */
-		if_setflagbits(ifp, IFF_UP, 0);
-		ifp->if_init(vs->vs_ctx);
-		iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(25));
+		timeout(deferred_up_timer, vs, hz*4);
 	}
 	if (val & VIRTIO_CONFIG_STATUS_FEATURES_OK) {
 		SDPRINTF("VIRTIO_CONFIG_STATUS_FEATURES_OK ");
@@ -1516,6 +1534,7 @@ vb_attach_post(if_ctx_t ctx)
 		iflib_softirq_alloc_generic(ctx, NULL, IFLIB_INTR_TX, i, buf);
 	}
 	vb_dev_reset(vs);
+	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_deferred_uptask, deferred_up, "deferred up");
 	scctx->isc_min_tx_latency = 1;
 	scctx->isc_rx_mvec_enable = 1;
 	/*
@@ -1625,6 +1644,7 @@ vb_detach(if_ctx_t ctx)
 
 	for (i = 0; i < scctx->isc_nrxqsets; i++)
 		vb_rxq_deinit(vs, &vs->vs_rx_queues[i]);
+	iflib_config_gtask_deinit(&vs->vs_deferred_uptask);
 	free(vs->vs_rx_queues, M_VTNETBE);
 	free(vs->vs_tx_queues, M_VTNETBE);
 	free(vs->vs_msix, M_VTNETBE);
