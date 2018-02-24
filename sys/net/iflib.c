@@ -2296,6 +2296,7 @@ iflib_timer(void *arg)
 			device_printf(ctx->ifc_dev,  "TX(%d) desc avail = %d, pidx = %d\n",
 						  txq->ift_id, TXQ_AVAIL(txq), txq->ift_pidx);
 			txq->ift_db_pending++;
+			IFDI_WATCHDOG_RESET_QUEUE(ctx, txq->ift_id);
 			GROUPTASK_ENQUEUE(&txq->ift_task);
 		}
 	} else if ((txq->ift_qstatus == IFLIB_QUEUE_HUNG) &&
