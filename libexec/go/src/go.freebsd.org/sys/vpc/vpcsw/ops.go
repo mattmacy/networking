@@ -30,10 +30,10 @@
 package vpcsw
 
 import (
-	"bytes"
-	"encoding/binary"
+	"net"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 	"go.freebsd.org/sys/vpc"
 )
 
@@ -61,49 +61,92 @@ const (
 	_OpStateSet      = vpc.Op(6)
 	_OpReset         = vpc.Op(7)
 
-	_PortAddCmd vpc.Cmd = vpc.InBit | vpc.PrivBit | vpc.MutateBit | (vpc.Cmd(vpc.ObjTypeSwitch) << 16) | vpc.Cmd(_OpPortAdd)
+	_PortAddCmd       _SwitchCmd = _SwitchCmd(vpc.InBit|vpc.PrivBit|vpc.MutateBit|(vpc.Cmd(vpc.ObjTypeSwitch)<<16)) | _SwitchCmd(_OpPortAdd)
+	_PortRemoveCmd    _SwitchCmd = _SwitchCmd(vpc.InBit|vpc.PrivBit|vpc.MutateBit|(vpc.Cmd(vpc.ObjTypeSwitch)<<16)) | _SwitchCmd(_OpPortDel)
+	_PortUplinkSetCmd _SwitchCmd = _SwitchCmd(vpc.InBit|vpc.PrivBit|vpc.MutateBit|(vpc.Cmd(vpc.ObjTypeSwitch)<<16)) | _SwitchCmd(_OpPortUplinkSet)
 )
 
 // Template commands that can be passed to vpc.Ctl() with a valid VPC Switch
 // Handle.
 var (
 	_PortDelCmd    _SwitchCmd
-	_PortUplinkSet _SwitchCmd
 	_PortUplinkGet _SwitchCmd
 	_PortStateSet  _SwitchCmd
 	_PortStateGet  _SwitchCmd
 	_ResetCmd      _SwitchCmd
 )
 
-func init() {
-	// {
-	// 	createOp := vpc.MutateBit | vpc.InBit
-	// 	_CreateOp = _SwitchOp(createOp)
-	// }
-
-	{
-		portAddOp := vpc.MutateBit | vpc.InBit
-		_PortAddCmd = _SwitchCmd(portAddOp)
+// Close closes the VPC Handle descriptor.  Created VPC Switches will not be
+// destroyed when the VPCSW is closed if the VPC Switch has been Committed.
+func (sw *VPCSW) Close() error {
+	if sw.h.FD() <= 0 {
+		return nil
 	}
 
-	// {
-	// 	resetCmd := vpc.MutateBit | _ResetCmd
-	// 	_ResetCmd = _SwitchCmd(resetCmd)
-	// }
+	if err := sw.h.Close(); err != nil {
+		return errors.Wrap(err, "unable to close VPC handle")
+	}
+
+	return nil
 }
 
-// PortAdd adds a new VPC Port to this VPC Switch.  Uses the PortID member of
-// Config.
-func (sw *VPCSW) PortAdd(cfg Config) error {
+// Commit increments the refcount of the VPC Switch in order to ensure the VPC
+// Switch lives beyond the life of the current process and is not automatically
+// cleaned up when the VPCSW is closed.
+func (sw *VPCSW) Commit() error {
+	if sw.h.FD() <= 0 {
+		return nil
+	}
+
+	if err := sw.h.Commit(); err != nil {
+		return errors.Wrap(err, "unable to commit VPC Switch")
+	}
+
+	return nil
+}
+
+// Destroy decrements the refcount of the VPC Switch in destroy the the VPC
+// Switch when the VPC Handle is closed.
+func (sw *VPCSW) Destroy() error {
+	if sw.h.FD() <= 0 {
+		return nil
+	}
+
+	if err := sw.h.Destroy(); err != nil {
+		return errors.Wrap(err, "unable to destroy VPC Switch")
+	}
+
+	return nil
+}
+
+// PortAdd adds an existing VPC Port to this VPC Switch.  PortID is VPC ID of
+// the existing VPC Port to be added to this switch.
+func (sw *VPCSW) PortAdd(portID vpc.ID, mac net.HardwareAddr) error {
 	// TODO(seanc@): Test to see make sure the descriptor has the mutate bit set.
 
-	var binBuf bytes.Buffer
-	binBuf.Grow(16)
-	binary.Write(&binBuf, binary.LittleEndian, cfg.PortID)
-	vpcID := binBuf.Bytes()
-
-	if err := vpc.Ctl(sw.h, vpc.Cmd(_PortAddCmd), vpcID, nil); err != nil {
+	// Create the port
+	if err := vpc.Ctl(sw.h, vpc.Cmd(_PortAddCmd), portID.Bytes(), nil); err != nil {
 		return errors.Wrap(err, "unable to add a VPC Port to VPC Switch")
+	}
+
+	// TODO(seanc@): Set the MAC address of the port
+
+	return nil
+}
+
+// PortRemove removes a VPC Port from this VPC Switch.  Uses the PortID member
+// of Config.
+func (sw *VPCSW) PortRemove(cfg Config) error {
+	// TODO(seanc@): Test to see make sure the descriptor has the mutate bit set.
+
+	if err := vpc.Ctl(sw.h, vpc.Cmd(_PortRemoveCmd), cfg.PortID.Bytes(), nil); err != nil {
+		log.Error().Err(err).
+			Object("cfg", cfg).
+			Object("cmd", vpc.Cmd(_PortRemoveCmd)).
+			Str("cmd", "port remove").
+			Str("obj-type", "switch").
+			Msg("failed")
+		return errors.Wrap(err, "unable to remove a VPC Port from VPC Switch")
 	}
 
 	return nil
@@ -119,6 +162,19 @@ func (sw *VPCSW) Reset() error {
 
 	if err := vpc.Ctl(sw.h, vpc.Cmd(_ResetCmd), nil, nil); err != nil {
 		return errors.Wrap(err, "unable to reset VPC Switch")
+	}
+
+	return nil
+}
+
+// UplinkSet designates an existing VPC Port as an uplink port for this VPC
+// Switch.
+func (sw *VPCSW) PortUplinkSet(portID vpc.ID) error {
+	// TODO(seanc@): Test to see make sure the descriptor has the mutate bit set.
+
+	// Create the port
+	if err := vpc.Ctl(sw.h, vpc.Cmd(_PortUplinkSetCmd), portID.Bytes(), nil); err != nil {
+		return errors.Wrap(err, "unable to set VPC Port as uplink in VPC Switch")
 	}
 
 	return nil
