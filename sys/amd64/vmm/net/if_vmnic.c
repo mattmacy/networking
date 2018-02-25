@@ -1294,6 +1294,8 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 	vs->vs_queues[q].vq_used = (struct vring_used *)vaddr;
 	printf("[%d].vq_used = %p flags: %d qsize: %d len: %d\n", q, (void *)vaddr, vs->vs_queues[q].vq_used->flags, qsz, len);
 
+	if (q == vs->vs_nvqs_max-1)
+		vs->vs_flags |= VS_READY;
 }
 
 static void
