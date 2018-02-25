@@ -619,6 +619,8 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	uint16_t *ifindexp;
 	int rc;
 
+	if (vmmnet_lookup(vp_id) != NULL)
+		return (EEXIST);
 	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp");
 	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
 		return (rc);
