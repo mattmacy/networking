@@ -691,6 +691,8 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
 	if (rc)
 		goto fail;
+	vctx = vmmnet_delete(vp_id);
+	MPASS(vctx);
 	oldftable = vs->vs_ftable_ro;
 	vs->vs_ftable_ro = newftable;
 	ck_epoch_synchronize(&vpc_global_record);

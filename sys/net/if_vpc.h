@@ -266,6 +266,7 @@ typedef int (*vpc_ctl_fn) (vpc_ctx_t ctx, vpc_op_t op, size_t keylen,
 
 int vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type);
 vpc_ctx_t vmmnet_lookup(const vpc_id_t *id);
+vpc_ctx_t vmmnet_delete(const vpc_id_t *id);
 struct ifnet *vpc_if_lookup(uint32_t ifindex);
 int vpc_async_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len);
 
