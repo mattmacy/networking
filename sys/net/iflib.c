@@ -2683,6 +2683,7 @@ iflib_check_rx_notify(iflib_rxq_t rxq, if_rxd_info_t ri, struct mbuf *m, int rxm
 	segsz = ri->iri_tso_segsz;
 	ri->iri_cookie1 = NULL;
 	ri->iri_cookie2 = 0;
+	ri->iri_flowid = ri->iri_qsidx;
 
 	MPASS(ctx->ifc_sctx->isc_rx_completion != NULL);
 	/* UGH */
