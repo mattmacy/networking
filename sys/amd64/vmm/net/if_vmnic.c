@@ -913,10 +913,14 @@ deferred_up(void *arg)
 {
 	if_ctx_t ctx = arg;
 	struct ifnet *ifp = iflib_get_ifp(ctx);
+	struct mtx *ctxlock;
 
+	ctxlock = iflib_ctx_lock_get(ctx);
+	mtx_lock(ctxlock);
 	if_setflagbits(ifp, IFF_UP, 0);
-	ifp->if_init(ctx);
 	iflib_link_state_change(ctx, LINK_STATE_UP, IF_Gbps(200));
+	mtx_unlock(ctxlock);
+	ifp->if_init(ctx);
 }
 
 static void
@@ -1640,7 +1644,7 @@ vb_detach(if_ctx_t ctx)
 	for (i = 0; i < vs->vs_nvqs; i++) {
 		vb_vring_munmap(vs, i);
 	}
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(25));
+	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(200));
 
 	for (i = 0; i < scctx->isc_nrxqsets; i++)
 		vb_rxq_deinit(vs, &vs->vs_rx_queues[i]);
