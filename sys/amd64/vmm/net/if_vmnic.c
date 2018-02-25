@@ -335,6 +335,7 @@ static if_pseudo_t vb_clone_register(void);
 static void vb_intr_msix(struct vb_softc *vs, int q);
 static void vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq, int i);
 static void vb_txq_init(struct vb_softc *vs, struct vb_txq *txq, int i);
+static int vb_pparse(caddr_t data, struct pinfo *pinfo);
 
 static int
 vb_txd_encap(void *arg, if_pkt_info_t pi)
@@ -403,14 +404,6 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 	vhd = (void *)tx_segs[0].ds_addr;
 	bzero(vhd, sizeof(*vhd));
 	vhd->num_buffers = i;
-	if ((pi->ipi_len > vs->vs_cfg.mtu) && (pi->ipi_ipproto == IPPROTO_TCP)) {
-		vhd->hdr.gso_size = vs->vs_cfg.mtu - pi->ipi_ehdrlen - pi->ipi_ip_hlen -
-			max(sizeof(struct tcphdr), pi->ipi_tcp_hlen);
-		if (pi->ipi_etype == ETHERTYPE_IP)
-			vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
-		else if (pi->ipi_etype == ETHERTYPE_IPV6)
-			vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
-	}
 	if (__predict_true(pi->ipi_csum_flags & CSUM_DATA_VALID)) {
 		vhd->hdr.flags = VIRTIO_NET_HDR_F_DATA_VALID;
 		vhd->hdr.csum_start = pi->ipi_ehdrlen + pi->ipi_ip_hlen;
@@ -418,7 +411,25 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 			case IPPROTO_TCP:
 			vhd->hdr.csum_offset =
 			    offsetof(struct tcphdr, th_sum);
-				break;
+			if (pi->ipi_len > vs->vs_cfg.mtu) {
+				caddr_t hdr = (caddr_t)segs[0].ds_addr;
+				struct pinfo pinfo;
+				int hdrlen;
+				vb_pparse(hdr, &pinfo);
+				hdrlen = pi->ipi_ehdrlen + pi->ipi_ip_hlen +
+					max(sizeof(struct tcphdr), pinfo.l4size);
+				vhd->hdr.gso_size = vs->vs_cfg.mtu - hdrlen;
+#if 0
+				printf("len: %d mtu: %d ehdrlen: %d iphlen: %d tcp_hlen: %d gso_size: %d\n",
+					   pi->ipi_len, vs->vs_cfg.mtu, pi->ipi_ehdrlen, pi->ipi_ehdrlen,
+				   pinfo.l4size, vhd->hdr.gso_size);
+#endif
+				if (pi->ipi_etype == ETHERTYPE_IP)
+					vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
+				else if (pi->ipi_etype == ETHERTYPE_IPV6)
+					vhd->hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
+			}
+			break;
 			case IPPROTO_UDP:
 				vhd->hdr.csum_offset =
 					offsetof(struct udphdr, uh_sum);
@@ -446,39 +457,40 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 			vidx, vu->idx, vu->flags);
 	do {
 		/* copy length / source delta / destination delta */
-		int len, sdel, ddel, dlen;
+		int len, srem, drem, dlen;
 		char *src, *dst;
 		bool update_used;
 
 		update_used = false;
-		sdel = segs[sidx].ds_len - soff;
+		srem = segs[sidx].ds_len - soff;
 		dlen = tx_segs[didx].ds_len;
-		ddel = dlen - doff;
+		drem = dlen - doff;
 		src = (caddr_t)segs[sidx].ds_addr + soff;
 		dst = (caddr_t)tx_segs[didx].ds_addr + doff;
 		/*
 		 * Mark size of last descriptor and end loop
 		 */
-		if (total == sdel) {
+		if (total == srem && (srem <= drem)) {
 			txd = &txq->vt_base[(pi->ipi_pidx + didx) & mask];
-			dlen = doff + sdel;
-			DPRINTF("last descriptor: %d len: %d\n",
-					(pi->ipi_pidx + didx) & mask, dlen);
-			if (sdel < ddel)
-				update_used = true;
+
+			dlen = doff + srem;
+			DPRINTF("last descriptor: %d len: %d doff: %d, srem: %d, dsize: %lu\n",
+				   (pi->ipi_pidx + didx) & mask, dlen, doff, srem, tx_segs[didx].ds_len);
+			MPASS(dlen <= tx_segs[didx].ds_len);
+			update_used = true;
 		}
-		if (sdel < ddel) {
-			len = sdel;
+		if (srem < drem) {
+			len = srem;
 			doff += len;
 			soff = 0;
 			sidx++;
-		} else if (sdel > ddel) {
-			len = ddel;
+		} else if (srem > drem) {
+			len = drem;
 			soff += len;
 			doff = 0;
 			update_used = true;
 		} else {
-			len = sdel;
+			len = srem;
 			doff = soff = 0;
 			sidx++;
 			update_used = true;
@@ -492,7 +504,7 @@ vb_txd_encap(void *arg, if_pkt_info_t pi)
 			didx++;
 			if ((vidx & 63) == 0)
 				DPRINTF("%s called pidx: %d nsegs: %d %d ndesc avail "
-						"vidx: %d vue->id: %d vue->len: %d vpidxs[%d]: %d\n",
+					   "vidx: %d vue->id: %d vue->len: %d vpidxs[%d]: %d\n",
 						__func__, pidx, pi->ipi_nsegs, ndesc,
 						vidx, vue->id, vue->len, didx, vpidxs[didx]);
 		}
