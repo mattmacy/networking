@@ -132,6 +132,21 @@ vpcd_print_uuid_callback(void *data, const unsigned char *key, uint32_t key_len,
 	return (0);
 }
 
+struct typecount_info {
+	uint32_t type;
+	uint32_t count;
+};
+static int
+vpcd_type_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct typecount_info  *ti = data;
+	struct vpcctx *ctx = value;
+
+	if (ti->type == ctx->v_obj_type)
+		ti->count++;
+	return (0);
+}
+
 static void
 vpcd_print_uuids(void)
 {
@@ -560,6 +575,27 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			id = malloc(sizeof(*id), M_TEMP, M_WAITOK);
 			memcpy(id, &ctx->v_id, sizeof(*id));
 			break;
+		}
+		case VPC_OBJ_TYPE_COUNT_GET: {
+			const uint16_t *qtype = in;
+			uint16_t *typecount;
+			struct typecount_info ti;
+
+			if (innbyte != sizeof(uint32_t))
+				return (EBADRPC);
+			if (*outnbyte < sizeof(uint32_t)) {
+				rc = EOVERFLOW;
+				goto done;
+			}
+			ti.type = *qtype;
+			*outnbyte = sizeof(uint16_t);
+			typecount = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
+			ti.count = 0;
+			VMMNET_LOCK();
+			art_iter(&vpc_uuid_table, vpcd_type_count_callback, &ti);
+			VMMNET_UNLOCK();
+			*typecount = ti.count;
+			*outp = typecount;
 		}
 		default:
 			rc = ENOTSUP;

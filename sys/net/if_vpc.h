@@ -164,6 +164,29 @@ struct vpcrtr_response_v4 {
 	uint8_t vr_dmac[ETHER_ADDR_LEN];
 	uint8_t vr_vpcsw_dmac[ETHER_ADDR_LEN];
 };
+typedef struct {
+    int voi_type;
+    union {
+		struct {
+			vpc_id_t id;
+			uint32_t vni;
+		} vswitch;
+		struct {
+			vpc_id_t id;
+			uint8_t type;
+		} port;
+		struct {
+			vpc_id_t id;
+		} vmnic;
+		struct {
+			vpc_id_t id;
+		} l2link;
+		struct {
+			vpc_id_t id;
+		} vpclink;
+	};
+} vpc_obj_info_t;
+
 
 #ifdef _KERNEL
 #include <sys/proc.h>
@@ -378,7 +401,8 @@ enum vpc_mgmt_op_type {
 	VPC_OBJ_MTU_SET = 6,
 	VPC_OBJ_MTU_GET = 7,
 	VPC_OBJ_ID_GET = 8,
-	VPC_META_OP_TYPE_MAX = 8
+	VPC_OBJ_TYPE_COUNT_GET = 9,
+	VPC_META_OP_TYPE_MAX = 9
 };
 
 enum vpc_l2link_op_type {
@@ -422,6 +446,7 @@ enum vpc_l2link_op_type {
 #define VPC_OBJ_OP_MTU_SET VPC_OP_IMP(VPC_OBJ_MGMT, VPC_OBJ_MTU_SET)
 #define VPC_OBJ_OP_MTU_GET VPC_OP_O(VPC_OBJ_MGMT, VPC_OBJ_MTU_GET)
 #define VPC_OBJ_OP_ID_GET VPC_OP_O(VPC_OBJ_MGMT, VPC_OBJ_ID_GET)
+#define VPC_OBJ_OP_TYPE_COUNT_GET VPC_OP_IO(VPC_OBJ_MGMT, VPC_OBJ_TYPE_COUNT_GET)
 
 #define VPC_VPCSW_OP_PORT_ADD VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_ADD)
 #define VPC_VPCSW_OP_PORT_DEL VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_DEL)
