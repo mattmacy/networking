@@ -249,6 +249,14 @@ vmmnet_lookup(const vpc_id_t *id)
 	return ((vpc_ctx_t)art_search(&vpc_uuid_table, (const char*)id));
 }
 
+vpc_ctx_t
+vmmnet_delete(const vpc_id_t *id)
+{
+
+	sx_assert(&vmmnet_lock, SA_XLOCKED);
+	return ((vpc_ctx_t)art_delete(&vpc_uuid_table, (const char*)id));
+}
+
 static int
 kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			  vpc_type_t obj_type_full, vpc_flags_t flags,
