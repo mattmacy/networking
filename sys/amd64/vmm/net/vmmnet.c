@@ -414,6 +414,15 @@ vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	return (EOPNOTSUPP);
 }
 
+
+static int
+vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
+{
+	panic("unreachable");
+	return (0);
+}
+
 static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	NULL,
 	vpcsw_ctl,
@@ -422,6 +431,7 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	vpcnat_ctl,
 	vpclink_ctl,
 	vmnic_ctl,
+	vpcmgmt_ctl,
 	l2link_ctl
 };
 static int
