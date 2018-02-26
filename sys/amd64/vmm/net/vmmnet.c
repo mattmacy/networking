@@ -177,7 +177,7 @@ vpcd_close(struct file *fp, struct thread *td)
 		/* run object dtor */
 		if (ctx->v_obj_type != VPC_OBJ_L2LINK)
 			if_clone_destroy(ctx->v_ifp->if_xname);
-		else
+		else if (ctx->v_ifp)
 			if_rele(ctx->v_ifp);
 		free(ctx, M_VMMNET);
 	}
