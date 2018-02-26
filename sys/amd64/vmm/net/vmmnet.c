@@ -163,6 +163,8 @@ vpcd_close(struct file *fp, struct thread *td)
 	if ((ctx = fp->f_data) == NULL)
 		return (0);
 	fp->f_data = NULL;
+	if (ctx->v_obj_type == VPC_OBJ_PORT)
+		return (0);
 	VMMNET_LOCK();
 	if (refcount_release(&ctx->v_refcnt)) {
 		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
