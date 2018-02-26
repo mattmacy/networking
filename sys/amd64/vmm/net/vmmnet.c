@@ -400,7 +400,7 @@ l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 
 			bzero(buf, IFNAMSIZ);
 			memcpy(buf, in, min(inlen, IFNAMSIZ-1));
-			if ((ifp = ifunit_ref(in)) == NULL)
+			if ((ifp = ifunit_ref(buf)) == NULL)
 				return (ENOENT);
 			ctx->v_ifp = ifp;
 
