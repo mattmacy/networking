@@ -619,8 +619,12 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	uint16_t *ifindexp;
 	int rc;
 
-	if (vmmnet_lookup(vp_id) != NULL)
+	if (vmmnet_lookup(vp_id) != NULL) {
+		if (bootverbose)
+			printf("%s can't add %16D -- already in vpc_uuid_table\n",
+				   __func__, vp_id, ":");
 		return (EEXIST);
+	}
 	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp");
 	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
 		return (rc);
@@ -725,12 +729,14 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 
 	if (vs->vs_ifdefault != NULL) {
 		if (bootverbose)
-			printf("vs->vs_ifdefault already set\n");
+			printf("%s: can't set port to %16D, vs->vs_ifdefault already set\n",
+				   __func__, vp_id, ":");
 		return (EEXIST);
 	}
 	if (vmmnet_lookup(vp_id) != NULL) {
 		if (bootverbose)
-			printf("%16D already in vpc_uuid_table\n", vp_id, ":");
+			printf("%s set uplink port to %16D -- already in vpc_uuid_table\n",
+				   __func__, vp_id, ":");
 		return (EEXIST);
 	}
 
