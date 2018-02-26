@@ -231,6 +231,9 @@ vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type)
 
 	sx_assert(&vmmnet_lock, SA_XLOCKED);
 	if (art_search(&vpc_uuid_table, (const char*)id) != NULL) {
+		if (bootverbose)
+			printf("%s can't add %16D -- already in vpc_uuid_table\n",
+				   __func__, id, ":");
 		return (EEXIST);
 	}
 	ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK|M_ZERO);
