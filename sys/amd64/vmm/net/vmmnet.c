@@ -391,12 +391,15 @@ static int
 l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
+	char buf[IFNAMSIZ];
 	int rc = 0;
 
 	switch (op) {
 		case VPC_L2LINK_OP_ATTACH: {
 			struct ifnet *ifp;
 
+			bzero(buf, IFNAMSIZ);
+			memcpy(buf, in, min(inlen, IFNAMSIZ-1));
 			if ((ifp = ifunit_ref(in)) == NULL)
 				return (ENOENT);
 			ctx->v_ifp = ifp;
@@ -404,6 +407,7 @@ l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			break;
 		}
 		default:
+			rc = EOPNOTSUPP;
 			break;
 	}
 	return (rc);
