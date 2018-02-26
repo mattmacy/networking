@@ -723,10 +723,16 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	struct ifreq ifr;
 	int rc;
 
-	if (vs->vs_ifdefault != NULL)
+	if (vs->vs_ifdefault != NULL) {
+		if (bootverbose)
+			printf("vs->vs_ifdefault already set\n");
 		return (EEXIST);
-	if (vmmnet_lookup(vp_id) != NULL)
+	}
+	if (vmmnet_lookup(vp_id) != NULL) {
+		if (bootverbose)
+			printf("%16D already in vpc_uuid_table\n", vp_id, ":");
 		return (EEXIST);
+	}
 
 	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "vpcp");
 	if ((rc = if_clone_create(ifr.ifr_name, sizeof(ifr.ifr_name), NULL)))
