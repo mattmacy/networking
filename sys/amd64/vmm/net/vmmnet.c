@@ -654,7 +654,7 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 	if (copyin(uap->vpc_id, vpc_id, sizeof(*vpc_id)))
 		return (EFAULT);
 	if (bootverbose)
-		printf("vpc_id: %16D\n", vpc_id, ":");
+		printf("%s vpc_id: %16D\n", __func__, vpc_id, ":");
 	rc = kern_vpc_open(td, vpc_id, htobe64(uap->obj_type), uap->flags, &vpcd);
 	if (rc)
 		goto done;
