@@ -494,6 +494,18 @@ vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 	return (EINVAL);
 }
 
+static int
+vpcp_object_info_get(if_ctx_t ctx, void *arg, int size)
+{
+	struct vpcp_softc *vs = iflib_get_softc(ctx);
+	vpc_obj_info_t *voi = arg;
+
+	if (size != sizeof(*voi))
+		return (EBADRPC);
+	voi->port.type = vs->vs_type;
+	return (0);
+}
+
 #define VPCP_CAPS														\
 	IFCAP_TSO | IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | \
@@ -626,6 +638,7 @@ static device_method_t vpcp_if_methods[] = {
 	DEVMETHOD(ifdi_detach, vpcp_detach),
 	DEVMETHOD(ifdi_init, vpcp_init),
 	DEVMETHOD(ifdi_stop, vpcp_stop),
+	DEVMETHOD(ifdi_object_info_get, vpcp_object_info_get),
 	DEVMETHOD_END
 };
 
