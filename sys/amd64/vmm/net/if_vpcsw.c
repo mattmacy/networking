@@ -729,8 +729,8 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 
 	if (vs->vs_ifdefault != NULL) {
 		if (bootverbose)
-			printf("%s: can't set port to %16D, vs->vs_ifdefault already set\n",
-				   __func__, vp_id, ":");
+			printf("%s: can't set port to %16D, vs->vs_ifdefault already set -- if: %s\n",
+				   __func__, vp_id, ":", vs->vs_ifdefault->if_xname);
 		return (EEXIST);
 	}
 	if (vmmnet_lookup(vp_id) != NULL) {
@@ -757,6 +757,9 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	}
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
+	if (bootverbose)
+		printf("switch uplink set to id: %16D - default: %s\n",
+			   vp_id, ":", ifp->if_xname);
 	iflib_set_pcpu_cache(ctx, cache);
 	vpcp_set_ifswitch(ctx, iflib_get_ifp(vs->vs_ctx));
 	vs->vs_ifdefault = ifp;
