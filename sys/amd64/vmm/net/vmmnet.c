@@ -298,6 +298,10 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		rc = EEXIST;
 		goto unlock;
 	}
+	if ((flags & VPC_F_CREATE) && (obj_type == VPC_OBJ_PORT)) {
+		rc = EDOOFUS;
+		goto unlock;
+	}
 	if (flags & VPC_F_OPEN) {
 		if (ctx == NULL) {
 			rc = ENOENT;
