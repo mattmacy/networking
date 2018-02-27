@@ -137,6 +137,7 @@ struct vpcsw_softc {
 	vpc_id_t vs_uplink_id;
 	struct mtx vs_vtep_mtx;
 	struct grouptask vs_vtep_gtask;
+	uint32_t vs_vni;
 	bool vs_req_read;
 	/* pad */
 	struct vpcsw_request vs_req_pending;
@@ -555,6 +556,18 @@ vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 	return (NULL);
 }
 
+static int
+vpcsw_object_info_get(if_ctx_t ctx, void *arg, int size)
+{
+	struct vpcsw_softc *vs = iflib_get_softc(ctx);
+	vpc_obj_info_t *voi = arg;
+
+	if (size != sizeof(*voi))
+		return (EBADRPC);
+	voi->vswitch.vni = vs->vs_vni;
+	return (0);
+}
+
 #define VPCSW_CAPS														\
 	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
@@ -964,6 +977,7 @@ static device_method_t vpcsw_if_methods[] = {
 	DEVMETHOD(ifdi_init, vpcsw_init),
 	DEVMETHOD(ifdi_stop, vpcsw_stop),
 	DEVMETHOD(ifdi_knote_event, vpcsw_knote_event),
+	DEVMETHOD(ifdi_object_info_get, vpcsw_object_info_get),
 	DEVMETHOD_END
 };
 
