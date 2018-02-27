@@ -397,7 +397,7 @@ vpcp_port_connect(if_ctx_t ctx, const vpc_id_t *id)
 	vpc_ctx_t vctx;
 
 	vctx = vmmnet_lookup(id);
-	if (vctx != NULL) {
+	if (vctx == NULL) {
 		if (bootverbose)
 			printf("%s no context for %16D found\n",
 				   __func__, id, ":");
