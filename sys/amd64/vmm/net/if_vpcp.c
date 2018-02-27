@@ -311,11 +311,19 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 	ifdev = NULL;
 	baudrate = 0;
 
-	if (vs->vs_type != VPCP_TYPE_NONE)
+	if (vs->vs_type != VPCP_TYPE_NONE &&
+		type != VPCP_TYPE_NONE) {
+		if (bootverbose)
+			printf("%s can't transition directly between port types, vs_type=%x type=%x\n",
+				   __func__, vs->vs_type, type);
 		return (EEXIST);
-
+	}
 	if (type != VPCP_TYPE_NONE) {
 		MPASS(vctx != NULL);
+
+		if (bootverbose)
+			printf("%s transitioning to type=%x\n",
+				   __func__, type);
 
 		ifdev = vctx->v_ifp;
 		if (ifdev->if_bridge != NULL) {
@@ -389,10 +397,19 @@ vpcp_port_connect(if_ctx_t ctx, const vpc_id_t *id)
 	vpc_ctx_t vctx;
 
 	vctx = vmmnet_lookup(id);
-	if (vctx != NULL)
+	if (vctx != NULL) {
+		if (bootverbose)
+			printf("%s no context for %16D found\n",
+				   __func__, id, ":");
 		return (ENOENT);
-	if (vctx->v_ifp == NULL)
+	}
+	if (vctx->v_ifp == NULL) {
+		if (bootverbose)
+			printf("%s %16D not attached\n",
+				   __func__, id, ":");
+
 		return (ENXIO);
+	}
 	return (vpcp_port_type_set(ctx, vctx, vctx->v_obj_type));
 }
 
