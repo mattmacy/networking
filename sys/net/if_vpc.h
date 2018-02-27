@@ -164,25 +164,26 @@ struct vpcrtr_response_v4 {
 	uint8_t vr_dmac[ETHER_ADDR_LEN];
 	uint8_t vr_vpcsw_dmac[ETHER_ADDR_LEN];
 };
+
 typedef struct {
-    int voi_type;
+    int voh_type;
+	vpc_id_t voh_id;
+} vpc_obj_header_t;
+
+typedef struct {
+	vpc_obj_header_t voi_hdr;
     union {
 		struct {
-			vpc_id_t id;
 			uint32_t vni;
 		} vswitch;
 		struct {
-			vpc_id_t id;
 			uint8_t type;
 		} port;
 		struct {
-			vpc_id_t id;
 		} vmnic;
 		struct {
-			vpc_id_t id;
 		} l2link;
 		struct {
-			vpc_id_t id;
 		} vpclink;
 	};
 } vpc_obj_info_t;
@@ -304,11 +305,6 @@ int vpc_rtr_lookupv4(rtr_ctx_t rc, void *key, uint32_t *val);
 int vpc_rtr_lookupv6(rtr_ctx_t rc, void *key, uint32_t *val);
 
 #endif
-enum vpcp_port_type {
-	VPCP_TYPE_NONE,
-	VPCP_TYPE_VMI,
-	VPCP_TYPE_PHYS
-};
 
 enum vpc_obj_type {
 	VPC_OBJ_INVALID = 0,
@@ -403,7 +399,8 @@ enum vpc_mgmt_op_type {
 	VPC_OBJ_MTU_GET = 7,
 	VPC_OBJ_ID_GET = 8,
 	VPC_OBJ_TYPE_COUNT_GET = 9,
-	VPC_META_OP_TYPE_MAX = 9
+	VPC_OBJ_HDR_LIST_GET = 10,
+	VPC_META_OP_TYPE_MAX = 10
 };
 
 enum vpc_l2link_op_type {
@@ -448,6 +445,7 @@ enum vpc_l2link_op_type {
 #define VPC_OBJ_OP_MTU_GET VPC_OP_O(VPC_OBJ_MGMT, VPC_OBJ_MTU_GET)
 #define VPC_OBJ_OP_ID_GET VPC_OP_O(VPC_OBJ_MGMT, VPC_OBJ_ID_GET)
 #define VPC_OBJ_OP_TYPE_COUNT_GET VPC_OP_IO(VPC_OBJ_MGMT, VPC_OBJ_TYPE_COUNT_GET)
+#define VPC_OBJ_OP_HDR_LIST_GET VPC_OP_IO(VPC_OBJ_MGMT, VPC_OBJ_HDR_LIST_GET)
 
 #define VPC_VPCSW_OP_PORT_ADD VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_ADD)
 #define VPC_VPCSW_OP_PORT_DEL VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_PORT_DEL)
