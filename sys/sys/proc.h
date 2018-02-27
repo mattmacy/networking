@@ -60,6 +60,7 @@
 #include <sys/signal.h>
 #include <sys/signalvar.h>
 #include <sys/kdb.h>
+#include <sys/ktr.h>
 #ifndef _KERNEL
 #include <sys/time.h>			/* For structs itimerval, timeval. */
 #else
@@ -1149,6 +1150,12 @@ td_softdep_cleanup(struct thread *td)
 }
 
 void critical_preempt(struct thread *td);
+
+#if 0
+#define	KTR_CRITICAL	KTR_SCHED
+#else
+#define	KTR_CRITICAL	0
+#endif
 
 static inline void
 _critical_enter(void)
