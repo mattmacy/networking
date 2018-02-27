@@ -688,7 +688,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	/* Verify ifnet in table */
 	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) == NULL) {
 		if (bootverbose)
-			printf("port not found\n");
+			printf("port not found -- proceeding to create uplink\n");
 		if_rele(ifp);
 		return (ENOENT);
 	}
