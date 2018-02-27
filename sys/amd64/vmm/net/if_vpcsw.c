@@ -689,7 +689,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	/* Verify ifnet in table */
 	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) == NULL) {
 		if (bootverbose)
-			printf("port not found -- proceeding to create uplink\n");
+			printf("port not found in forward table can't delete %16D\n", vp_id, ":");
 		if_rele(ifp);
 		return (ENOENT);
 	}
@@ -762,6 +762,7 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 		printf("switch uplink set to id: %16D - default: %s\n",
 			   vp_id, ":", ifp->if_xname);
 	iflib_set_pcpu_cache(ctx, cache);
+	iflib_set_mac(ctx, vp_id->node);
 	vpcp_set_ifswitch(ctx, iflib_get_ifp(vs->vs_ctx));
 	vs->vs_ifdefault = ifp;
 	memcpy(&vs->vs_uplink_id, vp_id, sizeof(vpc_id_t));
