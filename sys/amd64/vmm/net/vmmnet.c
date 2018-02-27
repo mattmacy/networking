@@ -136,14 +136,59 @@ struct typecount_info {
 	uint32_t type;
 	uint32_t count;
 };
+
 static int
-vpcd_type_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+vpcd_typecount_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
 	struct typecount_info  *ti = data;
 	struct vpcctx *ctx = value;
 
-	if (ti->type == ctx->v_obj_type)
+	if (ti->type == ctx->v_obj_type || ti->type == VPC_OBJ_MGMT)
 		ti->count++;
+	return (0);
+}
+
+
+struct objget_info {
+	caddr_t ptr;
+	uint32_t max_count;
+	uint32_t count;
+	uint16_t type;
+	/* pad ?*/
+};
+
+#ifdef notyet
+static int
+vpcd_objget_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct objget_info  *oi = data;
+	struct vpcctx *ctx = value;
+	vpc_obj_info_t *voi;
+
+	if (oi->type != ctx->v_obj_type && oi->type != VPC_OBJ_MGMT)
+		return (0);
+	if (oi->count == oi->max_count)
+		return (ENOSPC);
+}
+#endif
+
+static int
+vpcd_hdrget_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct objget_info  *oi = data;
+	struct vpcctx *ctx = value;
+	vpc_obj_header_t *voh;
+
+
+	if (oi->type != ctx->v_obj_type && oi->type != VPC_OBJ_MGMT)
+		return (0);
+	if (oi->count == oi->max_count)
+		return (ENOSPC);
+	voh = (void *)oi->ptr;
+	voh->voh_type = ctx->v_obj_type;
+	memcpy(&voh->voh_id, key, sizeof(vpc_id_t));
+	oi->count++;
+	oi->ptr += sizeof(*voh);
 	return (0);
 }
 
@@ -607,12 +652,12 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			memcpy(id, &ctx->v_id, sizeof(*id));
 			break;
 		}
-		case VPC_OBJ_TYPE_COUNT_GET: {
+		case VPC_OBJ_OP_TYPE_COUNT_GET: {
 			const uint16_t *qtype = in;
 			uint16_t *typecount;
 			struct typecount_info ti;
 
-			if (innbyte != sizeof(uint32_t))
+			if (innbyte != sizeof(uint16_t))
 				return (EBADRPC);
 			if (*outnbyte < sizeof(uint32_t)) {
 				rc = EOVERFLOW;
@@ -623,10 +668,30 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			typecount = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
 			ti.count = 0;
 			VMMNET_LOCK();
-			art_iter(&vpc_uuid_table, vpcd_type_count_callback, &ti);
+			art_iter(&vpc_uuid_table, vpcd_typecount_callback, &ti);
 			VMMNET_UNLOCK();
 			*typecount = ti.count;
 			*outp = typecount;
+		}
+		case VPC_OBJ_OP_HDR_LIST_GET: {
+			const uint16_t *qtype = in;
+			struct objget_info oi;
+
+			if (innbyte != sizeof(uint16_t))
+				return (EBADRPC);
+			if (*outnbyte < sizeof(vpc_obj_header_t)) {
+				rc = EOVERFLOW;
+				goto done;
+			}
+			oi.type = *qtype;
+			oi.count = 0;
+			oi.max_count = *outnbyte/sizeof(vpc_obj_header_t);
+			oi.ptr = malloc(*outnbyte, M_TEMP, M_WAITOK);
+			VMMNET_LOCK();
+			rc = art_iter(&vpc_uuid_table, vpcd_hdrget_callback, &oi);
+			VMMNET_UNLOCK();
+			*outnbyte = oi.count*sizeof(vpc_obj_header_t);
+			*outp = oi.ptr;
 		}
 		default:
 			rc = ENOTSUP;
