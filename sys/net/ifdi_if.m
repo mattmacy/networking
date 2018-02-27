@@ -152,6 +152,10 @@ CODE {
 		      uint16_t _qid __unused, caddr_t *_sdcl __unused)
 	{
 	}
+	static void
+	null_object_info_get(if_ctx_t ctx __unused, void *data __unused, int size __unused)
+	{
+	}
 	static int
 	default_mac_set(if_ctx_t ctx, const uint8_t *mac)
 	{
@@ -181,6 +185,17 @@ METHOD int knote_event {
 	struct knote *_kn;
 	int hint;
 } DEFAULT null_knote_event;
+
+
+#
+# query
+#
+
+METHOD int object_info_get {
+	if_ctx_t _ctx;
+	void *data;
+	int size;
+} DEFAULT null_object_info_get;
 
 #
 # bus interfaces
