@@ -283,7 +283,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		return (EADDRNOTAVAIL);
 	if (obj_type == 0 || obj_type > VPC_OBJ_TYPE_MAX ||
 		obj_type == VPC_OBJ_MGMT) {
-		printf("type->vht_obj_type=%d\n", type->vht_obj_type);
+		printf("obj_type=%d\n", obj_type);
 		return (ENOPROTOOPT);
 	}
 	if ((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0)
@@ -314,8 +314,8 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		refcount_acquire(&ctx->v_refcnt);
 	} else {
 		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK|M_ZERO);
-		ctx->v_ifp = NULL;
-		if (type->vht_obj_type != VPC_OBJ_L2LINK) {
+
+		if (obj_type != VPC_OBJ_L2LINK) {
 			strncpy(buf, if_names[obj_type], IFNAMSIZ-1);
 			rc = if_clone_create(buf, sizeof(buf), NULL);
 			if (rc) {
@@ -653,6 +653,8 @@ sys_vpc_open(struct thread *td, struct vpc_open_args *uap)
 	vpc_id = malloc(sizeof(*vpc_id), M_TEMP, M_WAITOK);
 	if (copyin(uap->vpc_id, vpc_id, sizeof(*vpc_id)))
 		return (EFAULT);
+	if (bootverbose)
+		printf("vpc_id: %16D\n", vpc_id, ":");
 	rc = kern_vpc_open(td, vpc_id, htobe64(uap->obj_type), uap->flags, &vpcd);
 	if (rc)
 		goto done;
