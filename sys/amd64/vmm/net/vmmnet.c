@@ -299,7 +299,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		goto unlock;
 	}
 	if ((flags & VPC_F_CREATE) && (obj_type == VPC_OBJ_PORT)) {
-		rc = EDOOFUS;
+		rc = ENODEV;
 		goto unlock;
 	}
 	if (flags & VPC_F_OPEN) {
