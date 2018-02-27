@@ -92,14 +92,14 @@ struct vpcp_softc {
 	uint32_t vs_vxlanid;
 	uint16_t vs_vlanid;
 	vpc_id_t vs_devid;
-	enum vpcp_port_type vs_type;
+	enum vpc_obj_type vs_type;
 };
 
 static void vpcp_vxlanid_set(if_ctx_t ctx, uint32_t vxlanid);
 static uint32_t vpcp_vxlanid_get(if_ctx_t ctx);
 static void vpcp_vlanid_set(if_ctx_t ctx, uint16_t vlanid);
 static uint16_t vpcp_vlanid_get(if_ctx_t ctx);
-static int vpcp_port_type_set(if_ctx_t ctx, vpc_ctx_t vctx, enum vpcp_port_type type);
+static int vpcp_port_type_set(if_ctx_t ctx, vpc_ctx_t vctx, enum vpc_obj_type type);
 static int clone_count;
 
 static int
@@ -298,11 +298,11 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 }
 
 static int
-vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
+vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 {
 	struct ifnet *ifp, *ifdev;
 	struct vpcp_softc *vs;
-	enum vpcp_port_type prevtype;
+	enum vpc_obj_type prevtype;
 	uint64_t baudrate;
 	int rc;
 
@@ -311,14 +311,14 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 	ifdev = NULL;
 	baudrate = 0;
 
-	if (vs->vs_type != VPCP_TYPE_NONE &&
-		type != VPCP_TYPE_NONE) {
+	if (vs->vs_type != VPC_OBJ_INVALID &&
+		type != VPC_OBJ_INVALID) {
 		if (bootverbose)
 			printf("%s can't transition directly between port types, vs_type=%x type=%x\n",
 				   __func__, vs->vs_type, type);
 		return (EEXIST);
 	}
-	if (type != VPCP_TYPE_NONE) {
+	if (type != VPC_OBJ_INVALID) {
 		MPASS(vctx != NULL);
 
 		if (bootverbose)
@@ -344,7 +344,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 	rc = 0;
 
 	switch (type) {
-		case VPCP_TYPE_NONE:
+		case VPC_OBJ_INVALID:
 			if_settransmitfn(ifp, vpcp_stub_transmit);
 			if_settransmittxqfn(ifp, vpcp_stub_transmit);
 			ifp->if_input = vpcp_stub_input;
@@ -356,7 +356,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 				vs->vs_ifdev = NULL;
 			}
 			break;
-		case VPCP_TYPE_VMI:
+		case VPC_OBJ_VMNIC:
 			if_settransmitfn(ifp, vmi_transmit);
 			if_settransmittxqfn(ifp, vmi_transmit);
 			ifp->if_input = vmi_input;
@@ -364,7 +364,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 			ifdev->if_bridge_input = vmi_bridge_input;
 			ifdev->if_bridge_output = vmi_bridge_output;
 			break;
-		case VPCP_TYPE_PHYS:
+		case VPC_OBJ_L2LINK:
 			if_settransmitfn(ifp, phys_transmit);
 			if_settransmittxqfn(ifp, phys_transmit);
 			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);
@@ -379,7 +379,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpcp_port_type type)
 			rc = EINVAL;
 	}
 	if (!rc) {
-		if (type == VPCP_TYPE_NONE)
+		if (type == VPC_OBJ_INVALID)
 			iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(100));
 		else {
 			iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, baudrate);
@@ -416,7 +416,7 @@ vpcp_port_connect(if_ctx_t ctx, const vpc_id_t *id)
 static int
 vpcp_port_disconnect(if_ctx_t ctx)
 {
-	return (vpcp_port_type_set(ctx, NULL, VPCP_TYPE_NONE));
+	return (vpcp_port_type_set(ctx, NULL, VPC_OBJ_INVALID));
 }
 
 int
@@ -481,7 +481,7 @@ vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 		case VPC_VPCP_OP_PEER_ID_GET: {
 			vpc_id_t *id;
 
-			if (vs->vs_type == VPCP_TYPE_NONE)
+			if (vs->vs_type == VPC_OBJ_INVALID)
 				return (ENXIO);
 			*outlen = sizeof(vpc_id_t);
 			id = malloc(*outlen, M_TEMP, M_WAITOK);
