@@ -642,7 +642,8 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge = vs;
 	ifp->if_bridge_input = vpcsw_bridge_input;
 	ifp->if_bridge_output = vpcsw_bridge_output;
-	printf("storing ifindexp= %d in switch ART for %6D\n", *ifindexp, vp_id->node, ":");
+	if (bootverbose)
+		printf("storing ifindexp= %d in switch ART for %6D\n", *ifindexp, vp_id->node, ":");
 	iflib_set_mac(ctx, vp_id->node);
 	art_insert(vs->vs_ftable_rw, vp_id->node, ifindexp);
 	vmmnet_insert(vp_id, ifp, VPC_OBJ_PORT);
