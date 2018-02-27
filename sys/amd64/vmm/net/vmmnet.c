@@ -698,6 +698,8 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 			rc = EFAULT;
 			goto done;
 		}
+		if (bootverbose && uap->innbyte == 16)
+			printf("ctl in: %16D\n", kin, ":");
 	}
 	if (uap->op & IOC_OUT) {
 		if ((uap->outnbyte == NULL) || (uap->out == NULL)) {
