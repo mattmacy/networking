@@ -186,6 +186,8 @@ vpcd_hdrget_callback(void *data, const unsigned char *key, uint32_t key_len, voi
 		return (ENOSPC);
 	voh = (void *)oi->ptr;
 	voh->voh_type = ctx->v_obj_type;
+	if (ctx->v_ifp)
+		voh->voh_unit = ctx->v_ifp->if_dunit;
 	memcpy(&voh->voh_id, key, sizeof(vpc_id_t));
 	oi->count++;
 	oi->ptr += sizeof(*voh);
@@ -495,7 +497,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			oi.type = *qtype;
 			oi.count = 0;
 			oi.max_count = *outnbyte/sizeof(vpc_obj_header_t);
-			data = malloc(*outnbyte, M_TEMP, M_WAITOK);
+			data = malloc(*outnbyte, M_TEMP, M_WAITOK|M_ZERO);
 			oi.ptr = data;
 			rc = art_iter(&vpc_uuid_table, vpcd_hdrget_callback, &oi);
 			*outnbyte = oi.count*sizeof(vpc_obj_header_t);
