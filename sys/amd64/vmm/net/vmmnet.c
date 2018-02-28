@@ -220,10 +220,8 @@ vpcd_close(struct file *fp, struct thread *td)
 		}
 #endif
 		/* run object dtor */
-		if (ctx->v_obj_type != VPC_OBJ_L2LINK)
+		if (ctx->v_ifp)
 			if_clone_destroy(ctx->v_ifp->if_xname);
-		else if (ctx->v_ifp)
-			if_rele(ctx->v_ifp);
 		free(ctx, M_VMMNET);
 	}
 	VMMNET_UNLOCK();
@@ -360,8 +358,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	} else {
 		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK|M_ZERO);
 
-		if (obj_type != VPC_OBJ_L2LINK &&
-			obj_type != VPC_OBJ_MGMT) {
+		if (obj_type != VPC_OBJ_MGMT) {
 			strncpy(buf, if_names[obj_type], IFNAMSIZ-1);
 			rc = if_clone_create(buf, sizeof(buf), NULL);
 			if (rc) {
@@ -440,32 +437,6 @@ vpcnat_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	return (EOPNOTSUPP);
-}
-
-static int
-l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
-				 size_t *outlen, void **outdata)
-{
-	char buf[IFNAMSIZ];
-	int rc = 0;
-
-	switch (op) {
-		case VPC_L2LINK_OP_ATTACH: {
-			struct ifnet *ifp;
-
-			bzero(buf, IFNAMSIZ);
-			memcpy(buf, in, min(inlen, IFNAMSIZ-1));
-			if ((ifp = ifunit_ref(buf)) == NULL)
-				return (ENOENT);
-			ctx->v_ifp = ifp;
-
-			break;
-		}
-		default:
-			rc = EOPNOTSUPP;
-			break;
-	}
-	return (rc);
 }
 
 int
@@ -656,20 +627,14 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		}
 		case VPC_OBJ_OP_MTU_SET: {
 			if_ctx_t ifctx;
-			struct ifreq ifr;
 			const uint32_t *mtu = in;
 
 			if (innbyte != sizeof(uint32_t)) {
 				rc = EBADRPC;
 				goto done;
 			}
-			if (ctx->v_obj_type == VPC_OBJ_L2LINK) {
-				ifr.ifr_mtu = *mtu;
-				ifp->if_ioctl(ifp, SIOCSIFMTU, (caddr_t)&ifr);
-			} else {
-				ifctx = ifp->if_softc;
-				iflib_set_mtu(ifctx, *mtu);
-			}
+			ifctx = ifp->if_softc;
+			iflib_set_mtu(ifctx, *mtu);
 			break;
 		}
 		case VPC_OBJ_OP_MTU_GET: {
