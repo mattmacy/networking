@@ -333,7 +333,8 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		return (EINVAL);
 	if ((flags & (VPC_F_CREATE|VPC_F_OPEN)) == (VPC_F_CREATE|VPC_F_OPEN))
 		return (EINVAL);
-	if ((flags & VPC_F_CREATE) && (priv_check(td, PRIV_DRIVER) != 0))
+	if ((flags & VPC_F_CREATE) && (obj_type != VPC_OBJ_MGMT) &&
+		(priv_check(td, PRIV_DRIVER) != 0))
 		return (EPERM);
 	VMMNET_LOCK();
 	ctx = art_search(&vpc_uuid_table, (const unsigned char *)vpc_id);
@@ -382,7 +383,8 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		ctx->v_ifp = ifp;
 		ctx->v_obj_type = obj_type;
 		memcpy(&ctx->v_id, vpc_id, sizeof(*vpc_id));
-		art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
+		if (priv_check(td, PRIV_DRIVER) == 0)
+			art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
 #ifdef INVARIANTS
 			{
 				struct vpcctx *tmpctx = art_search(&vpc_uuid_table, (const char *)vpc_id);
@@ -407,7 +409,8 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 				if_rele(ifp);
 				if_clone_destroy(buf);
 			}
-			art_delete(&vpc_uuid_table, (const char *)vpc_id);
+			if (priv_check(td, PRIV_DRIVER) == 0)
+				art_delete(&vpc_uuid_table, (const char *)vpc_id);
 			free(ctx, M_VMMNET);
 		} else
 			refcount_release(&ctx->v_refcnt);
