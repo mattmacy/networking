@@ -326,10 +326,10 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 				   __func__, type);
 
 		ifdev = vctx->v_ifp;
-		if (type == VPC_OBJ_L2LINK) {
+		if (type == VPC_OBJ_ETHLINK) {
 			if_ctx_t ifctx = ifdev->if_softc;
 
-			ifdev = l2link_ifp_get(ifctx);
+			ifdev = ethlink_ifp_get(ifctx);
 		}
 		if (ifdev->if_bridge != NULL) {
 			printf("%s in use\n", ifdev->if_xname);
@@ -369,7 +369,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			ifdev->if_bridge_input = vmi_bridge_input;
 			ifdev->if_bridge_output = vmi_bridge_output;
 			break;
-		case VPC_OBJ_L2LINK:
+		case VPC_OBJ_ETHLINK:
 			if_settransmitfn(ifp, phys_transmit);
 			if_settransmittxqfn(ifp, phys_transmit);
 			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);

@@ -267,7 +267,7 @@ static char *if_names[] = {
 	"vpclink",
 	"vmnic",
 	"NONE",
-	"l2link",
+	"ethlink",
 	"NONE",
 	"NONE"
 };
@@ -516,7 +516,7 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	vpclink_ctl,
 	vmnic_ctl,
 	vpcmgmt_ctl,
-	l2link_ctl
+	ethlink_ctl
 };
 static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
@@ -604,7 +604,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			if_ctx_t ifctx;
 			const uint8_t *mac = in;
 
-			if ((ctx->v_obj_type == VPC_OBJ_L2LINK) ||
+			if ((ctx->v_obj_type == VPC_OBJ_ETHLINK) ||
 				(innbyte != ETHER_ADDR_LEN)) {
 				rc = EBADRPC;
 				goto done;
@@ -807,7 +807,7 @@ filt_vpcattach(struct knote *kn)
 
 	vctx = kn->kn_fp->f_data;
 	if (vctx->v_obj_type == VPC_OBJ_MGMT ||
-		vctx->v_obj_type == VPC_OBJ_L2LINK)
+		vctx->v_obj_type == VPC_OBJ_ETHLINK)
 		return (EBADF);
 	ctx = vctx->v_ifp->if_softc;
 	return (iflib_knlist_add(ctx, kn));
@@ -822,7 +822,7 @@ filt_vpcdetach(struct knote *kn)
 	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
 	vctx = kn->kn_fp->f_data;
 	MPASS(vctx->v_obj_type != VPC_OBJ_SWITCH &&
-		  vctx->v_obj_type != VPC_OBJ_L2LINK);
+		  vctx->v_obj_type != VPC_OBJ_ETHLINK);
 	ctx = vctx->v_ifp->if_softc;
 	iflib_knlist_remove(ctx, kn);
 }
