@@ -100,7 +100,7 @@ vpc_open(const vpc_id_t *vpc_id, vpc_type_t obj_type, vpc_flags_t flags)
 static int
 vpc_ctl(int vpcd, vpc_op_t op, size_t keylen, const void *key, size_t *vallen, void *buf)
 {
-	return syscall(SYS_vpc_ctl, op, keylen, key, vallen, buf);
+	return syscall(SYS_vpc_ctl, vpcd, op, keylen, key, vallen, buf);
 }
 
 #define VTNET_BE_REGSZ		(20 + 4 + 8)	/* virtio + MSI-x + config */
@@ -246,6 +246,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	va.vva_io_start = vbs->vbs_pi->pi_bar[0].addr;
 	va.vva_io_size = VTNET_BE_REGSZ;
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
+	osize = sizeof(nqs);
 	if (vpc_ctl(s, VPC_VMNIC_OP_NQUEUES_GET, 0, NULL, &osize, &nqs))
 		return (errno);
 	if (vpc_ctl(s, VPC_VMNIC_OP_ATTACH, sizeof(va), &va, NULL, NULL))
