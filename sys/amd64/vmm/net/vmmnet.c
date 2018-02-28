@@ -143,7 +143,7 @@ vpcd_typecount_callback(void *data, const unsigned char *key, uint32_t key_len, 
 	struct typecount_info  *ti = data;
 	struct vpcctx *ctx = value;
 
-	if (ti->type == ctx->v_obj_type || ti->type == VPC_OBJ_MGMT)
+	if (ti->type == ctx->v_obj_type || ti->type == VPC_OBJ_TYPE_ANY)
 		ti->count++;
 	return (0);
 }
@@ -165,7 +165,7 @@ vpcd_objget_callback(void *data, const unsigned char *key, uint32_t key_len, voi
 	struct vpcctx *ctx = value;
 	vpc_obj_info_t *voi;
 
-	if (oi->type != ctx->v_obj_type && oi->type != VPC_OBJ_MGMT)
+	if (oi->type != ctx->v_obj_type && oi->type != VPC_OBJ_TYPE_ANY)
 		return (0);
 	if (oi->count == oi->max_count)
 		return (ENOSPC);
@@ -327,7 +327,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	if (ETHER_IS_MULTICAST(vpc_id->node))
 		return (EADDRNOTAVAIL);
 	if (obj_type == 0 || obj_type > VPC_OBJ_TYPE_MAX ||
-		obj_type == VPC_OBJ_MGMT) {
+		obj_type == VPC_OBJ_META || obj_type == VPC_OBJ_TYPE_ANY) {
 		printf("obj_type=%d\n", obj_type);
 		return (ENOPROTOOPT);
 	}
@@ -360,7 +360,8 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	} else {
 		ctx = malloc(sizeof(*ctx), M_VMMNET, M_WAITOK|M_ZERO);
 
-		if (obj_type != VPC_OBJ_L2LINK) {
+		if (obj_type != VPC_OBJ_L2LINK &&
+			obj_type != VPC_OBJ_MGMT) {
 			strncpy(buf, if_names[obj_type], IFNAMSIZ-1);
 			rc = if_clone_create(buf, sizeof(buf), NULL);
 			if (rc) {
@@ -405,8 +406,10 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 	rc = falloc(td, &fp, &fd, fflags);
 	if (rc) {
 		if (flags & VPC_F_CREATE) {
-			if_rele(ifp);
-			if_clone_destroy(buf);
+			if (ifp) {
+				if_rele(ifp);
+				if_clone_destroy(buf);
+			}
 			art_delete(&vpc_uuid_table, (const char *)vpc_id);
 			free(ctx, M_VMMNET);
 		} else
@@ -474,11 +477,56 @@ vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 
 
 static int
-vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
-				 size_t *outlen, void **outdata)
+vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
+				 size_t *outnbyte, void **outp)
 {
-	panic("unreachable");
-	return (0);
+	int rc = 0;
+
+	switch (op) {
+		case VPC_OBJ_OP_TYPE_COUNT_GET: {
+			const uint16_t *qtype = in;
+			uint16_t *typecount;
+			struct typecount_info ti;
+
+			if (innbyte != sizeof(uint16_t))
+				return (EBADRPC);
+			if (*outnbyte < sizeof(uint32_t))
+				return (EOVERFLOW);
+
+			ti.type = *qtype;
+			*outnbyte = sizeof(uint16_t);
+			typecount = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
+			ti.count = 0;
+			VMMNET_LOCK();
+			art_iter(&vpc_uuid_table, vpcd_typecount_callback, &ti);
+			VMMNET_UNLOCK();
+			*typecount = ti.count;
+			*outp = typecount;
+		}
+		case VPC_OBJ_OP_HDR_LIST_GET: {
+			const uint16_t *qtype = in;
+			struct objget_info oi;
+
+			if (innbyte != sizeof(uint16_t))
+				return (EBADRPC);
+			if (*outnbyte < sizeof(vpc_obj_header_t))
+				return (EOVERFLOW);
+
+			oi.type = *qtype;
+			oi.count = 0;
+			oi.max_count = *outnbyte/sizeof(vpc_obj_header_t);
+			oi.ptr = malloc(*outnbyte, M_TEMP, M_WAITOK);
+			VMMNET_LOCK();
+			rc = art_iter(&vpc_uuid_table, vpcd_hdrget_callback, &oi);
+			VMMNET_UNLOCK();
+			*outnbyte = oi.count*sizeof(vpc_obj_header_t);
+			*outp = oi.ptr;
+		}
+		default:
+			rc = ENOTSUP;
+			break;
+	}
+	return (rc);
 }
 
 static vpc_ctl_fn vpc_ctl_dispatch[] = {
@@ -527,7 +575,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		goto done;
 	}
 	ctx = fp->f_data;
-	if ((objtype != VPC_OBJ_MGMT) && (ctx->v_obj_type != objtype)) {
+	if ((objtype != VPC_OBJ_META) && (ctx->v_obj_type != objtype)) {
 		rc = ENODEV;
 		goto done;
 	}
@@ -539,7 +587,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		rc = EPERM;
 		goto done;
 	}
-	if (objtype != VPC_OBJ_MGMT) {
+	if (objtype != VPC_OBJ_META) {
 		VMMNET_LOCK();
 		rc = vpc_ctl_dispatch[objtype]((vpc_ctx_t)ctx, op, innbyte, in, outnbyte, outp);
 		VMMNET_UNLOCK();
@@ -651,47 +699,6 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			id = malloc(sizeof(*id), M_TEMP, M_WAITOK);
 			memcpy(id, &ctx->v_id, sizeof(*id));
 			break;
-		}
-		case VPC_OBJ_OP_TYPE_COUNT_GET: {
-			const uint16_t *qtype = in;
-			uint16_t *typecount;
-			struct typecount_info ti;
-
-			if (innbyte != sizeof(uint16_t))
-				return (EBADRPC);
-			if (*outnbyte < sizeof(uint32_t)) {
-				rc = EOVERFLOW;
-				goto done;
-			}
-			ti.type = *qtype;
-			*outnbyte = sizeof(uint16_t);
-			typecount = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
-			ti.count = 0;
-			VMMNET_LOCK();
-			art_iter(&vpc_uuid_table, vpcd_typecount_callback, &ti);
-			VMMNET_UNLOCK();
-			*typecount = ti.count;
-			*outp = typecount;
-		}
-		case VPC_OBJ_OP_HDR_LIST_GET: {
-			const uint16_t *qtype = in;
-			struct objget_info oi;
-
-			if (innbyte != sizeof(uint16_t))
-				return (EBADRPC);
-			if (*outnbyte < sizeof(vpc_obj_header_t)) {
-				rc = EOVERFLOW;
-				goto done;
-			}
-			oi.type = *qtype;
-			oi.count = 0;
-			oi.max_count = *outnbyte/sizeof(vpc_obj_header_t);
-			oi.ptr = malloc(*outnbyte, M_TEMP, M_WAITOK);
-			VMMNET_LOCK();
-			rc = art_iter(&vpc_uuid_table, vpcd_hdrget_callback, &oi);
-			VMMNET_UNLOCK();
-			*outnbyte = oi.count*sizeof(vpc_obj_header_t);
-			*outp = oi.ptr;
 		}
 		default:
 			rc = ENOTSUP;
