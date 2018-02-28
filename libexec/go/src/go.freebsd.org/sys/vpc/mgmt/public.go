@@ -1,4 +1,4 @@
-// Go interface to Layer-2 Network Link objects.
+// Go interface to VPC Management operations.
 //
 // SPDX-License-Identifier: BSD-2-Clause-FreeBSD
 //
@@ -27,7 +27,7 @@
 // OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 // SUCH DAMAGE.
 
-package l2link
+package mgmt
 
 import (
 	"github.com/pkg/errors"
@@ -35,77 +35,58 @@ import (
 	"go.freebsd.org/sys/vpc"
 )
 
-// Config is the configuration used to populate a given L2 Link.
+// Config is the configuration used to populate a given VPC Management Open call.
 type Config struct {
-	ID   vpc.ID
-	Name string
+	ID        *vpc.ID
+	Writeable bool
 }
 
 func (c Config) MarshalZerologObject(e *zerolog.Event) {
-	e.Str("id", c.ID.String()).
-		Str("name", c.Name)
+	e.
+		Str("id", c.ID.String()).
+		Bool("writable", c.Writeable)
 }
 
-// L2Link is an opaque struct representing a VM NIC.
-type L2Link struct {
-	h    *vpc.Handle
-	ht   vpc.HandleType
-	id   vpc.ID
-	name string
+// Mgmt is an opaque struct representing a VPC Management Handle.
+type Mgmt struct {
+	h  *vpc.Handle
+	ht vpc.HandleType
+	id vpc.ID
 }
 
-// Create VPC facade over an existing L2 link (either physical or cloned
-// interface) using the Config parameters.  Callers are expected to Close a
-// given L2Link (otherwise a file descriptor would leak).
-func Create(cfg Config) (*L2Link, error) {
+// New creates a new Management handle.  Callers are expected to Close a given
+// Mgmt (otherwise a file descriptor would leak).
+func New(cfg *Config) (*Mgmt, error) {
+	if cfg == nil {
+		cfg = &Config{}
+	}
+
+	if cfg.ID == nil {
+		id := vpc.GenID()
+		cfg.ID = &id
+	}
+
 	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
 		Version: 1,
-		Type:    vpc.ObjTypeLinkL2,
+		Type:    vpc.ObjTypeMgmt,
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to create a new L2 Link handle type")
+		return nil, errors.Wrap(err, "unable to create a new VPC Management handle type")
 	}
 
-	h, err := vpc.Open(cfg.ID, ht, vpc.FlagCreate|vpc.FlagWrite)
+	flags := vpc.FlagRead | vpc.FlagCreate
+	if cfg.Writeable {
+		flags |= vpc.FlagWrite
+	}
+
+	h, err := vpc.Open(*cfg.ID, ht, flags)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to open L2 Link handle")
+		return nil, errors.Wrap(err, "unable to open VPC Management handle")
 	}
 
-	return &L2Link{
-		h:    h,
-		ht:   ht,
-		id:   cfg.ID,
-		name: cfg.Name,
+	return &Mgmt{
+		h:  h,
+		ht: ht,
+		id: *cfg.ID,
 	}, nil
-}
-
-// Open opens an existing L2 Link using the Config parameters.  Callers are
-// expected to Close a given L2Link.
-func Open(cfg Config) (*L2Link, error) {
-	ht, err := vpc.NewHandleType(vpc.HandleTypeInput{
-		Version: 1,
-		Type:    vpc.ObjTypeLinkL2,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to create a new L2 Link handle type")
-	}
-
-	h, err := vpc.Open(cfg.ID, ht, vpc.FlagOpen|vpc.FlagRead|vpc.FlagWrite)
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to open L2 Link handle")
-	}
-
-	return &L2Link{
-		h:    h,
-		ht:   ht,
-		id:   cfg.ID,
-		name: cfg.Name,
-	}, nil
-}
-
-func (l2 L2Link) MarshalZerologObject(e *zerolog.Event) {
-	e.Str("id", l2.id.String()).
-		Str("name", l2.name).
-		Object("handle-type", l2.ht).
-		Object("handle", l2.h)
 }
