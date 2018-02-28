@@ -213,8 +213,9 @@ vpcd_close(struct file *fp, struct thread *td)
 	VMMNET_LOCK();
 	if (refcount_release(&ctx->v_refcnt)) {
 		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
+
 #ifdef INVARIANTS
-		if (value != ctx) {
+		if (ctx->v_obj_type != VPC_OBJ_MGMT && value != ctx) {
 			printf("%16D  --- vpc_id not found\n", &ctx->v_id, ":");
 			vpcd_print_uuids();
 		}
