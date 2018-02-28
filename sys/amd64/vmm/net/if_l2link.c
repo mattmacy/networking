@@ -64,12 +64,12 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
-static MALLOC_DEFINE(M_L2LINK, "l2link", "virtual private cloud interface");
+static MALLOC_DEFINE(M_ETHLINK, "ethlink", "virtual private cloud interface");
 
 
-#define L2LINK_DEBUG
+#define ETHLINK_DEBUG
 
-#ifdef L2LINK_DEBUG
+#ifdef ETHLINK_DEBUG
 #define  DPRINTF printf
 #else
 #define DPRINTF(...)
@@ -77,12 +77,12 @@ static MALLOC_DEFINE(M_L2LINK, "l2link", "virtual private cloud interface");
 
 
 /*
- * ifconfig l2link0 create
- * ifconfig l2link0 192.168.0.100
- * ifconfig l2link0 attach vpc0
+ * ifconfig ethlink0 create
+ * ifconfig ethlink0 192.168.0.100
+ * ifconfig ethlink0 attach vpc0
  */
 
-struct l2link_softc {
+struct ethlink_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	struct ifnet *ls_ifp;
@@ -91,55 +91,55 @@ struct l2link_softc {
 static int clone_count;
 
 static int
-l2link_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+ethlink_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 {
 	return (0);
 }
 
 static int
-l2link_transmit(if_t ifp, struct mbuf *m)
+ethlink_transmit(if_t ifp, struct mbuf *m)
 {
 	panic("%s should not be called\n", __func__);
 	return (0);
 }
 
-#define L2LINK_CAPS														\
+#define ETHLINK_CAPS														\
 	IFCAP_TSO | IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | \
 	IFCAP_LINKSTATE
 
 static int
-l2link_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
+ethlink_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
-	struct l2link_softc *vs = iflib_get_softc(ctx);
+	struct ethlink_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
 	atomic_add_int(&clone_count, 1);
 	vs->vs_ctx = ctx;
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
-	scctx->isc_capenable = L2LINK_CAPS;
+	scctx->isc_capenable = ETHLINK_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
 		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	return (0);
 }
 
 static int
-l2link_attach_post(if_ctx_t ctx)
+ethlink_attach_post(if_ctx_t ctx)
 {
 	struct ifnet *ifp;
 
 	ifp = iflib_get_ifp(ctx);
-	if_settransmitfn(ifp, l2link_transmit);
-	if_settransmittxqfn(ifp, l2link_transmit);
-	if_setmbuftoqidfn(ifp, l2link_mbuf_to_qid);
+	if_settransmitfn(ifp, ethlink_transmit);
+	if_settransmittxqfn(ifp, ethlink_transmit);
+	if_setmbuftoqidfn(ifp, ethlink_mbuf_to_qid);
 	return (0);
 }
 
 static int
-l2link_detach(if_ctx_t ctx)
+ethlink_detach(if_ctx_t ctx)
 {
-	struct l2link_softc *ls = iflib_get_softc(ctx);
+	struct ethlink_softc *ls = iflib_get_softc(ctx);
 
 	if (ls->ls_ifp != NULL)
 		if_rele(ls->ls_ifp);
@@ -150,30 +150,30 @@ l2link_detach(if_ctx_t ctx)
 }
 
 static void
-l2link_init(if_ctx_t ctx)
+ethlink_init(if_ctx_t ctx)
 {
 }
 
 static void
-l2link_stop(if_ctx_t ctx)
+ethlink_stop(if_ctx_t ctx)
 {
 }
 
 
 struct ifnet *
-l2link_ifp_get(if_ctx_t ctx)
+ethlink_ifp_get(if_ctx_t ctx)
 {
-	struct l2link_softc *ls = iflib_get_softc(ctx);
+	struct ethlink_softc *ls = iflib_get_softc(ctx);
 
 	return (ls->ls_ifp);
 }
 
 int
-l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	if_ctx_t ifctx = ctx->v_ifp->if_softc;
-	struct l2link_softc *ls;
+	struct ethlink_softc *ls;
 	struct sockaddr_dl *sdl;
 	char buf[IFNAMSIZ];
 	int rc;
@@ -182,7 +182,7 @@ l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	rc = 0;
 	ls = iflib_get_softc(ifctx);
 	switch (op) {
-		case VPC_L2LINK_OP_ATTACH: {
+		case VPC_ETHLINK_OP_ATTACH: {
 			struct ifnet *ifp;
 
 			bzero(buf, IFNAMSIZ);
@@ -209,61 +209,61 @@ l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	return (rc);
 }
 
-static device_method_t l2link_if_methods[] = {
-	DEVMETHOD(ifdi_cloneattach, l2link_cloneattach),
-	DEVMETHOD(ifdi_attach_post, l2link_attach_post),
-	DEVMETHOD(ifdi_detach, l2link_detach),
-	DEVMETHOD(ifdi_init, l2link_init),
-	DEVMETHOD(ifdi_stop, l2link_stop),
+static device_method_t ethlink_if_methods[] = {
+	DEVMETHOD(ifdi_cloneattach, ethlink_cloneattach),
+	DEVMETHOD(ifdi_attach_post, ethlink_attach_post),
+	DEVMETHOD(ifdi_detach, ethlink_detach),
+	DEVMETHOD(ifdi_init, ethlink_init),
+	DEVMETHOD(ifdi_stop, ethlink_stop),
 	DEVMETHOD_END
 };
 
-static driver_t l2link_iflib_driver = {
-	"l2link", l2link_if_methods, sizeof(struct l2link_softc)
+static driver_t ethlink_iflib_driver = {
+	"ethlink", ethlink_if_methods, sizeof(struct ethlink_softc)
 };
 
-char l2link_driver_version[] = "0.0.1";
+char ethlink_driver_version[] = "0.0.1";
 
-static struct if_shared_ctx l2link_sctx_init = {
+static struct if_shared_ctx ethlink_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
-	.isc_driver_version = l2link_driver_version,
-	.isc_driver = &l2link_iflib_driver,
+	.isc_driver_version = ethlink_driver_version,
+	.isc_driver = &ethlink_iflib_driver,
 	.isc_flags = IFLIB_PSEUDO,
-	.isc_name = "l2link",
+	.isc_name = "ethlink",
 };
 
-if_shared_ctx_t l2link_sctx = &l2link_sctx_init;
+if_shared_ctx_t ethlink_sctx = &ethlink_sctx_init;
 
 
-static if_pseudo_t l2link_pseudo;	
+static if_pseudo_t ethlink_pseudo;
 
 static int
-l2link_module_init(void)
+ethlink_module_init(void)
 {
-	l2link_pseudo = iflib_clone_register(l2link_sctx);
+	ethlink_pseudo = iflib_clone_register(ethlink_sctx);
 
-	return l2link_pseudo != NULL ? 0 : ENXIO;
+	return ethlink_pseudo != NULL ? 0 : ENXIO;
 }
 
 static void
-l2link_module_deinit(void)
+ethlink_module_deinit(void)
 {
-	iflib_clone_deregister(l2link_pseudo);
+	iflib_clone_deregister(ethlink_pseudo);
 }
 
 static int
-l2link_module_event_handler(module_t mod, int what, void *arg)
+ethlink_module_event_handler(module_t mod, int what, void *arg)
 {
 	int err;
 
 	switch (what) {
 	case MOD_LOAD:
-		if ((err = l2link_module_init()) != 0)
+		if ((err = ethlink_module_init()) != 0)
 			return (err);
 		break;
 	case MOD_UNLOAD:
 		if (clone_count == 0)
-			l2link_module_deinit();
+			ethlink_module_deinit();
 		else
 			return (EBUSY);
 		break;
@@ -274,12 +274,12 @@ l2link_module_event_handler(module_t mod, int what, void *arg)
 	return (0);
 }
 
-static moduledata_t l2link_moduledata = {
-	"l2link",
-	l2link_module_event_handler,
+static moduledata_t ethlink_moduledata = {
+	"ethlink",
+	ethlink_module_event_handler,
 	NULL
 };
 
-DECLARE_MODULE(l2link, l2link_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
-MODULE_VERSION(l2link, 1);
-MODULE_DEPEND(l2link, iflib, 1, 1, 1);
+DECLARE_MODULE(ethlink, ethlink_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
+MODULE_VERSION(ethlink, 1);
+MODULE_DEPEND(ethlink, iflib, 1, 1, 1);

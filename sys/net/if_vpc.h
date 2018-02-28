@@ -182,7 +182,7 @@ typedef struct {
 		struct {
 		} vmnic;
 		struct {
-		} l2link;
+		} ethlink;
 		struct {
 		} vpclink;
 	};
@@ -288,11 +288,11 @@ int vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 int vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				size_t *outlen, void **outdata);
 
-int l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+int ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			   size_t *outlen, void **outdata);
 
 
-struct ifnet *l2link_ifp_get(if_ctx_t ctx);
+struct ifnet *ethlink_ifp_get(if_ctx_t ctx);
 
 rtr_ctx_t vpc_rtr_ctx_alloc(void);
 void vpc_rtr_ctx_free(rtr_ctx_t rc);
@@ -320,7 +320,7 @@ enum vpc_obj_type {
 	VPC_OBJ_VPCLINK = 5,
 	VPC_OBJ_VMNIC = 6,
 	VPC_OBJ_MGMT = 7,
-	VPC_OBJ_L2LINK = 8,
+	VPC_OBJ_ETHLINK = 8,
 	VPC_OBJ_META = 9,
 	VPC_OBJ_TYPE_ANY = 10,
 	VPC_OBJ_TYPE_MAX = 10,
@@ -416,10 +416,10 @@ enum vpc_mgmt_op_type {
 	VPC_MGMT_OP_TYPE_MAX = 2
 };
 
-enum vpc_l2link_op_type {
-	VPC_L2LINK_INVALID = 0,
-	VPC_L2LINK_ATTACH = 1,
-	VPC_L2LINK_MAX = 1,
+enum vpc_ethlink_op_type {
+	VPC_ETHLINK_INVALID = 0,
+	VPC_ETHLINK_ATTACH = 1,
+	VPC_ETHLINK_MAX = 1,
 };
 
 #define IOC_MUT IOC_VOID
@@ -492,7 +492,7 @@ enum vpc_l2link_op_type {
 
 #define VPC_VPCP_OP_PEER_ID_GET VPC_OP_O(VPC_OBJ_PORT, VPC_VPCP_PEER_ID_GET)
 
-#define VPC_L2LINK_OP_ATTACH VPC_OP_IMP(VPC_OBJ_L2LINK, VPC_L2LINK_ATTACH)
+#define VPC_ETHLINK_OP_ATTACH VPC_OP_IMP(VPC_OBJ_ETHLINK, VPC_ETHLINK_ATTACH)
 
 #define VPC_F_CREATE (1ULL << 0)
 #define VPC_F_OPEN (1ULL << 1)
