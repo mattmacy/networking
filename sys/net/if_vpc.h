@@ -288,6 +288,11 @@ int vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 int vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				size_t *outlen, void **outdata);
 
+int l2link_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+			   size_t *outlen, void **outdata);
+
+
+struct ifnet *l2link_ifp_get(if_ctx_t ctx);
 
 rtr_ctx_t vpc_rtr_ctx_alloc(void);
 void vpc_rtr_ctx_free(rtr_ctx_t rc);

@@ -326,6 +326,11 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 				   __func__, type);
 
 		ifdev = vctx->v_ifp;
+		if (type == VPC_OBJ_L2LINK) {
+			if_ctx_t ifctx = ifdev->if_softc;
+
+			ifdev = l2link_ifp_get(ifctx);
+		}
 		if (ifdev->if_bridge != NULL) {
 			printf("%s in use\n", ifdev->if_xname);
 			return (EINVAL);
