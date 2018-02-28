@@ -485,6 +485,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 		case VPC_OBJ_OP_HDR_GET_ALL: {
 			const uint16_t *qtype = in;
 			struct objget_info oi;
+			void *data;
 
 			if (innbyte != sizeof(uint16_t))
 				return (EBADRPC);
@@ -494,10 +495,11 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			oi.type = *qtype;
 			oi.count = 0;
 			oi.max_count = *outnbyte/sizeof(vpc_obj_header_t);
-			oi.ptr = malloc(*outnbyte, M_TEMP, M_WAITOK);
+			data = malloc(*outnbyte, M_TEMP, M_WAITOK);
+			oi.ptr = data;
 			rc = art_iter(&vpc_uuid_table, vpcd_hdrget_callback, &oi);
 			*outnbyte = oi.count*sizeof(vpc_obj_header_t);
-			*outp = oi.ptr;
+			*outp = data;
 			break;
 		}
 		default:
