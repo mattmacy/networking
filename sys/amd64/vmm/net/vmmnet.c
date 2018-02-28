@@ -482,6 +482,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			VMMNET_UNLOCK();
 			*typecount = ti.count;
 			*outp = typecount;
+			break;
 		}
 		case VPC_OBJ_OP_HDR_GET_ALL: {
 			const uint16_t *qtype = in;
@@ -501,6 +502,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			VMMNET_UNLOCK();
 			*outnbyte = oi.count*sizeof(vpc_obj_header_t);
 			*outp = oi.ptr;
+			break;
 		}
 		default:
 			rc = ENOTSUP;
