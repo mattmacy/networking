@@ -397,6 +397,7 @@ enum vpc_vmnic_op_type {
 };
 
 enum vpc_meta_op_type {
+	VPC_META_INVALID = 0,
 	VPC_OBJ_DESTROY = 1,
 	VPC_OBJ_TYPE_GET = 2,
 	VPC_OBJ_COMMIT = 3,
@@ -409,8 +410,9 @@ enum vpc_meta_op_type {
 };
 
 enum vpc_mgmt_op_type {
+	VPC_MGMT_INVALID = 0,
 	VPC_OBJ_TYPE_COUNT_GET = 1,
-	VPC_OBJ_HDR_LIST_GET = 2,
+	VPC_OBJ_HDR_GET_ALL = 2,
 	VPC_MGMT_OP_TYPE_MAX = 2
 };
 
@@ -448,7 +450,7 @@ enum vpc_l2link_op_type {
 #define VPC_OBJ_OP(op) ((op) & ((1<<16)-1))
 
 #define VPC_OBJ_OP_TYPE_COUNT_GET VPC_OP_IO(VPC_OBJ_MGMT, VPC_OBJ_TYPE_COUNT_GET)
-#define VPC_OBJ_OP_HDR_LIST_GET VPC_OP_IO(VPC_OBJ_MGMT, VPC_OBJ_HDR_LIST_GET)
+#define VPC_OBJ_OP_HDR_GET_ALL VPC_OP_IO(VPC_OBJ_MGMT, VPC_OBJ_HDR_GET_ALL)
 
 #define VPC_OBJ_OP_DESTROY VPC_OP_MP(VPC_OBJ_META, VPC_OBJ_DESTROY)
 #define VPC_OBJ_OP_TYPE_GET VPC_OP_O(VPC_OBJ_META, VPC_OBJ_TYPE_GET)

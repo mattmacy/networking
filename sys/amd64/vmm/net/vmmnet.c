@@ -474,7 +474,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			*typecount = ti.count;
 			*outp = typecount;
 		}
-		case VPC_OBJ_OP_HDR_LIST_GET: {
+		case VPC_OBJ_OP_HDR_GET_ALL: {
 			const uint16_t *qtype = in;
 			struct objget_info oi;
 
