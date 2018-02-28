@@ -738,6 +738,8 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 		return (ENXIO);
 	if (uap->op & IOC_IN) {
 		if (uap->innbyte == 0) {
+			if (bootverbose)
+				printf("IOC_IN set but innbyte == 0\n");
 			return (EFAULT);
 		}
 		kin = malloc(uap->innbyte, M_TEMP, M_WAITOK);
