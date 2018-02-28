@@ -166,7 +166,7 @@ struct vpcrtr_response_v4 {
 };
 
 typedef struct {
-    int voh_type;
+	uint32_t voh_type;
 	vpc_id_t voh_id;
 } vpc_obj_header_t;
 
