@@ -55,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #endif
 #include <sys/cpuset.h>
 #include <sys/syscall.h>
+#include <sys/endian.h>
 
 #include <net/ethernet.h>
 #include <net/if.h>
@@ -194,6 +195,7 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 	char *mac, *input, *token;
 	int id;
 	uint32_t status;
+	struct uuid uuidtmp;
 
 	if (opts == NULL)
 		return (1);
@@ -205,7 +207,10 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 		id = strtype(token);
 		switch(id) {
 			case KW_ID:
-				uuid_from_string(tokenval(token), &vbs->vbs_id, &status);
+				uuid_from_string(tokenval(token), &uuidtmp, &status);
+				if (status != uuid_s_ok)
+					return (1);
+				uuid_enc_be(&vbs->vbs_id, &uuidtmp);
 				break;
 			default:
 				printf("bad value to kvirtio %s", token);
@@ -222,11 +227,18 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	int s;
 	size_t osize;
 	uint16_t nqs;
+	uint64_t type;
+	vpc_handle_type_t *typep;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
 #endif
 
-	if ((s = vpc_open(&vbs->vbs_id, VPC_OBJ_VMNIC, VPC_F_OPEN)) < 0)
+	type = 0;
+	typep = (void *)&type;
+	typep->vht_version = 1;
+	typep->vht_obj_type = VPC_OBJ_VMNIC;
+	type = htobe64(type);
+	if ((s = vpc_open(&vbs->vbs_id, type, VPC_F_WRITE|VPC_F_OPEN)) < 0)
 		return (errno);
 	vbs->vbs_fd = s;
 	bzero(&va, sizeof(va));
