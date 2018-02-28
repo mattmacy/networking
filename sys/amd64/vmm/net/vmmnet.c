@@ -387,7 +387,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		ctx->v_ifp = ifp;
 		ctx->v_obj_type = obj_type;
 		memcpy(&ctx->v_id, vpc_id, sizeof(*vpc_id));
-		if (priv_check(td, PRIV_DRIVER) == 0)
+		if (priv_check(td, PRIV_DRIVER) == 0) {
 			art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
 #ifdef INVARIANTS
 			{
@@ -397,6 +397,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 				MPASS(tmpctx == ctx);
 			}
 #endif
+		}
 	}
 
 	fflags = O_CLOEXEC;
