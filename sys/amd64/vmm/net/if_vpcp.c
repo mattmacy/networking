@@ -709,6 +709,6 @@ static moduledata_t vpcp_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(vpcp, vpcp_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+DECLARE_MODULE(vpcp, vpcp_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(vpcp, 1);
 MODULE_DEPEND(vpcp, iflib, 1, 1, 1);

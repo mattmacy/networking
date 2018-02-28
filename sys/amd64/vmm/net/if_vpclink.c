@@ -1021,6 +1021,6 @@ static moduledata_t vpclink_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(vpclink, vpclink_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+DECLARE_MODULE(vpclink, vpclink_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(vpclink, 1);
 MODULE_DEPEND(vpclink, iflib, 1, 1, 1);

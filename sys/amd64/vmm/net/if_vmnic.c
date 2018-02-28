@@ -2025,7 +2025,6 @@ static moduledata_t vmnic_moduledata = {
 	vmnic_module_event_handler,
 	NULL
 };
-
 DECLARE_MODULE(vmnic, vmnic_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(vmnic, 1);
 MODULE_DEPEND(vmnic, iflib, 1, 1, 1);
