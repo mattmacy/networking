@@ -135,6 +135,8 @@ static MALLOC_DEFINE(M_VTNETBE, "vtnetbe", "virtio-net backend");
 
 static volatile int32_t modrefcnt;
 
+#define DEVEL_BRINGUP
+
 #ifdef VB_STATUS_DEBUG
 #define SDPRINTF printf
 #else
@@ -1775,9 +1777,14 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			break;
 		}
 		case VPC_VMNIC_OP_ATTACH: {
+#ifdef DEVEL_BRINGUP
+			iflib_set_mtu(ctx, 1500);
+#else
 			if (!(vs->vs_flags & VS_IMMUTABLE))
 				return (EINPROGRESS);
+#endif
 			rc = vb_vm_deferred_attach(vs, in);
+			break;
 		}
 		case VPC_VMNIC_OP_MSIX:
 			rc = vb_dev_msix(vs, (const struct vb_msix *)in, inlen);
