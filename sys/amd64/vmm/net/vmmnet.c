@@ -737,10 +737,13 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 	if (objtype == 0 || objtype > VPC_OBJ_TYPE_MAX)
 		return (ENXIO);
 	if (uap->op & IOC_IN) {
-		if (uap->innbyte == 0)
+		if (uap->innbyte == 0) {
 			return (EFAULT);
+		}
 		kin = malloc(uap->innbyte, M_TEMP, M_WAITOK);
 		if (copyin(uap->in, kin, uap->innbyte)) {
+			if (bootverbose)
+				printf("copyin %p failed\n", uap->in);
 			rc = EFAULT;
 			goto done;
 		}
@@ -749,10 +752,16 @@ sys_vpc_ctl(struct thread *td, struct vpc_ctl_args *uap)
 	}
 	if (uap->op & IOC_OUT) {
 		if ((uap->outnbyte == NULL) || (uap->out == NULL)) {
+			if (bootverbose)
+				printf("IOC_OUT set but parameters are outnbyte: %p out: %p\n",
+					   uap->outnbyte, uap->out);
 			rc = EFAULT;
 			goto done;
 		}
 		if (copyin(uap->outnbyte, &koutlen, sizeof(size_t))) {
+			if (bootverbose)
+				printf("IOC_OUT set copyin of nbyte: %p failed\n",
+					   uap->outnbyte);
 			rc = EFAULT;
 			goto done;
 		}
