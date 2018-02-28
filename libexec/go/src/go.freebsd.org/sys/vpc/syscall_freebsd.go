@@ -45,6 +45,16 @@ const (
 	SysVPCCtl = 581
 )
 
+// Ctl manipulates the Handle based on the args
+func Ctl(h *Handle, cmd Cmd, in []byte, out []byte) error {
+	// TODO(seanc@): Potential concurrency optimization if we conditionalize the
+	// type of lock based on the bits encoded in Cmd.
+	h.lock.Lock()
+	defer h.lock.Unlock()
+
+	return ctl(h, cmd, in, out)
+}
+
 // Open obtains a VPC handle to a given object type.  Obtaining an open Handle
 // affords no privilges beyond validating that an ID exists on this system.  In
 // all other cases Open returns a handle to a resource.  If the id can not be
@@ -68,17 +78,8 @@ func Open(id ID, ht HandleType, flags OpenFlags) (h *Handle, err error) {
 	return h, nil
 }
 
-// Ctl manipulates the Handle based on the args
-func Ctl(h *Handle, cmd Cmd, in []byte, out *[]byte) error {
-	// TODO(seanc@): Potential concurrency optimization if we conditionalize the
-	// type of lock based on the bits encoded in Cmd.
-	h.lock.Lock()
-	defer h.lock.Unlock()
 
-	return ctl(h, cmd, in, out)
-}
-
-func ctl(h *Handle, cmd Cmd, in []byte, out *[]byte) error {
+func ctl(h *Handle, cmd Cmd, in []byte, out []byte) error {
 	// Implementation sanity checking
 	switch {
 	case cmd.In() && len(in) == 0:
@@ -97,17 +98,21 @@ func ctl(h *Handle, cmd Cmd, in []byte, out *[]byte) error {
 			uintptr(0), uintptr(0),
 			uintptr(0), uintptr(0))
 	case len(in) != 0 && out != nil:
+		sz := uint64(len(out))
 		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(len(in)), uintptr(unsafe.Pointer(&in[0])),
-			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
+			uintptr(unsafe.Pointer(&sz)), uintptr(unsafe.Pointer(&out[0])))
+		out = out[:sz]
 	case len(in) != 0 && out == nil:
 		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(len(in)), uintptr(unsafe.Pointer(&in[0])),
 			uintptr(0), uintptr(0))
 	case len(in) == 0 && out != nil:
+		sz := uint64(len(out))
 		r1, _, e1 = syscall.Syscall6(SysVPCCtl, uintptr(h.fd), uintptr(cmd),
 			uintptr(0), uintptr(0),
-			uintptr(len(*out)), uintptr(unsafe.Pointer(&(*out)[0])))
+			uintptr(unsafe.Pointer(&sz)), uintptr(unsafe.Pointer(&out[0])))
+		out = out[:sz]
 	default:
 		panic(fmt.Sprintf("invalid args to vpc.Ctl()\ncmd: %x\nin: %q\nout: %v", cmd, in, out))
 	}
