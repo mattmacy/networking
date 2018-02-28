@@ -265,6 +265,10 @@ static char *if_names[] = {
 	"vpcnat",
 	"vpclink",
 	"vmnic",
+	"NONE",
+	"l2link",
+	"NONE",
+	"NONE"
 };
 
 int
