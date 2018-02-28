@@ -101,13 +101,6 @@ struct vpcctx {
 	uint32_t v_flags;
 };
 
-typedef struct {
-	uint64_t vht_version:4;
-	uint64_t vht_pad1:4;
-	uint64_t vht_obj_type:8;
-	uint64_t vht_pad2:48;
-} vpc_handle_type_t;
-
 static fo_close_t vpcd_close;
 static fo_stat_t vpcd_stat;
 static fo_fill_kinfo_t vpcd_fill_kinfo;
@@ -333,7 +326,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		return (EADDRNOTAVAIL);
 	if (obj_type == 0 || obj_type > VPC_OBJ_TYPE_MAX ||
 		obj_type == VPC_OBJ_META || obj_type == VPC_OBJ_TYPE_ANY) {
-		printf("obj_type=%d\n", obj_type);
+		printf("obj_type=%d obj_type_full=%lx\n", obj_type, obj_type_full);
 		return (ENOPROTOOPT);
 	}
 	if ((flags & (VPC_F_CREATE|VPC_F_OPEN)) == 0)

@@ -190,6 +190,13 @@ typedef struct {
 } vpc_obj_info_t;
 
 
+typedef struct {
+	uint64_t vht_version:4;
+	uint64_t vht_pad1:4;
+	uint64_t vht_obj_type:8;
+	uint64_t vht_pad2:48;
+} vpc_handle_type_t;
+
 #ifdef _KERNEL
 #include <sys/proc.h>
 #include <sys/sched.h>
