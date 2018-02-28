@@ -1044,7 +1044,7 @@ static moduledata_t vpcsw_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(vpcsw, vpcsw_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+DECLARE_MODULE(vpcsw, vpcsw_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(vpcsw, 1);
 MODULE_DEPEND(vpcsw, vpc, 1, 1, 1);
 MODULE_DEPEND(vpcsw, iflib, 1, 1, 1);

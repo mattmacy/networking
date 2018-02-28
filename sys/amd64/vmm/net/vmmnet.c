@@ -877,6 +877,6 @@ static moduledata_t vmmnet_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(vmmnet, vmmnet_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+DECLARE_MODULE(vmmnet, vmmnet_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(vmmnet, 1);
 MODULE_DEPEND(vmmnet, vpc, 1, 1, 1);

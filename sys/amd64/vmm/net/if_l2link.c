@@ -280,6 +280,6 @@ static moduledata_t l2link_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(l2link, l2link_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+DECLARE_MODULE(l2link, l2link_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(l2link, 1);
 MODULE_DEPEND(l2link, iflib, 1, 1, 1);

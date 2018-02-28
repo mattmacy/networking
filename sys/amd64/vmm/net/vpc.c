@@ -448,6 +448,6 @@ static moduledata_t vpc_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(vpc, vpc_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+DECLARE_MODULE(vpc, vpc_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(vpc, 1);
 MODULE_DEPEND(vpc, iflib, 1, 1, 1);
