@@ -477,9 +477,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			*outnbyte = sizeof(uint16_t);
 			typecount = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
 			ti.count = 0;
-			VMMNET_LOCK();
 			art_iter(&vpc_uuid_table, vpcd_typecount_callback, &ti);
-			VMMNET_UNLOCK();
 			*typecount = ti.count;
 			*outp = typecount;
 			break;
@@ -497,9 +495,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			oi.count = 0;
 			oi.max_count = *outnbyte/sizeof(vpc_obj_header_t);
 			oi.ptr = malloc(*outnbyte, M_TEMP, M_WAITOK);
-			VMMNET_LOCK();
 			rc = art_iter(&vpc_uuid_table, vpcd_hdrget_callback, &oi);
-			VMMNET_UNLOCK();
 			*outnbyte = oi.count*sizeof(vpc_obj_header_t);
 			*outp = oi.ptr;
 			break;
