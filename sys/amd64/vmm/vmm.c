@@ -712,8 +712,14 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 
 	kva = 0;
 	if (flags & VM_MEMMAP_F_WIRED) {
-		 /* first usable address post direct map */
-		kva = 0xfffffe0000000000;
+		error = vm_map_wire(&vm->vmspace->vm_map, gpa, gpa + len,
+							VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+		if (error != KERN_SUCCESS) {
+			printf("failed to wire kva 0x%012lx to 0x%012lx\n", gpa, gpa + len);
+			goto kernfail;
+		}
+		 /* 256G after first usable address post direct map */
+		kva = 0xfffffe4000000000;
 		vm_object_reference(seg->object);
 		error = vm_map_find(kernel_map, seg->object, first, &kva,
 							len, 0, VMFS_ANY_SPACE, VM_PROT_RW, VM_PROT_RW, 0);
