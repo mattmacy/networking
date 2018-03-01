@@ -936,7 +936,6 @@ vpcsw_detach(if_ctx_t ctx)
 	struct vpcsw_softc *vs = iflib_get_softc(ctx);
 	struct vpcsw_mcast_queue *vmq;
 	struct mbuf *m;
-	void *cache;
 
 	if (vs->vs_refcnt != 0)
 		return (EBUSY);
@@ -954,6 +953,7 @@ vpcsw_detach(if_ctx_t ctx)
 	if (vs->vs_ifdefault) {
 		if_ctx_t ifctx = vs->vs_ifdefault->if_softc;
 		vpc_ctx_t vctx;
+		void *cache;
 
 		cache = iflib_get_pcpu_cache(ifctx);
 		free(cache, M_VPCSW);
