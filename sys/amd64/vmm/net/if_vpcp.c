@@ -326,6 +326,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 				   __func__, type);
 
 		ifdev = vctx->v_ifp;
+		vs->vs_ifdev = ifdev;
 		if (type == VPC_OBJ_ETHLINK) {
 			if_ctx_t ifctx = ifdev->if_softc;
 
@@ -343,7 +344,6 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 	} else
 		MPASS(vctx == NULL);
 
-	vs->vs_ifdev = ifdev;
 	prevtype = vs->vs_type;
 	vs->vs_type = type;
 	rc = 0;
@@ -556,8 +556,11 @@ vpcp_detach(if_ctx_t ctx)
 {
 	struct vpcp_softc *vs = iflib_get_softc(ctx);
 
-	if (vs->vs_ifdev != NULL)
+	if (vs->vs_ifdev != NULL) {
+		if (bootverbose)
+			printf("disconnecting port for %s\n", iflib_get_ifp(ctx)->if_xname);
 		vpcp_port_disconnect(ctx);
+	}
 	if (vs->vs_ifswitch != NULL)
 		if_rele(vs->vs_ifswitch);
 	atomic_add_int(&clone_count, -1);
