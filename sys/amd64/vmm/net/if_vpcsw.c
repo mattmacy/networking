@@ -711,8 +711,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
 	if (rc)
 		goto fail;
-	vctx = vmmnet_delete(vp_id);
-	MPASS(vctx);
+	vmmnet_delete(vp_id);
 	oldftable = vs->vs_ftable_ro;
 	vs->vs_ftable_ro = newftable;
 	ck_epoch_synchronize(&vpc_global_record);
@@ -937,6 +936,7 @@ vpcsw_detach(if_ctx_t ctx)
 	struct vpcsw_softc *vs = iflib_get_softc(ctx);
 	struct vpcsw_mcast_queue *vmq;
 	struct mbuf *m;
+	void *cache;
 
 	if (vs->vs_refcnt != 0)
 		return (EBUSY);
@@ -951,10 +951,24 @@ vpcsw_detach(if_ctx_t ctx)
 	}
 	iflib_config_gtask_deinit(&vs->vs_vtep_gtask);
 	art_iter(vs->vs_ftable_rw, clear_bridge, NULL);
+	if (vs->vs_ifdefault) {
+		if_ctx_t ifctx = vs->vs_ifdefault->if_softc;
+		vpc_ctx_t vctx;
+
+		cache = iflib_get_pcpu_cache(ifctx);
+		free(cache, M_VPCSW);
+		vctx = vmmnet_lookup(&vs->vs_uplink_id);
+		MPASS(vctx != NULL);
+		MPASS(vctx->v_ifp != NULL);
+		if_clone_destroy(vctx->v_ifp->if_xname);
+		vctx->v_ifp = NULL;
+		vmmnet_delete(&vs->vs_uplink_id);
+	}
 	mtx_destroy(&vs->vs_lock);
 	mtx_destroy(&vs->vs_vtep_mtx);
 	vpc_art_free(vs->vs_ftable_ro, M_VPCSW);
 	vpc_art_free(vs->vs_ftable_rw, M_VPCSW);
+
 	free(vs->vs_pcpu_cache, M_VPCSW);
 	refcount_release(&modrefcnt);
 	return (0);

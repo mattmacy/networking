@@ -297,12 +297,14 @@ vmmnet_lookup(const vpc_id_t *id)
 	return ((vpc_ctx_t)art_search(&vpc_uuid_table, (const char*)id));
 }
 
-vpc_ctx_t
+void
 vmmnet_delete(const vpc_id_t *id)
 {
+	void *ctx;
 
 	sx_assert(&vmmnet_lock, SA_XLOCKED);
-	return ((vpc_ctx_t)art_delete(&vpc_uuid_table, (const char*)id));
+	ctx = art_delete(&vpc_uuid_table, (const char*)id);
+	free(ctx, M_VMMNET);
 }
 
 static int
