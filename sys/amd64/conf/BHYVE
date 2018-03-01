@@ -24,7 +24,7 @@ ident		BHYVE
 makeoptions	DEBUG=-g		# Build kernel with gdb(1) debug symbols
 makeoptions	ARCH_FLAGS=-mretpoline
 makeoptions	WITH_CTF=1		# Run ctfconvert(1) for DTrace support
-makeoptions	MODULES_OVERRIDE="hwpmc tmpfs ipmi dtrace zfs opensolaris sem linux linuxkpi linux64 linux_common linsysfs coretemp tmpfs vmm linprocfs if_bridge bridgestp if_tap usb sound nmdm cxgbe ixl iwm iwmfw nullfs i2c cpuctl fdescfs vmmnet"
+makeoptions	MODULES_OVERRIDE="hwpmc tmpfs ipmi dtrace zfs opensolaris sem linux linuxkpi linux64 linux_common linsysfs coretemp tmpfs vmm linprocfs if_bridge bridgestp if_tap usb sound nmdm ixl iwm iwmfw nullfs i2c cpuctl fdescfs vmmnet"
 
 options 	SCHED_ULE		# ULE scheduler
 options 	PREEMPTION		# Enable kernel thread preemption
@@ -173,6 +173,8 @@ device		uart			# Generic UART driver
 device		em			# Intel PRO/1000 Gigabit Ethernet Family
 device		ix			# Intel PRO/10GbE PCIE PF Ethernet
 device		ixv			# Intel PRO/10GbE PCIE VF Ethernet
+device		cxgbe
+
 
 # Wireless NIC cards
 device		wlan			# 802.11 support
@@ -238,6 +240,7 @@ device		vmx
 
 options         NUMA
 options		MAXPHYS=(1024*1024)
+options		DEBUG_MEMGUARD
 
 options		ALT_BREAK_TO_DEBUGGER
 #options KTR
