@@ -1721,8 +1721,10 @@ vb_stop(if_ctx_t ctx)
 	MPASS(scctx->isc_nrxd[0]);
 
 	for (i = 0; i < scctx->isc_nrxqsets; i++) {
-		for (j = 0; j < scctx->isc_nrxd[0]; j++)
-			vs->vs_rx_queues[i].vr_sdcl[j] = NULL;
+		if (vs->vs_rx_queues[i].vr_sdcl) {
+			for (j = 0; j < scctx->isc_nrxd[0]; j++)
+				vs->vs_rx_queues[i].vr_sdcl[j] = NULL;
+		}
 	}
 	for (i = 0; i < scctx->isc_ntxqsets; i++)
 		vs->vs_tx_queues[i].vt_cidx = 0;
@@ -1783,6 +1785,7 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			if (!(vs->vs_flags & VS_IMMUTABLE))
 				return (EINPROGRESS);
 #endif
+			vs->vs_proc = curproc;
 			rc = vb_vm_deferred_attach(vs, in);
 			break;
 		}
