@@ -408,7 +408,6 @@ struct vb_msix_vector {
 };
 
 struct vb_msix {
-	struct vb_ioctl_header vm_ioh;
 	int vm_status;
 	int vm_count;
 	struct vb_msix_vector vm_q[0];
