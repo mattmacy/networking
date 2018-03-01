@@ -354,9 +354,15 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			if_settransmittxqfn(ifp, vpcp_stub_transmit);
 			ifp->if_input = vpcp_stub_input;
 			if (vs->vs_ifdev) {
-				vs->vs_ifdev->if_bridge = NULL;
-				vs->vs_ifdev->if_bridge_input = NULL;
-				vs->vs_ifdev->if_bridge_output = NULL;
+				ifdev = vs->vs_ifdev;
+				if (vs->vs_type == VPC_OBJ_ETHLINK) {
+					if_ctx_t ifctx = ifdev->if_softc;
+
+					ifdev = ethlink_ifp_get(ifctx);
+				}
+				ifdev->if_bridge = NULL;
+				ifdev->if_bridge_input = NULL;
+				ifdev->if_bridge_output = NULL;
 				if_rele(vs->vs_ifdev);
 				vs->vs_ifdev = NULL;
 			}
