@@ -839,8 +839,8 @@ filt_vpcevent(struct knote *kn, long hint)
 }
 
 static struct syscall_helper_data vmmnet_syscalls[] = {
-	SYSCALL_INIT_HELPER(vpc_open),
-	SYSCALL_INIT_HELPER(vpc_ctl),
+	SYSCALL_INIT_HELPER_F(vpc_open, SYF_CAPENABLED),
+	SYSCALL_INIT_HELPER_F(vpc_ctl, SYF_CAPENABLED),
 	SYSCALL_INIT_LAST
 };
 	
