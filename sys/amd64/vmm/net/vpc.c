@@ -370,7 +370,7 @@ vpc_if_lookup(uint32_t ifindex)
 {
 	struct ifnet *ifp;
 
-	KASSERT(ifindex < vpc_ic->ic_ifindex_max, 
+	KASSERT(ifindex <= vpc_ic->ic_ifindex_max,
 			("passed ifindex %d exceeds vpc_ic->ic_ifindex_max: %d",
 			 ifindex,vpc_ic->ic_ifindex_max));
 	if (__predict_false(((ifp = vpc_ic->ic_ifps[ifindex]) == NULL)))
