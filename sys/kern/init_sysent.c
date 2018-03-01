@@ -631,6 +631,6 @@ struct sysent sysent[] = {
 	{ 0, (sy_call_t *)nosys, AUE_NULL, NULL, 0, 0, 0, SY_THR_ABSENT },			/* 577 = nosys */
 	{ 0, (sy_call_t *)nosys, AUE_NULL, NULL, 0, 0, 0, SY_THR_ABSENT },			/* 578 = nosys */
 	{ 0, (sy_call_t *)nosys, AUE_NULL, NULL, 0, 0, 0, SY_THR_ABSENT },			/* 579 = nosys */
-	{ AS(vpc_open_args), (sy_call_t *)lkmressys, AUE_NULL, NULL, 0, 0, 0, SY_THR_ABSENT },	/* 580 = vpc_open */
-	{ AS(vpc_ctl_args), (sy_call_t *)lkmressys, AUE_NULL, NULL, 0, 0, 0, SY_THR_ABSENT },	/* 581 = vpc_ctl */
+	{ AS(vpc_open_args), (sy_call_t *)lkmressys, AUE_NULL, NULL, 0, 0, SYF_CAPENABLED, SY_THR_ABSENT },	/* 580 = vpc_open */
+	{ AS(vpc_ctl_args), (sy_call_t *)lkmressys, AUE_NULL, NULL, 0, 0, SYF_CAPENABLED, SY_THR_ABSENT },	/* 581 = vpc_ctl */
 };
