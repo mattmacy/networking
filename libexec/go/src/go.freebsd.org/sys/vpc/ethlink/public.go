@@ -32,7 +32,7 @@ package ethlink
 import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
-	"go.freebsd.org/sys/vpc"
+	"github.com/freebsd/freebsd/libexec/go/src/go.freebsd.org/sys/vpc"
 )
 
 // Config is the configuration used to create or open a VPC EthLink device.
