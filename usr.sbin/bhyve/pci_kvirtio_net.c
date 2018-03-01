@@ -127,7 +127,6 @@ vtnet_be_msix(struct vmctx *ctx, int vcpu, struct pci_devinst *pi, int on)
 	vmsix = malloc(size);
 	vmsix->vm_status = on;
 	vmsix->vm_count = nvqs;
-	vmsix->vm_ioh.vih_magic = VB_MAGIC;
 	if (on) {
 		for (i = 0; i < nvqs; i++) {
 			vmsix->vm_q[i].msg = pi->pi_msix.table[i].msg_data;
@@ -193,9 +192,13 @@ static int
 vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 {
 	char *mac, *input, *token;
-	int id;
+	int id, s;
 	uint32_t status;
 	struct uuid uuidtmp;
+	size_t osize;
+	uint16_t nqs;
+	uint64_t type;
+	vpc_handle_type_t *typep;
 
 	if (opts == NULL)
 		return (1);
@@ -217,42 +220,40 @@ vtnet_be_parseopts(struct vtnet_be_softc *vbs, char *opts)
 				return (1);
 		}
 	}
-	return (status != uuid_s_ok);
-}
-
-static int
-vtnet_be_clone(struct vtnet_be_softc *vbs)
-{
-	struct vb_vm_attach va;
-	int s;
-	size_t osize;
-	uint16_t nqs;
-	uint64_t type;
-	vpc_handle_type_t *typep;
-#ifndef WITHOUT_CAPSICUM
-	cap_rights_t rights;
-#endif
-
 	type = 0;
 	typep = (void *)&type;
 	typep->vht_version = 1;
 	typep->vht_obj_type = VPC_OBJ_VMNIC;
 	type = htobe64(type);
 	if ((s = vpc_open(&vbs->vbs_id, type, VPC_F_WRITE|VPC_F_OPEN)) < 0)
-		return (errno);
+		return (1);
 	vbs->vbs_fd = s;
+	osize = sizeof(nqs);
+	if (vpc_ctl(s, VPC_VMNIC_OP_NQUEUES_GET, 0, NULL, &osize, &nqs))
+		return (1);
+	vbs->vbs_nqs = nqs;
+	vbs->vbs_nvqs = 2*nqs + 1;
+
+	return (status != uuid_s_ok);
+}
+
+static int
+vtnet_be_clone(struct vtnet_be_softc *vbs)
+{
+	int s;
+	struct vb_vm_attach va;
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_t rights;
+#endif
+
+	s = vbs->vbs_fd;
 	bzero(&va, sizeof(va));
 	va.vva_ioh.vih_magic = VB_MAGIC;
 	va.vva_io_start = vbs->vbs_pi->pi_bar[0].addr;
 	va.vva_io_size = VTNET_BE_REGSZ;
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
-	osize = sizeof(nqs);
-	if (vpc_ctl(s, VPC_VMNIC_OP_NQUEUES_GET, 0, NULL, &osize, &nqs))
-		return (errno);
 	if (vpc_ctl(s, VPC_VMNIC_OP_ATTACH, sizeof(va), &va, NULL, NULL))
 		return (errno);
-	vbs->vbs_nqs = nqs;
-	vbs->vbs_nvqs = 2*nqs + 1;
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_VPC_READ|CAP_VPC_PRIVWRITE);
