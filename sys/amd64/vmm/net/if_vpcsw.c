@@ -540,6 +540,11 @@ vpcsw_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unus
 	return (vpcsw_transit(vs, cache, m));
 }
 
+static void
+vpcsw_bridge_linkstate(if_t ifp __unused)
+{
+}
+
 static struct mbuf *
 vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 {
@@ -655,6 +660,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge = vs;
 	ifp->if_bridge_input = vpcsw_bridge_input;
 	ifp->if_bridge_output = vpcsw_bridge_output;
+	ifp->if_bridge_linkstate = vpcsw_bridge_linkstate;
 	if (bootverbose)
 		printf("storing ifindexp= %d in switch ART for %6D\n", *ifindexp, vp_id->node, ":");
 	iflib_set_mac(ctx, vp_id->node);
@@ -723,6 +729,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge = NULL;
 	ifp->if_bridge_input = NULL;
 	ifp->if_bridge_output = NULL;
+	ifp->if_bridge_linkstate = NULL;
 	if_clone_destroy(ifp->if_xname);
 	return (0);
  fail:

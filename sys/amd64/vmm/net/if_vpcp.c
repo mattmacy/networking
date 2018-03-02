@@ -102,6 +102,11 @@ static uint16_t vpcp_vlanid_get(if_ctx_t ctx);
 static int vpcp_port_type_set(if_ctx_t ctx, vpc_ctx_t vctx, enum vpc_obj_type type);
 static int clone_count;
 
+static void
+vpcp_stub_linkstate(if_t ifp __unused)
+{
+}
+
 static int
 vpcp_stub_transmit(if_t ifp __unused, struct mbuf *m)
 {
@@ -336,10 +341,6 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			printf("%s in use\n", ifdev->if_xname);
 			return (EINVAL);
 		}
-		ifdev->if_bridge = NULL;
-		ifdev->if_bridge_input = NULL;
-		ifdev->if_bridge_output = NULL;
-		iflib_get_ifp(vs->vs_ctx)->if_mtu = ifdev->if_mtu;
 		baudrate = ifdev->if_baudrate;
 	} else
 		MPASS(vctx == NULL);
@@ -353,6 +354,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			if_settransmitfn(ifp, vpcp_stub_transmit);
 			if_settransmittxqfn(ifp, vpcp_stub_transmit);
 			ifp->if_input = vpcp_stub_input;
+			ifp->if_bridge_linkstate = vpcp_stub_linkstate;
 			if (vs->vs_ifdev) {
 				ifdev = vs->vs_ifdev;
 				if (vs->vs_type == VPC_OBJ_ETHLINK) {
@@ -361,8 +363,10 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 					ifdev = ethlink_ifp_get(ifctx);
 				}
 				ifdev->if_bridge = NULL;
+				wmb();
 				ifdev->if_bridge_input = NULL;
 				ifdev->if_bridge_output = NULL;
+				ifdev->if_bridge_linkstate = NULL;
 				if_rele(vs->vs_ifdev);
 				vs->vs_ifdev = NULL;
 			}
@@ -371,28 +375,33 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			if_settransmitfn(ifp, vmi_transmit);
 			if_settransmittxqfn(ifp, vmi_transmit);
 			ifp->if_input = vmi_input;
-			ifdev->if_bridge = vs;
 			ifdev->if_bridge_input = vmi_bridge_input;
 			ifdev->if_bridge_output = vmi_bridge_output;
+			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
+			wmb();
+			ifdev->if_bridge = vs;
 			break;
 		case VPC_OBJ_ETHLINK:
 			if_settransmitfn(ifp, phys_transmit);
 			if_settransmittxqfn(ifp, phys_transmit);
 			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);
 			ifp->if_input = phys_input;
-			ifdev->if_bridge = vs;
 			ifdev->if_bridge_input = phys_bridge_input;
 			ifdev->if_bridge_output = phys_bridge_output;
+			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
+			wmb();
+			ifdev->if_bridge = vs;
 			break;
 		default:
 			vs->vs_type = prevtype;
 			device_printf(iflib_get_dev(portctx), "unknown port type %d\n", type);
 			rc = EINVAL;
 	}
-	if (!rc) {
-		if (type == VPC_OBJ_INVALID)
+	if (rc == 0) {
+		if (type == VPC_OBJ_INVALID) {
+			MPASS(vs->vs_ifdev == NULL);
 			iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(100));
-		else {
+		} else {
 			iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, baudrate);
 			if_ref(ifdev);
 			vs->vs_ifdev = ifdev;
@@ -427,6 +436,16 @@ vpcp_port_connect(if_ctx_t ctx, const vpc_id_t *id)
 static int
 vpcp_port_disconnect(if_ctx_t ctx)
 {
+	return (vpcp_port_type_set(ctx, NULL, VPC_OBJ_INVALID));
+}
+
+int
+vpcp_port_disconnect_ifp(struct ifnet *ifp)
+{
+	struct vpcp_softc *vs = ifp->if_bridge;
+	if_ctx_t ctx = vs->vs_ctx;
+
+	MPASS(vs->vs_ifdev == ifp);
 	return (vpcp_port_type_set(ctx, NULL, VPC_OBJ_INVALID));
 }
 
@@ -548,6 +567,7 @@ vpcp_attach_post(if_ctx_t ctx)
 	if_settransmittxqfn(ifp, vpcp_stub_transmit);
 	if_setmbuftoqidfn(ifp, vpcp_stub_mbuf_to_qid);
 	ifp->if_input = vpcp_stub_input;
+	ifp->if_bridge_linkstate = vpcp_stub_linkstate;
 	return (0);
 }
 

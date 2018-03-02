@@ -278,7 +278,7 @@ vpc_ctx_t vmmnet_lookup(const vpc_id_t *id);
 void vmmnet_delete(const vpc_id_t *id);
 struct ifnet *vpc_if_lookup(uint32_t ifindex);
 int vpc_async_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len);
-
+int vpcp_port_disconnect_ifp(struct ifnet *ifp);
 
 
 int vmnic_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
