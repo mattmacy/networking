@@ -1651,6 +1651,7 @@ vb_detach(if_ctx_t ctx)
 	struct vb_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx = vs->shared;
 	struct vtnet_be *vb = vs->vs_vn;
+	struct ifnet *ifp = iflib_get_ifp(ctx);;
 	int i;
 
 	if (vs->vs_flags & VS_ENQUEUED) {
@@ -1661,6 +1662,9 @@ vb_detach(if_ctx_t ctx)
 	for (i = 0; i < vs->vs_nvqs; i++) {
 		vb_vring_munmap(vs, i);
 	}
+	if (ifp->if_bridge)
+		vpcp_port_disconnect_ifp(ifp);
+	MPASS(ifp->if_bridge == NULL);
 	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(200));
 
 	for (i = 0; i < scctx->isc_nrxqsets; i++)
