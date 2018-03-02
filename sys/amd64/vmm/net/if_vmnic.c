@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2017 Joyent Inc.
- * Copyright (C) 2017 Matthew Macy <matt.macy@joyent.com>
+ * Copyright (C) 2017-2018 Joyent Inc.
+ * Copyright (C) 2017-2018 Matthew Macy <matt.macy@joyent.com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -224,6 +224,13 @@ rxq2vq(int rxq)
 
 struct vb_softc;
 
+struct vtnet_be {
+	SLIST_ENTRY(vtnet_be) next;
+	SLIST_HEAD(, vb_softc) dev;
+	struct vm *vm;
+	const char *name;	/* can point back to VM name */
+};
+
 /* Packet parse info */
 struct pinfo {
 	uint16_t etype;
@@ -232,13 +239,6 @@ struct pinfo {
 	uint8_t	 l3size:7;	/* size of l3 header */
 	uint8_t	 l4size;	/* layer 4 protocol type */
 	uint8_t	 l3valid:1;	/* size of l3 header */
-};
-
-struct vtnet_be {
-	SLIST_ENTRY(vtnet_be) next;
-	SLIST_HEAD(, vb_softc) dev;
-	struct vm *vm;
-	const char *name;	/* can point back to VM name */
 };
 
 static SLIST_HEAD(, vtnet_be) vb_head;
@@ -269,8 +269,7 @@ struct vb_queue {
 #define VS_OWNED		0x008
 #define VS_ATTACHED		0x010
 #define VS_IMMUTABLE		0x020
-#define VS_MAC_ISSET		0x040
-#define VS_MTU_ISSET		0x080
+
 #define VS_NQS_CHANGED		0x100
 
 #define VB_CIDX_VALID (1 << 18)
@@ -714,10 +713,7 @@ vb_rx_vhdr_process(struct virtio_net_hdr_mrg_rxbuf *vh,
 	}
 	if ((vh->hdr.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) == 0)
 		return;
-	if (__predict_false(rxd->len < VB_HDR_MAX)) {
-		printf("XXX short header %d\n", rxd->len);
-		return;
-	}
+
 	vb_pparse(buf, &pinfo);
 	flags = 0;
 	switch (pinfo.etype) {
@@ -1364,11 +1360,11 @@ vb_dev_msix(struct vb_softc *vs, const struct vb_msix *vx, int length)
 
 	size = sizeof(*vx) + vx->vm_count*sizeof(struct vb_msix_vector);
 	if (length != (sizeof(*vx) + vx->vm_count*sizeof(struct vb_msix_vector))) {
-		printf("bad length %d -- expected %d \n", length, size);
+		printf("__func__, bad length for vb_msix %d -- expected %d \n", length, size);
 		return (EINVAL);
 	}
 	if (vx->vm_count < 3 || vx->vm_count > (2*VB_QUEUES_MAX) + 1) {
-		printf("bad count %d\n", vx->vm_count);
+		printf("%s bad count %d\n", __func__, vx->vm_count);
 		return (EINVAL);
 	}
 
@@ -1584,8 +1580,13 @@ vb_if_attach(struct vb_softc *vs)
 		vs->vs_hv_caps |= VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6;
 
 	vs->vs_hv_caps |= VIRTIO_NET_F_MTU;
-	printf("caps: %016lx encaps: %016lx hv_caps: %08x\n",
-		   ifp->if_capabilities, ifp->if_capenable, vs->vs_hv_caps);
+	if (bootverbose) {
+		printf("caps: %016lx encaps: %016lx hv_caps: %08x\n",
+			   ifp->if_capabilities, ifp->if_capenable, vs->vs_hv_caps);
+		printf("mac: %6D status: %x max_vq_pairs: %d mtu: %d\n",
+			   vs->vs_cfg.mac, ":", vs->vs_cfg.status, vs->vs_cfg.max_virtqueue_pairs,
+			   vs->vs_cfg.mtu);
+	}
 	return (0);
 }
 
@@ -1681,7 +1682,6 @@ vmnic_mtu_set(if_ctx_t ctx, uint32_t mtu)
 
 	if (vs->vs_flags & VS_IMMUTABLE)
 		return (EBUSY);
-	vs->vs_flags |= VS_MAC_ISSET;
 	ifp->if_mtu = mtu;
 	vs->vs_cfg.mtu = mtu;
 	return (0);
@@ -1698,7 +1698,7 @@ vmnic_mac_set(if_ctx_t ctx, const uint8_t *mac)
 		return (EBUSY);
 	ifp = iflib_get_ifp(ctx);
 	memcpy(vs->vs_origmac, mac, ETHER_ADDR_LEN);
-	vs->vs_flags |= VS_MAC_ISSET;
+	memcpy(vs->vs_cfg.mac, mac, ETHER_ADDR_LEN);
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 	MPASS(sdl->sdl_type == IFT_ETHER);
 	memcpy(LLADDR(sdl), vs->vs_origmac, ETHER_ADDR_LEN);
@@ -1793,8 +1793,6 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			rc = vb_dev_msix(vs, (const struct vb_msix *)in, inlen);
 			break;
 		case VPC_VMNIC_OP_FREEZE:
-			if (!(vs->vs_flags & VS_MAC_ISSET))
-				return (EAGAIN);
 			vs->vs_flags |= VS_IMMUTABLE;
 			break;
 		case VPC_VMNIC_OP_UNFREEZE:
