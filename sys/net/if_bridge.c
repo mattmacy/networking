@@ -340,7 +340,6 @@ static int	bridge_fragment(struct ifnet *, struct mbuf **mp,
 static void	bridge_linkstate(struct ifnet *ifp);
 static void	bridge_linkcheck(struct bridge_softc *sc);
 
-extern void (*bridge_linkstate_p)(struct ifnet *ifp);
 
 /* The default bridge vlan is 1 (IEEE 802.1Q-2003 Table 9-2) */
 #define	VLANTAGOF(_m)	\
@@ -557,7 +556,6 @@ bridge_modevent(module_t mod, int type, void *data)
 		    sizeof(struct bridge_rtnode), NULL, NULL, NULL, NULL,
 		    UMA_ALIGN_PTR, 0);
 		bridge_dn_p = bridge_dummynet;
-		bridge_linkstate_p = bridge_linkstate;
 		bridge_detach_cookie = EVENTHANDLER_REGISTER(
 		    ifnet_departure_event, bridge_ifdetach, NULL,
 		    EVENTHANDLER_PRI_ANY);
@@ -567,7 +565,6 @@ bridge_modevent(module_t mod, int type, void *data)
 		    bridge_detach_cookie);
 		uma_zdestroy(bridge_rtnode_zone);
 		bridge_dn_p = NULL;
-		bridge_linkstate_p = NULL;
 		break;
 	default:
 		return (EOPNOTSUPP);
@@ -1039,6 +1036,7 @@ bridge_delete_member(struct bridge_softc *sc, struct bridge_iflist *bif,
 
 	ifs->if_bridge_output = NULL;
 	ifs->if_bridge_input = NULL;
+	ifs->if_bridge_linkstate = NULL;
 	BRIDGE_UNLOCK(sc);
 	if (!gone) {
 		switch (ifs->if_type) {
@@ -1198,6 +1196,7 @@ bridge_ioctl_add(struct bridge_softc *sc, void *arg)
 	ifs->if_bridge = sc;
 	ifs->if_bridge_output = bridge_output;
 	ifs->if_bridge_input = bridge_input;
+	ifs->if_bridge_linkstate = bridge_linkstate;
 	bstp_create(&sc->sc_stp, &bif->bif_stp, bif->bif_ifp);
 	/*
 	 * XXX: XLOCK HERE!?!
