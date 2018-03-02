@@ -427,7 +427,9 @@ enum vpc_mgmt_op_type {
 enum vpc_ethlink_op_type {
 	VPC_ETHLINK_INVALID = 0,
 	VPC_ETHLINK_ATTACH = 1,
-	VPC_ETHLINK_MAX = 1,
+	VPC_ETHLINK_CLONEATTACH = 2,
+	VPC_ETHLINK_DEVCTL = 3,
+	VPC_ETHLINK_MAX = 3,
 };
 
 #define IOC_MUT IOC_VOID
