@@ -338,8 +338,8 @@ struct mbuf_ext {
 #define ME_LEN(m_, mh_, idx_) (MHMEI(m_, mh_,idx_)->me_len)
 
 #define MBUF_ME_MAX ((MHLEN - sizeof(struct m_ext) - sizeof(struct mvec_header))/sizeof(struct mvec_ent))
-#define MVMHLEN (MSIZE - sizeof(struct mbuf_ext) - sizeof(struct mvec_ent))
-#define MVMHCLLEN (MCLBYTES - sizeof(struct mbuf_ext) - sizeof(struct mvec_ent))
+#define MVMHLEN (MSIZE - sizeof(struct mbuf_ext) - 2*sizeof(struct mvec_ent))
+#define MVMHCLLEN (MCLBYTES - sizeof(struct mbuf_ext) - 2*sizeof(struct mvec_ent))
 
 #define m_ismvec(m) (((m)->m_flags & M_EXT) && ((m)->m_ext.ext_type == EXT_MVEC))
 #define me_data(me) ((me)->me_cl + (me)->me_off)
