@@ -93,6 +93,8 @@ mvec_sanity(struct mbuf *m)
 	mext = (void*)m;
 	mh = &mext->me_mh;
 	me = &mext->me_ents[mh->mh_start];
+
+	MPASS((caddr_t)me != m->m_data);
 	me_count = &((m_refcnt_t *)(mext->me_ents + mh->mh_count))[mh->mh_start];
 	MPASS(me_count == &MBUF2REF(m)[mh->mh_start]);
 	total = 0;
@@ -385,7 +387,7 @@ mvec_dup(const struct mbuf *m, int how)
 	struct mbuf_ext *mextnew;
 	const struct mvec_header *mh;
 	const struct mvec_ent *me;
-	struct mvec_header *mhnew;
+	struct mvec_header *mhnew, mhnews;
 	struct mvec_ent *menew;	
 	struct mbuf *mnew;
 	caddr_t data;
@@ -396,7 +398,7 @@ mvec_dup(const struct mbuf *m, int how)
 		return (NULL);
 	MPASS(m_ismvec(m));
 	mext = (const void *)m;
-	if (m->m_pkthdr.len <= PAGE_SIZE - MSIZE) {
+	if (m->m_pkthdr.len <= PAGE_SIZE - (MSIZE-MVMHLEN)) {
 		mextnew = mvec_alloc(1, m->m_pkthdr.len, how);
 		mnew = (void *)mextnew;
 	} else {
@@ -409,22 +411,28 @@ mvec_dup(const struct mbuf *m, int how)
 	menew = mextnew->me_ents;
 	mhnew = &mextnew->me_mh;
 	mhnew->mh_used = 1;
+	mhnews = mext->me_mh;
+	memcpy(&mnew->m_pkthdr, &m->m_pkthdr, sizeof(struct pkthdr));
 	data = (void *)(menew + mhnew->mh_count);
+	MPASS((caddr_t)(&menew[mhnew->mh_start]) != data);
 	menew[mhnew->mh_start].me_len = m->m_pkthdr.len;
 	menew[mhnew->mh_start].me_type = MVEC_UNMANAGED;
 	menew[mhnew->mh_start].me_cl = data;
 	menew[mhnew->mh_start].me_off = 0;
+	mnew->m_flags = m->m_flags;
 	mnew->m_data = data;
+	mnew->m_len = m->m_pkthdr.len;
 	off = 0;
 
-	me = mext->me_ents;
 	mh = &mext->me_mh;
+	me = mext->me_ents;
 	for (i = mh->mh_start; i < mh->mh_start + mh->mh_used; i++) {
 		if (__predict_false(me[i].me_len == 0))
 			continue;
 		memcpy(mnew->m_data + off, me_data(&me[i]), me[i].me_len);
 		off += me[i].me_len;
 	}
+	mvec_sanity(mnew);
 	return (mnew);
 }
 
@@ -569,7 +577,7 @@ mvec_init_mbuf_(struct mbuf *m, uint8_t count, uint8_t type, int len)
 			/* leave room for prepend */
 			mh->mh_start = 1;
 		} else {
-			mh->mh_count = count;
+			mh->mh_count = count+1;
 			mh->mh_start = 0;
 		}
 	} else {
@@ -612,12 +620,12 @@ mvec_alloc(uint8_t count, int len, int how)
 	uint8_t type;
 	struct mbuf_ext *m;
 
-	size = sizeof(*m) + count*sizeof(struct mvec_ent);
+	size = sizeof(*m) + (count + 1)*sizeof(struct mvec_ent);
 	size += len;
-	if (size <= MSIZE) {
+	if (size <= MVMHLEN) {
 		m = (void*)m_get(how, MT_NOINIT);
 		type = MVALLOC_MBUF;
-	} else if (size > 1024 && size <= MCLBYTES) {
+	} else if (size > (1024-(MSIZE-MVMHLEN)) && size <= MVMHCLLEN) {
 		m = (void *)uma_zalloc(zone_clust, how);
 		type = MVALLOC_CLUSTER;
 	} else {
@@ -703,6 +711,7 @@ mvec_free(struct mbuf_ext *m)
 	m_refcnt_t *me_count;
 	int i;
 
+	mvec_sanity((void *)m);
 	mh = &m->me_mh;
 	me = m->me_ents;
 	me_count = (m_refcnt_t *)(me + mh->mh_count);
