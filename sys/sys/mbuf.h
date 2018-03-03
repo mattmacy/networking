@@ -478,6 +478,7 @@ uint16_t mvec_cksum_skip(struct mbuf *m, int len, int skip);
  */
 void mvec_copydata(const struct mbuf *m, int off, int len, caddr_t cp);
 struct mbuf *mvec_dup(const struct mbuf *m, int how);
+struct mbuf *mvec_mdup(const struct mbuf *m, int how);
 struct mbuf *mvec_defrag(const struct mbuf *m, int how);
 struct mbuf *mvec_collapse(struct mbuf *m, int how, int maxfrags);
 
