@@ -356,14 +356,16 @@ vpc_broadcast_one(void *data, const unsigned char *key __unused, uint32_t key_le
 {
 	struct ifnet *ifp;
 	uint16_t *ifindexp = value;
-	struct mbuf *m;
+	struct mbuf *m, *msrc;
 
-	m = m_dup((struct mbuf *)data, M_NOWAIT);
-	if (__predict_false(m == NULL))
-		return (ENOMEM);
+	msrc = (struct mbuf *)data;
 	if ((ifp = vpc_if_lookup(*ifindexp)) == NULL)
 		return (0);
-	m->m_pkthdr.rcvif = ifp;
+	if (msrc->m_pkthdr.rcvif == ifp)
+		return (0);
+	m = mvec_dup(msrc, M_NOWAIT);
+	if (__predict_false(m == NULL))
+		return (ENOMEM);
 	ifp->if_input(ifp, m);
 	return (0);
 }
