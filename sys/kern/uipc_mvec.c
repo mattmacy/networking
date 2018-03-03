@@ -410,12 +410,16 @@ mvec_dup(const struct mbuf *m, int how)
 	mhnew = &mextnew->me_mh;
 	mhnew->mh_used = 1;
 	data = (void *)(menew + mhnew->mh_count);
+	menew[mhnew->mh_start].me_len = m->m_pkthdr.len;
+	menew[mhnew->mh_start].me_type = MVEC_UNMANAGED;
+	menew[mhnew->mh_start].me_cl = data;
+	menew[mhnew->mh_start].me_off = 0;
+	mnew->m_data = data;
 	off = 0;
 
-	mnew->m_data = data;
 	me = mext->me_ents;
 	mh = &mext->me_mh;
-	for (i = mh->mh_start; i < mh->mh_used; i++) {
+	for (i = mh->mh_start; i < mh->mh_start + mh->mh_used; i++) {
 		if (__predict_false(me[i].me_len == 0))
 			continue;
 		memcpy(mnew->m_data + off, me_data(&me[i]), me[i].me_len);
@@ -583,8 +587,6 @@ mvec_init_mbuf_(struct mbuf *m, uint8_t count, uint8_t type, int len)
 	m->m_len = 0;
 	m->m_data = NULL;
 	m->m_flags = M_PKTHDR|M_EXT;
-	if (len)
-		m->m_flags |= M_NOFREE;
 	m->m_ext.ext_free = NULL;
 	m->m_ext.ext_arg1 = m->m_ext.ext_arg2 = NULL;
 	m->m_ext.ext_flags = EXT_FLAG_EMBREF;
