@@ -387,8 +387,8 @@ mvec_dup(const struct mbuf *m, int how)
 	struct mbuf_ext *mextnew;
 	const struct mvec_header *mh;
 	const struct mvec_ent *me;
-	struct mvec_header *mhnew, mhnews;
-	struct mvec_ent *menew;	
+	struct mvec_header *mhnew;
+	struct mvec_ent *menew;
 	struct mbuf *mnew;
 	caddr_t data;
 	int i, off;
@@ -396,7 +396,8 @@ mvec_dup(const struct mbuf *m, int how)
 	MBUF_CHECKSLEEP(how);
 	if (m == NULL)
 		return (NULL);
-	MPASS(m_ismvec(m));
+	if (!m_ismvec(m))
+		return (mvec_mdup(m, how));
 	mext = (const void *)m;
 	if (m->m_pkthdr.len <= PAGE_SIZE - (MSIZE-MVMHLEN)) {
 		mextnew = mvec_alloc(1, m->m_pkthdr.len, how);
@@ -411,7 +412,6 @@ mvec_dup(const struct mbuf *m, int how)
 	menew = mextnew->me_ents;
 	mhnew = &mextnew->me_mh;
 	mhnew->mh_used = 1;
-	mhnews = mext->me_mh;
 	memcpy(&mnew->m_pkthdr, &m->m_pkthdr, sizeof(struct pkthdr));
 	data = (void *)(menew + mhnew->mh_count);
 	MPASS((caddr_t)(&menew[mhnew->mh_start]) != data);
@@ -435,6 +435,58 @@ mvec_dup(const struct mbuf *m, int how)
 	mvec_sanity(mnew);
 	return (mnew);
 }
+
+
+struct mbuf *
+mvec_mdup(const struct mbuf *m, int how)
+{
+	struct mbuf_ext *mextnew;
+	struct mvec_header *mhnew;
+	struct mvec_ent *menew;
+	struct mbuf *mnew;
+	const struct mbuf *mp;
+	caddr_t data;
+	int off;
+
+	MBUF_CHECKSLEEP(how);
+	if (m == NULL)
+		return (NULL);
+	MPASS(!m_ismvec(m));
+	if (m->m_pkthdr.len <= PAGE_SIZE - (MSIZE-MVMHLEN)) {
+		mextnew = mvec_alloc(1, m->m_pkthdr.len, how);
+		mnew = (void *)mextnew;
+	} else {
+		panic("mvec_dup for > PAGE_SIZE not implemented yet XXX\n");
+	}
+	if (__predict_false(mnew == NULL))
+		return (NULL);
+
+	/* XXX only handle the inline data case */
+	menew = mextnew->me_ents;
+	mhnew = &mextnew->me_mh;
+	mhnew->mh_used = 1;
+	memcpy(&mnew->m_pkthdr, &m->m_pkthdr, sizeof(struct pkthdr));
+	data = (void *)(menew + mhnew->mh_count);
+	MPASS((caddr_t)(&menew[mhnew->mh_start]) != data);
+	menew[mhnew->mh_start].me_len = m->m_pkthdr.len;
+	menew[mhnew->mh_start].me_type = MVEC_UNMANAGED;
+	menew[mhnew->mh_start].me_cl = data;
+	menew[mhnew->mh_start].me_off = 0;
+	mnew->m_flags = m->m_flags;
+	mnew->m_data = data;
+	mnew->m_len = m->m_pkthdr.len;
+	off = 0;
+
+	for (mp = m; mp != NULL; mp = mp->m_next) {
+		if (__predict_false(mp->m_len == 0))
+			continue;
+		memcpy(mnew->m_data + off, mp->m_data, mp->m_len);
+		off += mp->m_len;
+	}
+	mvec_sanity(mnew);
+	return (mnew);
+}
+
 
 struct mbuf *
 mvec_defrag(const struct mbuf *m, int how)
