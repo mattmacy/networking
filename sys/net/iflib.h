@@ -457,9 +457,6 @@ void iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, b
 if_pseudo_t iflib_clone_register(if_shared_ctx_t);
 void iflib_clone_deregister(if_pseudo_t);
 
-void iflib_set_pcpu_cache(if_ctx_t ctx, void *cache);
-void *iflib_get_pcpu_cache(if_ctx_t ctx);
-
 int iflib_knlist_add(if_ctx_t ctx, struct knote *kn);
 void iflib_knlist_remove(if_ctx_t ctx, struct knote *kn);
 void iflib_event_signal(if_ctx_t ctx, int hint);
