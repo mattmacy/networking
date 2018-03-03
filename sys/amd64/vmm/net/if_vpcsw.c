@@ -133,7 +133,6 @@ struct vpcsw_softc {
 	art_tree *vs_ftable_ro;
 	art_tree *vs_ftable_rw;
 	struct ifnet *vs_ifdefault;
-	struct vpcsw_cache_ent *vs_pcpu_cache;
 	vpc_id_t vs_uplink_id;
 	struct mtx vs_vtep_mtx;
 	struct grouptask vs_vtep_gtask;
@@ -309,7 +308,7 @@ vpcsw_cache_lookup(struct vpcsw_cache_ent *cache, struct mbuf *m)
 	/*
 	 * Is still in caching window
 	 */
-	if (__predict_false(ticks - vcep->vce_ticks < hz/4))
+	if (__predict_false(ticks - vcep->vce_ticks > hz/4))
 		goto skip;
 	if ((ifp = vpc_if_lookup(vcep->vce_ifindex)) == NULL)
 		goto skip;
@@ -517,14 +516,18 @@ vpcsw_transit(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf
 static int
 vpcsw_transmit(if_t ifp, struct mbuf *m)
 {
-	if_ctx_t ctx;
+
+	panic("unsupported\n");
+	return (EOPNOTSUPP);
+}
+
+int
+vpcsw_transmit_ext(struct ifnet *ifp, struct mbuf *m, void *cache)
+{
+	if_ctx_t ctx = ifp->if_softc;
 	struct vpcsw_softc *vs;
-	struct vpcsw_cache_ent *cache;
 
-	ctx = ifp->if_softc;
-	cache = iflib_get_pcpu_cache(ctx);
 	vs = iflib_get_softc(ctx);
-
 	return (vpcsw_transit(vs, cache, m));
 }
 
@@ -538,7 +541,8 @@ vpcsw_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unus
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
 	ctx = ifp->if_softc;
-	cache = iflib_get_pcpu_cache(ctx);
+	cache = vpcp_get_pcpu_cache(ctx);
+	MPASS(cache != NULL);
 	return (vpcsw_transit(vs, cache, m));
 }
 
@@ -557,7 +561,8 @@ vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
 	ctx = ifp->if_softc;
-	cache = iflib_get_pcpu_cache(ctx);
+	cache = vpcp_get_pcpu_cache(ctx);
+	MPASS(cache != NULL);
 
 	vpcsw_transit(vs, cache, m);
 	return (NULL);
@@ -620,7 +625,6 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	vs->vs_req_read = true;
 	mtx_init(&vs->vs_vtep_mtx, "vtep mtx", NULL, MTX_DEF);
 	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_vtep_gtask, _task_fn_vtep, "vtep task");
-	vs->vs_pcpu_cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	vs->vs_vci.vci_pages = malloc(sizeof(vm_page_t *)*(ARG_MAX/PAGE_SIZE), M_VPCSW, M_WAITOK|M_ZERO);
 	vs->vs_vci.vci_max_count = ARG_MAX/PAGE_SIZE;
 	vpcsw_arp_tmpl_init(vs);
@@ -657,7 +661,7 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	*ifindexp = ifp->if_index;
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
-	iflib_set_pcpu_cache(ctx, cache);
+	vpcp_set_pcpu_cache(ctx, cache);
 	vpcp_set_ifswitch(ctx, iflib_get_ifp(vs->vs_ctx));
 	ifp->if_bridge = vs;
 	ifp->if_bridge_input = vpcsw_bridge_input;
@@ -672,7 +676,6 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	if (rc)
 		goto fail;
 	vpc_ifp_cache(ifp);
-	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
 	oldftable = vs->vs_ftable_ro;
 	vs->vs_ftable_ro = newftable;
@@ -725,7 +728,7 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ck_epoch_synchronize(&vpc_global_record);
 	vpc_art_free(oldftable, M_VPCSW);
 	ctx = ifp->if_softc;
-	cache = iflib_get_pcpu_cache(ctx);
+	cache = vpcp_get_pcpu_cache(ctx);
 	free(cache, M_VPCSW);
 	vpcp_clear_ifswitch(ctx);
 	ifp->if_bridge = NULL;
@@ -782,7 +785,7 @@ vpcsw_port_uplink_create(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	if (bootverbose)
 		printf("switch uplink set to id: %16D - default: %s\n",
 			   vp_id, ":", ifp->if_xname);
-	iflib_set_pcpu_cache(ctx, cache);
+	vpcp_set_pcpu_cache(ctx, cache);
 	iflib_set_mac(ctx, vp_id->node);
 	vpcp_set_ifswitch(ctx, iflib_get_ifp(vs->vs_ctx));
 	vs->vs_ifdefault = ifp;
@@ -829,7 +832,7 @@ vpcsw_ndv4_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
 		m->m_pkthdr.ether_vtag = rsp->vrs_context.voc_vtag;
 		m->m_flags |= M_VLANTAG;
 	}
-	return (vpcsw_transit(vs, vs->vs_pcpu_cache, m));
+	return (vpcsw_transit(vs, NULL, m));
 }
 
 static int
@@ -964,7 +967,7 @@ vpcsw_detach(if_ctx_t ctx)
 		vpc_ctx_t vctx;
 		void *cache;
 
-		cache = iflib_get_pcpu_cache(ifctx);
+		cache = vpcp_get_pcpu_cache(ifctx);
 		free(cache, M_VPCSW);
 		vctx = vmmnet_lookup(&vs->vs_uplink_id);
 		MPASS(vctx != NULL);
@@ -978,7 +981,6 @@ vpcsw_detach(if_ctx_t ctx)
 	vpc_art_free(vs->vs_ftable_ro, M_VPCSW);
 	vpc_art_free(vs->vs_ftable_rw, M_VPCSW);
 
-	free(vs->vs_pcpu_cache, M_VPCSW);
 	refcount_release(&modrefcnt);
 	return (0);
 }
