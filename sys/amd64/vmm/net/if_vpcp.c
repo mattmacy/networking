@@ -93,6 +93,7 @@ struct vpcp_softc {
 	uint16_t vs_vlanid;
 	vpc_id_t vs_devid;
 	enum vpc_obj_type vs_type;
+	void *vs_pcpu_cache;
 };
 
 static void vpcp_vxlanid_set(if_ctx_t ctx, uint32_t vxlanid);
@@ -175,11 +176,12 @@ vmi_transmit(if_t ifp, struct mbuf *m)
 static void
 vmi_input(if_t ifp, struct mbuf *m)
 {
+	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
+	struct ifnet *devifp = vs->vs_ifdev;
 
 	vmi_input_process(ifp, m, false);
-	(void)(*(ifp)->if_bridge_output)(ifp, m, NULL, NULL);
+	devifp->if_transmit_txq(devifp, m);
 }
-
 
 static int
 vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
@@ -189,9 +191,7 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
-
-	ifswitch->if_transmit_txq(ifswitch, m);
-	return (0);
+	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
 /*
@@ -296,8 +296,8 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 
 	ifswitch = vs->vs_ifswitch;
 	if (__predict_true(mh != NULL))
-		ifswitch->if_transmit_txq(ifswitch, mh);
-	if (__predict_false((mret != NULL) && ifswitch->if_transmit_txq(ifswitch, mret)))
+		vpcsw_transmit_ext(ifswitch, mh, vs->vs_pcpu_cache);
+	if (__predict_false((mret != NULL) && vpcsw_transmit_ext(ifswitch, mret, vs->vs_pcpu_cache)))
 		return (NULL);
 	return (mret);
 }
@@ -664,6 +664,22 @@ vpcp_vlanid_get(if_ctx_t ctx)
 	struct vpcp_softc *vs = ctx_to_vs(ctx);
 
 	return (vs->vs_vlanid);
+}
+
+void
+vpcp_set_pcpu_cache(if_ctx_t ctx, void *cache)
+{
+	struct vpcp_softc *vs = iflib_get_softc(ctx);
+
+	vs->vs_pcpu_cache = cache;
+}
+
+void *
+vpcp_get_pcpu_cache(if_ctx_t ctx)
+{
+	struct vpcp_softc *vs = iflib_get_softc(ctx);
+
+	return (vs->vs_pcpu_cache);
 }
 
 static device_method_t vpcp_if_methods[] = {
