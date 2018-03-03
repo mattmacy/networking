@@ -133,6 +133,11 @@ mvec_buffer_free(struct mbuf *m)
 		case MVALLOC_MBUF:
 			uma_zfree_arg(zone_mbuf, m, (void *)MB_DTOR_SKIP);
 			break;
+		case MVALLOC_CLUSTER:
+			uma_zfree(zone_clust, m);
+			break;
+		default:
+			panic("unrecognized mvalloc value: %d\n", mh->mh_mvtype);
 	}
 }
 
@@ -376,8 +381,47 @@ mvec_copydata(const struct mbuf *m, int off, int len, caddr_t cp)
 struct mbuf *
 mvec_dup(const struct mbuf *m, int how)
 {
-	panic("%s unimplemented", __func__);
-	return (NULL);
+	const struct mbuf_ext *mext;
+	struct mbuf_ext *mextnew;
+	const struct mvec_header *mh;
+	const struct mvec_ent *me;
+	struct mvec_header *mhnew;
+	struct mvec_ent *menew;	
+	struct mbuf *mnew;
+	caddr_t data;
+	int i, off;
+
+	MBUF_CHECKSLEEP(how);
+	if (m == NULL)
+		return (NULL);
+	MPASS(m_ismvec(m));
+	mext = (const void *)m;
+	if (m->m_pkthdr.len <= PAGE_SIZE - MSIZE) {
+		mextnew = mvec_alloc(1, m->m_pkthdr.len, how);
+		mnew = (void *)mextnew;
+	} else {
+		panic("mvec_dup for > PAGE_SIZE not implemented yet XXX\n");
+	}
+	if (__predict_false(mnew == NULL))
+		return (NULL);
+
+	/* XXX only handle the inline data case */
+	menew = mextnew->me_ents;
+	mhnew = &mextnew->me_mh;
+	mhnew->mh_used = 1;
+	data = (void *)(menew + mhnew->mh_count);
+	off = 0;
+
+	mnew->m_data = data;
+	me = mext->me_ents;
+	mh = &mext->me_mh;
+	for (i = mh->mh_start; i < mh->mh_used; i++) {
+		if (__predict_false(me[i].me_len == 0))
+			continue;
+		memcpy(mnew->m_data + off, me_data(&me[i]), me[i].me_len);
+		off += me[i].me_len;
+	}
+	return (mnew);
 }
 
 struct mbuf *
@@ -515,14 +559,22 @@ mvec_init_mbuf_(struct mbuf *m, uint8_t count, uint8_t type, int len)
 	mh = &mext->me_mh;
 	me = mext->me_ents;
 	*((uint64_t *)mh) = 0;
-	if (type == MVALLOC_MBUF && len == 0)
-		mh->mh_count = MBUF_ME_MAX;
-	else
-		mh->mh_count = count;
+	if (type == MVALLOC_MBUF) {
+		if (len == 0) {
+			mh->mh_count = MBUF_ME_MAX;
+			/* leave room for prepend */
+			mh->mh_start = 1;
+		} else {
+			mh->mh_count = count;
+			mh->mh_start = 0;
+		}
+	} else {
+		mh->mh_count = count+1;
+		mh->mh_start = 1;
+	}
 	bzero(me, sizeof(*me)*mh->mh_count);
 	mh->mh_mvtype = type;
-	/* leave room for prepend */
-	mh->mh_start = 1;
+
 	rc = m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
 	if (__predict_false(rc))
 		return (rc);
@@ -531,6 +583,8 @@ mvec_init_mbuf_(struct mbuf *m, uint8_t count, uint8_t type, int len)
 	m->m_len = 0;
 	m->m_data = NULL;
 	m->m_flags = M_PKTHDR|M_EXT;
+	if (len)
+		m->m_flags |= M_NOFREE;
 	m->m_ext.ext_free = NULL;
 	m->m_ext.ext_arg1 = m->m_ext.ext_arg2 = NULL;
 	m->m_ext.ext_flags = EXT_FLAG_EMBREF;
@@ -561,6 +615,9 @@ mvec_alloc(uint8_t count, int len, int how)
 	if (size <= MSIZE) {
 		m = (void*)m_get(how, MT_NOINIT);
 		type = MVALLOC_MBUF;
+	} else if (size > 1024 && size <= MCLBYTES) {
+		m = (void *)uma_zalloc(zone_clust, how);
+		type = MVALLOC_CLUSTER;
 	} else {
 		m = malloc(size, M_MVEC, how);
 		type = MVALLOC_MALLOC;

@@ -292,6 +292,7 @@ struct mbuf {
 
 #define MVALLOC_MALLOC	0x0		/* mvec was malloced with type M_MVEC */
 #define MVALLOC_MBUF	0x1		/* mvec was allocated from zone_mbuf */
+#define MVALLOC_CLUSTER	0x2		/* mvec was allocated from zone_cluster */
 
 /*
  * | mbuf { }| pkthdr { } | m_ext { }| mvec_header { } | mvec_ent[] | refcnt[] (optional) | 
@@ -300,12 +301,12 @@ struct mvec_header {
 	uint64_t mh_count:7; /* number of segments */
 	uint64_t mh_start:7; /* starting segment */
 	uint64_t mh_used:7; /* segments in use */
-	uint64_t mh_mvtype:3; /* mvec allocation */
+	uint64_t mh_mvtype:4; /* mvec allocation */
 	uint64_t mh_multiref:1; /* the clusters have independent ref counts so
 							 * an array of refcounts sits before the mvec_ents
 							 */
 	uint64_t mh_multipkt:1; /* contains multiple packets */
-	uint64_t mh_flags:38;
+	uint64_t mh_flags:37;
 };
 
 struct mvec_ent {
@@ -337,6 +338,8 @@ struct mbuf_ext {
 #define ME_LEN(m_, mh_, idx_) (MHMEI(m_, mh_,idx_)->me_len)
 
 #define MBUF_ME_MAX ((MHLEN - sizeof(struct m_ext) - sizeof(struct mvec_header))/sizeof(struct mvec_ent))
+#define MVMHLEN (MSIZE - sizeof(struct mbuf_ext) - sizeof(struct mvec_ent))
+#define MVMHCLLEN (MCLBYTES - sizeof(struct mbuf_ext) - sizeof(struct mvec_ent))
 
 #define m_ismvec(m) (((m)->m_flags & M_EXT) && ((m)->m_ext.ext_type == EXT_MVEC))
 #define me_data(me) ((me)->me_cl + (me)->me_off)
