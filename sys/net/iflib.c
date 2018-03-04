@@ -5157,6 +5157,7 @@ iflib_pseudo_register(device_t dev, if_shared_ctx_t sctx, if_ctx_t *ctxp,
 	if_setcapabilities(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_LINKSTATE);
 	if_setcapenable(ifp, scctx->isc_capenable | IFCAP_HWSTATS | IFCAP_LINKSTATE);
 
+	ifp->if_flags |= IFF_NOGROUP;
 	if (sctx->isc_flags & IFLIB_PSEUDO) {
 		ether_ifattach(ctx->ifc_ifp, ctx->ifc_mac);
 
@@ -7202,6 +7203,7 @@ iflib_clone_register(if_shared_ctx_t sctx)
 		printf("clone_simple failed -- cloned %s  devices will not be available\n", sctx->isc_name);
 		goto fail_clone;
 	}
+	ifc_flags_set(ip->ip_ifc, IFC_NOGROUP);
 	ip->ip_lladdr_tag = EVENTHANDLER_REGISTER(iflladdr_event,
 											 iflib_iflladdr, NULL, EVENTHANDLER_PRI_ANY);
 	if (ip->ip_lladdr_tag == NULL)
