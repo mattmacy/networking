@@ -356,6 +356,7 @@ struct iflib_txq {
 	uint16_t	ift_rs_pending;
 	uint16_t	ift_pktcount;
 	uint16_t	ift_nsegs;
+	uint16_t	ift_qstall_count;
 	int		ift_ticks;
 	/* implicit pad */
 	uint8_t		ift_txd_size[8];
@@ -2276,6 +2277,15 @@ iflib_timer(void *arg)
 	** and the HUNG state will be static if set.
 	*/
 	IFDI_TIMER(ctx, txq->ift_id);
+	if (ifmp_ring_is_stalled(txq->ift_br))
+		txq->ift_qstall_count++;
+	else
+		txq->ift_qstall_count = 0;
+
+	if (txq->ift_qstall_count > 1)
+		txq->ift_qstatus = IFLIB_QUEUE_HUNG;
+	else if (txq->ift_qstall_count == 0)
+		txq->ift_qstatus = IFLIB_QUEUE_IDLE;
 	if (ctx->ifc_sctx->isc_flags & IFLIB_NO_HANG_RESET) {
 		if (txq->ift_qstatus == IFLIB_QUEUE_HUNG) {
 			device_printf(ctx->ifc_dev,  "TX(%d) desc avail = %d, pidx = %d\n",
@@ -2289,8 +2299,6 @@ iflib_timer(void *arg)
 			   (sctx->isc_pause_frames == 0)))
 		goto hung;
 
-	if (ifmp_ring_is_stalled(txq->ift_br))
-		txq->ift_qstatus = IFLIB_QUEUE_HUNG;
 	txq->ift_cleaned_prev = txq->ift_cleaned;
 
 	sctx->isc_pause_frames = 0;
@@ -2300,7 +2308,7 @@ iflib_timer(void *arg)
 hung:
 	CTX_LOCK(ctx);
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
-	device_printf(ctx->ifc_dev,  "TX(%d) desc avail = %d, pidx = %d\n",
+	device_printf(ctx->ifc_dev,  "TX(%d) desc avail = %d, pidx = %d --resetting\n",
 				  txq->ift_id, TXQ_AVAIL(txq), txq->ift_pidx);
 
 	IFDI_WATCHDOG_RESET(ctx);
@@ -2412,7 +2420,6 @@ iflib_stop(if_ctx_t ctx)
 	DELAY(1000);
 	IFDI_STOP(ctx);
 	DELAY(1000);
-
 	iflib_debug_reset();
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_ntxqsets; i++, txq++) {
@@ -4374,7 +4381,9 @@ _task_fn_admin(void *context)
 	IFDI_LINK_INTR_ENABLE(ctx);
 	if (ctx->ifc_flags & IFC_DO_RESET) {
 		ctx->ifc_flags &= ~IFC_DO_RESET;
-		iflib_if_init_locked(ctx);
+		if ((ctx->ifc_sctx->isc_flags & IFLIB_NO_HANG_RESET) == 0) {
+			iflib_if_init_locked(ctx);
+		}
 	}
 	CTX_UNLOCK(ctx);
 
@@ -4424,7 +4433,9 @@ iflib_sysctl_int_delay(SYSCTL_HANDLER_ARGS)
 static void
 iflib_if_init_locked(if_ctx_t ctx)
 {
-	iflib_stop(ctx);
+	if (!LINK_ACTIVE(ctx) ||
+		(ctx->ifc_sctx->isc_flags & IFLIB_NO_HANG_RESET) == 0)
+		iflib_stop(ctx);
 	iflib_init_locked(ctx);
 }
 
@@ -6476,6 +6487,13 @@ iflib_link_state_change(if_ctx_t ctx, int link_state, uint64_t baudrate)
 	if_link_state_change(ifp, link_state);
 }
 
+void
+iflib_link_state_change_unlocked(if_ctx_t ctx, int link_state, uint64_t baudrate)
+{
+	CTX_LOCK(ctx);
+	iflib_link_state_change(ctx, link_state, baudrate);
+	CTX_UNLOCK(ctx);
+}
 
 static int
 iflib_tx_credits_update(if_ctx_t ctx, iflib_txq_t txq)
