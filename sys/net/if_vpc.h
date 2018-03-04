@@ -282,9 +282,10 @@ int vpcp_port_disconnect_ifp(struct ifnet *ifp);
 void vpcp_set_pcpu_cache(if_ctx_t ctx, void *cache);
 void *vpcp_get_pcpu_cache(if_ctx_t ctx);
 
-
-
 int vpcsw_transmit_ext(struct ifnet *ifp, struct mbuf *m, void *cache);
+int vpcsw_port_connect(if_ctx_t switchctx, struct ifnet *portifp, struct ifnet *devifp);
+int vpcsw_port_disconnect(if_ctx_t switchctx, struct ifnet *portifp);
+
 
 int vmnic_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			  size_t *outlen, void **outdata);

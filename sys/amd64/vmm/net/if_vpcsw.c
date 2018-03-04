@@ -360,6 +360,7 @@ vpc_broadcast_one(void *data, const unsigned char *key __unused, uint32_t key_le
 	msrc = (struct mbuf *)data;
 	if ((ifp = vpc_if_lookup(*ifindexp)) == NULL)
 		return (0);
+	MPASS(msrc->m_pkthdr.rcvif != NULL);
 	if (msrc->m_pkthdr.rcvif == ifp)
 		return (0);
 	m = mvec_dup(msrc, M_NOWAIT);
@@ -639,8 +640,6 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	struct ifreq ifr;
 	if_ctx_t ctx;
 	void *cache;
-	art_tree *newftable, *oldftable;
-	uint16_t *ifindexp;
 	int rc;
 
 	if (vmmnet_lookup(vp_id) != NULL) {
@@ -657,8 +656,6 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 			printf("couldn't reference %s\n", ifr.ifr_name);
 		return (ENXIO);
 	}
-	ifindexp = malloc(sizeof(uint16_t), M_VPCSW, M_WAITOK);
-	*ifindexp = ifp->if_index;
 	cache = malloc(sizeof(struct vpcsw_cache_ent)*MAXCPU, M_VPCSW, M_WAITOK|M_ZERO);
 	ctx = ifp->if_softc;
 	vpcp_set_pcpu_cache(ctx, cache);
@@ -667,66 +664,28 @@ vpcsw_port_add(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge_input = vpcsw_bridge_input;
 	ifp->if_bridge_output = vpcsw_bridge_output;
 	ifp->if_bridge_linkstate = vpcsw_bridge_linkstate;
-	if (bootverbose)
-		printf("storing ifindexp= %d in switch ART for %6D\n", *ifindexp, vp_id->node, ":");
 	iflib_set_mac(ctx, vp_id->node);
-	art_insert(vs->vs_ftable_rw, vp_id->node, ifindexp);
 	vmmnet_insert(vp_id, ifp, VPC_OBJ_PORT);
-	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
-	if (rc)
-		goto fail;
 	vpc_ifp_cache(ifp);
 	ctx = ifp->if_softc;
-	oldftable = vs->vs_ftable_ro;
-	vs->vs_ftable_ro = newftable;
-	ck_epoch_synchronize(&vpc_global_record);
-	vpc_art_free(oldftable, M_VPCSW);
 	if_rele(ifp);
 	return (0);
- fail:
-	free(ifindexp, M_VPCSW);
-	if_rele(ifp);
-	return (rc);
 }
 
 static int
 vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 {
 	struct ifnet *ifp;
-	struct sockaddr_dl *sdl;
-	art_tree *newftable, *oldftable;
 	if_ctx_t ctx;
 	vpc_ctx_t vctx;
 	void *cache;
-	uint16_t *ifindexp;
-	int rc;
 
 	vctx = vmmnet_lookup(vp_id);
 	if (vctx == NULL)
 		return (ENOENT);
 	ifp = vctx->v_ifp;
-	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-	if (sdl->sdl_type != IFT_ETHER) {
-		if_rele(ifp);
-		return (EINVAL);
-	}
-	/* Verify ifnet in table */
-	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) == NULL) {
-		if (bootverbose)
-			printf("port not found in forward table can't delete %16D\n", vp_id, ":");
-		if_rele(ifp);
-		return (ENOENT);
-	}
-	ifindexp = art_delete(vs->vs_ftable_rw, LLADDR(sdl));
-	free(ifindexp, M_VPCSW);
-	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
-	if (rc)
-		goto fail;
+
 	vmmnet_delete(vp_id);
-	oldftable = vs->vs_ftable_ro;
-	vs->vs_ftable_ro = newftable;
-	ck_epoch_synchronize(&vpc_global_record);
-	vpc_art_free(oldftable, M_VPCSW);
 	ctx = ifp->if_softc;
 	cache = vpcp_get_pcpu_cache(ctx);
 	free(cache, M_VPCSW);
@@ -737,10 +696,6 @@ vpcsw_port_delete(struct vpcsw_softc *vs, const vpc_id_t *vp_id)
 	ifp->if_bridge_linkstate = NULL;
 	if_clone_destroy(ifp->if_xname);
 	return (0);
- fail:
-	free(ifindexp, M_VPCSW);
-	if_rele(ifp);
-	return (rc);
 }
 
 static int
@@ -908,6 +863,74 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			rc = ENOTSUP;
 	}
 	return (rc);
+}
+
+static int
+vpcsw_ro_update(struct vpcsw_softc *vs)
+{
+	art_tree *newftable, *oldftable;
+	int rc;
+
+	rc = vpc_art_tree_clone(vs->vs_ftable_rw, &newftable, M_VPCSW);
+	if (rc)
+		return (rc);
+	oldftable = vs->vs_ftable_ro;
+	vs->vs_ftable_ro = newftable;
+	ck_epoch_synchronize(&vpc_global_record);
+	vpc_art_free(oldftable, M_VPCSW);
+	return (0);
+}
+
+int
+vpcsw_port_connect(if_ctx_t switchctx, struct ifnet *portifp, struct ifnet *devifp)
+{
+	struct vpcsw_softc *vs;
+	struct sockaddr_dl *sdl;
+	uint16_t *ifindexp;
+
+	sdl = (struct sockaddr_dl *)devifp->if_addr->ifa_addr;
+	if (sdl->sdl_type != IFT_ETHER)
+		return (EINVAL);
+
+	vs = iflib_get_softc(switchctx);
+	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) != NULL) {
+		if (bootverbose)
+			printf("port already in forward table can't insert %6D\n", LLADDR(sdl), ":");
+		return (ENOENT);
+	}
+
+	ifindexp = malloc(sizeof(uint16_t), M_VPCSW, M_WAITOK);
+	*ifindexp = portifp->if_index;
+
+	vpc_ifp_cache(devifp);
+	vpc_ifp_cache(portifp);
+	if (bootverbose)
+		printf("storing ifindexp= %d in switch ART for %6D\n", *ifindexp, LLADDR(sdl), ":");
+	art_insert(vs->vs_ftable_rw, LLADDR(sdl), ifindexp);
+
+	return (vpcsw_ro_update(vs));
+}
+
+int
+vpcsw_port_disconnect(if_ctx_t switchctx, struct ifnet *portifp)
+{
+	struct vpcsw_softc *vs;
+	struct sockaddr_dl *sdl;
+	uint16_t *ifindexp;
+
+	vs = iflib_get_softc(switchctx);
+	sdl = (struct sockaddr_dl *)portifp->if_addr->ifa_addr;
+	if (sdl->sdl_type != IFT_ETHER)
+		return (EINVAL);
+	/* Verify ifnet in table */
+	if (art_search(vs->vs_ftable_rw, LLADDR(sdl)) == NULL) {
+		if (bootverbose)
+			printf("port not found in forward table can't delete %6D\n", LLADDR(sdl), ":");
+		return (ENOENT);
+	}
+	ifindexp = art_delete(vs->vs_ftable_rw, LLADDR(sdl));
+	free(ifindexp, M_VPCSW);
+	return (vpcsw_ro_update(vs));
 }
 
 static int
