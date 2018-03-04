@@ -203,7 +203,10 @@ typedef struct {
 #include <net/art.h>
 #include <ck_epoch.h>
 
-#define M_TRUNK M_PROTO1
+#define M_TRUNK			M_PROTO1
+#define M_HOLBLOCKING	M_PROTO2
+
+#define M_VPCMASK		(M_PROTO1|M_PROTO2)
 
 struct ifp_cache {
 	uint16_t ic_ifindex_max;
