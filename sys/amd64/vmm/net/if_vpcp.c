@@ -191,6 +191,7 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
+	m->m_pkthdr.rcvif = vs->vs_ifport;
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
