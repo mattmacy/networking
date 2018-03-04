@@ -432,6 +432,7 @@ void iflib_iov_intr_deferred(if_ctx_t ctx);
 
 
 void iflib_link_state_change(if_ctx_t ctx, int linkstate, uint64_t baudrate);
+void iflib_link_state_change_unlocked(if_ctx_t ctx, int linkstate, uint64_t baudrate);
 
 int iflib_dma_alloc(if_ctx_t ctx, int size, iflib_dma_info_t dma, int mapflags);
 void iflib_dma_free(iflib_dma_info_t dma);
