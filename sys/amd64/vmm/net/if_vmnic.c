@@ -131,7 +131,7 @@ const char * pci_cmds[] = {
 	IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM | IFCAP_VLAN_MTU |			\
 	 IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU)
 
-static MALLOC_DEFINE(M_VTNETBE, "vtnetbe", "virtio-net backend");
+static MALLOC_DEFINE(M_VMNIC, "vmnic", "virtio-net backend");
 
 static volatile int32_t modrefcnt;
 
@@ -1383,7 +1383,7 @@ vtnet_be_init_(struct vm *vm)
 {
 	struct vtnet_be *vb;
 
-	vb = malloc(sizeof(struct vtnet_be), M_VTNETBE, M_WAITOK | M_ZERO);
+	vb = malloc(sizeof(struct vtnet_be), M_VMNIC, M_WAITOK | M_ZERO);
 	vb->vm = vm;
 	vb->name = vm_name(vm);
 
@@ -1431,7 +1431,7 @@ vtnet_be_cleanup_(struct vtnet_be *vb)
 	SLIST_REMOVE(&vb_head, vb, vtnet_be, next);
 	VB_UNLOCK;
 
-	free(vb, M_VTNETBE);
+	free(vb, M_VMNIC);
 }
 
 static if_pseudo_t vb_pseudo;
@@ -1467,16 +1467,16 @@ vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq, int idx)
 	 */
 	rxq->vr_shift = ffs(vs->shared->isc_nrxd[0])-1;
 	rxq->vr_used = malloc(sizeof(uint16_t)*vs->shared->isc_nrxd[0]*4,
-						  M_VTNETBE, M_WAITOK|M_ZERO);
+						  M_VMNIC, M_WAITOK|M_ZERO);
 	rxq->vr_completion =  malloc(sizeof(uint8_t)*vs->shared->isc_nrxd[0],
-						  M_VTNETBE, M_WAITOK|M_ZERO);
+						  M_VMNIC, M_WAITOK|M_ZERO);
 }
 
 static void
 vb_rxq_deinit(struct vb_softc *vs, struct vb_rxq *rxq)
 {
-	free(rxq->vr_used, M_VTNETBE);
-	free(rxq->vr_completion, M_VTNETBE);
+	free(rxq->vr_used, M_VMNIC);
+	free(rxq->vr_completion, M_VMNIC);
 }
 
 static void
@@ -1533,12 +1533,14 @@ vb_attach_post(if_ctx_t ctx)
 	MPASS(scctx->isc_ntxqsets == scctx->isc_nrxqsets);
 	vs->vs_nqs = scctx->isc_nrxqsets;
 	nvq = vs->vs_nvqs;
-	vs->vs_queues = malloc(nvq*sizeof(struct vb_queue), M_VTNETBE, M_WAITOK|M_ZERO);
-	vs->vs_msix = malloc(nvq*sizeof(struct vb_msix), M_VTNETBE, M_WAITOK|M_ZERO);
+	vs->vs_queues = malloc(nvq*sizeof(struct vb_queue), M_VMNIC, M_WAITOK|M_ZERO);
+	vs->vs_msix = malloc(nvq*sizeof(struct vb_msix), M_VMNIC, M_WAITOK|M_ZERO);
 	vs->vs_rx_queues = malloc(sizeof(struct vb_rxq)*scctx->isc_nrxqsets,
-							  M_VTNETBE, M_WAITOK|M_ZERO);
+							  M_VMNIC, M_WAITOK|M_ZERO);
 	vs->vs_tx_queues = malloc(sizeof(struct vb_txq)*scctx->isc_ntxqsets,
-							  M_VTNETBE, M_WAITOK|M_ZERO);
+							  M_VMNIC, M_WAITOK|M_ZERO);
+	MPASS(scctx->isc_nrxqsets >= 1);
+	MPASS(scctx->isc_ntxqsets >= 1);
 	for (i = 0; i < scctx->isc_nrxqsets; i++) {
 		vb_rxq_init(vs, &vs->vs_rx_queues[i], i);
 		snprintf(buf, sizeof(buf), "rxq%d", i);
@@ -1670,10 +1672,10 @@ vb_detach(if_ctx_t ctx)
 	for (i = 0; i < scctx->isc_nrxqsets; i++)
 		vb_rxq_deinit(vs, &vs->vs_rx_queues[i]);
 	iflib_config_gtask_deinit(&vs->vs_deferred_uptask);
-	free(vs->vs_rx_queues, M_VTNETBE);
-	free(vs->vs_tx_queues, M_VTNETBE);
-	free(vs->vs_msix, M_VTNETBE);
-	free(vs->vs_queues, M_VTNETBE);
+	free(vs->vs_rx_queues, M_VMNIC);
+	free(vs->vs_tx_queues, M_VMNIC);
+	free(vs->vs_msix, M_VMNIC);
+	free(vs->vs_queues, M_VMNIC);
 
 	return (0);
 }
