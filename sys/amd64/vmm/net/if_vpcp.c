@@ -284,6 +284,10 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
+		if (__predict_false(mp->m_flags & M_TRUNK)) {
+			mp->m_flags &= ~M_TRUNK;
+			goto next;
+		}
 		mp->m_flags |= M_TRUNK;
 		if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost) &&
 							!(m->m_flags & (M_VXLANTAG|M_VLANTAG)))) {
@@ -296,6 +300,7 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 			mt->m_nextpkt = mp;
 			mt = mp;
 		}
+	next:
 		mp = mnext;
 	} while (mp);
 
