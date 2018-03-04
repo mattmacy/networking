@@ -1299,6 +1299,8 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 	struct ifg_member	*ifgm;
 	int 			 new = 0;
 
+	if (ifp->if_flags & IFF_NOGROUP)
+		return (0);
 	if (groupname[0] && groupname[strlen(groupname) - 1] >= '0' &&
 	    groupname[strlen(groupname) - 1] <= '9')
 		return (EINVAL);
