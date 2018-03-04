@@ -422,7 +422,7 @@ mvec_dup_internal(const struct mbuf *m, int how, bool ismvec)
 	mnew->m_data = data;
 	menew[mhnew->mh_start].me_cl = data;
 	mnew->m_flags |= m->m_flags;
-	mnew->m_flags &= ~M_NOFREE;
+	mnew->m_flags &= ~(M_NOFREE|M_PROTOFLAGS);
 	mnew->m_len = 0;
 
 	if (ismvec) {
