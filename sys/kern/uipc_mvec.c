@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2017 Matthew Macy <matt.macy@joyent.com>
- * Copyright (C) 2017 Joyent Inc.
+ * Copyright (C) 2017-2018 Matthew Macy <matt.macy@joyent.com>
+ * Copyright (C) 2017-2018 Joyent Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -100,6 +100,7 @@ mvec_sanity(struct mbuf *m)
 	total = 0;
 	MPASS(m->m_len == me->me_len);
 	MPASS(m->m_data == (me->me_cl + me->me_off));
+	MPASS((m->m_flags & (M_EXT|M_PKTHDR)) == (M_EXT|M_PKTHDR));
 	MPASS(mh->mh_count >= (mh->mh_start + mh->mh_used));
 	for (i = mh->mh_start; i < mh->mh_used + mh->mh_start; i++, me++, me_count++) {
 		if (__predict_false(me->me_len == 0)) {
@@ -380,25 +381,24 @@ mvec_copydata(const struct mbuf *m, int off, int len, caddr_t cp)
 	panic("%s unimplemented", __func__);
 }
 
-struct mbuf *
-mvec_dup(const struct mbuf *m, int how)
+static struct mbuf *
+mvec_dup_internal(const struct mbuf *m, int how, bool ismvec)
 {
-	const struct mbuf_ext *mext;
 	struct mbuf_ext *mextnew;
-	const struct mvec_header *mh;
-	const struct mvec_ent *me;
 	struct mvec_header *mhnew;
 	struct mvec_ent *menew;
 	struct mbuf *mnew;
+	const struct mbuf_ext *mext;
+	const struct mvec_header *mh;
+	const struct mvec_ent *me;
+	const struct mbuf *mp;
 	caddr_t data;
-	int i, off;
+	int i;
 
 	MBUF_CHECKSLEEP(how);
 	if (m == NULL)
 		return (NULL);
-	if (!m_ismvec(m))
-		return (mvec_mdup(m, how));
-	mext = (const void *)m;
+
 	if (m->m_pkthdr.len <= PAGE_SIZE - (MSIZE-MVMHLEN)) {
 		mextnew = mvec_alloc(1, m->m_pkthdr.len, how);
 		mnew = (void *)mextnew;
@@ -413,80 +413,51 @@ mvec_dup(const struct mbuf *m, int how)
 	mhnew = &mextnew->me_mh;
 	mhnew->mh_used = 1;
 	memcpy(&mnew->m_pkthdr, &m->m_pkthdr, sizeof(struct pkthdr));
-	data = (void *)(menew + mhnew->mh_count);
-	MPASS((caddr_t)(&menew[mhnew->mh_start]) != data);
 	menew[mhnew->mh_start].me_len = m->m_pkthdr.len;
 	menew[mhnew->mh_start].me_type = MVEC_UNMANAGED;
-	menew[mhnew->mh_start].me_cl = data;
 	menew[mhnew->mh_start].me_off = 0;
-	mnew->m_flags = m->m_flags;
-	mnew->m_data = data;
-	mnew->m_len = m->m_pkthdr.len;
-	off = 0;
 
-	mh = &mext->me_mh;
-	me = mext->me_ents;
-	for (i = mh->mh_start; i < mh->mh_start + mh->mh_used; i++) {
-		if (__predict_false(me[i].me_len == 0))
-			continue;
-		memcpy(mnew->m_data + off, me_data(&me[i]), me[i].me_len);
-		off += me[i].me_len;
+	data = (void *)(menew + mhnew->mh_count);
+	MPASS((caddr_t)(&menew[mhnew->mh_start]) != data);
+	mnew->m_data = data;
+	menew[mhnew->mh_start].me_cl = data;
+	mnew->m_flags |= m->m_flags;
+	mnew->m_len = 0;
+
+	if (ismvec) {
+		mext = (const void *)m;
+		mh = &mext->me_mh;
+		me = mext->me_ents;
+		for (i = mh->mh_start; i < mh->mh_start + mh->mh_used; i++) {
+			if (__predict_false(me[i].me_len == 0))
+				continue;
+			memcpy(mnew->m_data + mnew->m_len, me_data(&me[i]), me[i].me_len);
+			mnew->m_len += me[i].me_len;
+		}
+	} else {
+		mp = m;
+		do {
+			memcpy(mnew->m_data + mnew->m_len, mp->m_data, mp->m_len);
+			mnew->m_len += mp->m_len;
+			mp = mp->m_next;
+		} while (mp != NULL);
 	}
+	MPASS(mnew->m_len == m->m_pkthdr.len);
 	mvec_sanity(mnew);
 	return (mnew);
 }
 
+struct mbuf *
+mvec_dup(const struct mbuf *m, int how)
+{
+	return (mvec_dup_internal(m, how, m_ismvec(m)));
+}
 
 struct mbuf *
 mvec_mdup(const struct mbuf *m, int how)
 {
-	struct mbuf_ext *mextnew;
-	struct mvec_header *mhnew;
-	struct mvec_ent *menew;
-	struct mbuf *mnew;
-	const struct mbuf *mp;
-	caddr_t data;
-	int off;
-
-	MBUF_CHECKSLEEP(how);
-	if (m == NULL)
-		return (NULL);
-	MPASS(!m_ismvec(m));
-	if (m->m_pkthdr.len <= PAGE_SIZE - (MSIZE-MVMHLEN)) {
-		mextnew = mvec_alloc(1, m->m_pkthdr.len, how);
-		mnew = (void *)mextnew;
-	} else {
-		panic("mvec_dup for > PAGE_SIZE not implemented yet XXX\n");
-	}
-	if (__predict_false(mnew == NULL))
-		return (NULL);
-
-	/* XXX only handle the inline data case */
-	menew = mextnew->me_ents;
-	mhnew = &mextnew->me_mh;
-	mhnew->mh_used = 1;
-	memcpy(&mnew->m_pkthdr, &m->m_pkthdr, sizeof(struct pkthdr));
-	data = (void *)(menew + mhnew->mh_count);
-	MPASS((caddr_t)(&menew[mhnew->mh_start]) != data);
-	menew[mhnew->mh_start].me_len = m->m_pkthdr.len;
-	menew[mhnew->mh_start].me_type = MVEC_UNMANAGED;
-	menew[mhnew->mh_start].me_cl = data;
-	menew[mhnew->mh_start].me_off = 0;
-	mnew->m_flags = m->m_flags;
-	mnew->m_data = data;
-	mnew->m_len = m->m_pkthdr.len;
-	off = 0;
-
-	for (mp = m; mp != NULL; mp = mp->m_next) {
-		if (__predict_false(mp->m_len == 0))
-			continue;
-		memcpy(mnew->m_data + off, mp->m_data, mp->m_len);
-		off += mp->m_len;
-	}
-	mvec_sanity(mnew);
-	return (mnew);
+	return (mvec_dup_internal(m, how, false));
 }
-
 
 struct mbuf *
 mvec_defrag(const struct mbuf *m, int how)
