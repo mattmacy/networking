@@ -154,6 +154,7 @@ vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
 		vmi_txflags(m, &vpi);
 		if (setid) {
 			m->m_flags |= vs->vs_mflags;
+			m->m_flags |= M_HOLBLOCKING;
 			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
 			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
 		}
@@ -228,10 +229,13 @@ phys_input(struct ifnet *ifport, struct mbuf *m)
 	mp = m->m_nextpkt;
 	qid = ifdev->if_mbuf_to_qid(ifdev, m);
 	batch = true;
+	m->m_flags &= ~M_VPCMASK;
 	while (mp) {
+		mp->m_flags &= ~M_VPCMASK;
 		mp->m_pkthdr.rcvif = NULL;
-		if (ifdev->if_mbuf_to_qid(ifdev, m) != qid)
+		if (batch && ifdev->if_mbuf_to_qid(ifdev, m) != qid)
 			batch = false;
+		mp = mp->m_nextpkt;
 	}
 	if (__predict_true(batch)) {
 		ifdev->if_transmit_txq(ifdev, m);
