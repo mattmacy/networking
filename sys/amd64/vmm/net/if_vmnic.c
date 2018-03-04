@@ -577,8 +577,11 @@ vb_rxd_reclaim(struct vb_rxq *rxq)
 	int count = 0;
 #endif
 
-	if (__predict_false(!(vs->vs_flags & VS_READY)))
+	if (__predict_false((vs->vs_flags & VS_READY) == 0)) {
+		RXDPRINTF("%s not ready\n", __func__);
 		return;
+	}
+	RXDPRINTF("q: %128D\n", rxq->vr_completion, "");
 
 	nrxd = vs->shared->isc_nrxd[0];
 	mask_used = (nrxd*4)-1;
@@ -625,9 +628,6 @@ vb_rxd_available(void *arg, qidx_t rxqid, qidx_t cidx, qidx_t budget)
 	struct vb_rxq *rxq = &vs->vs_rx_queues[rxqid];
 	uint16_t idx, nrxd = vs->shared->isc_nrxd[0];
 	int cnt;
-
-	if (__predict_false((vs->vs_flags & VS_READY) == 0))
-		return (0);
 
 	idx =  vs->vs_queues[txq2vq(rxqid)].vq_avail->idx;
 	idx &= (nrxd-1);
@@ -861,7 +861,6 @@ vb_rx_completion(struct mbuf *m)
 
 	if ((m->m_flags & M_PKTHDR) == 0)
 		return;
-
 	rxq = (struct vb_rxq *)m->m_ext.ext_arg1;
 	MPASS(rxq != NULL);
 	vs = rxq->vr_vs;
@@ -1407,6 +1406,7 @@ vtnet_be_cleanup_(struct vtnet_be *vb)
 		vs = SLIST_FIRST(&vb->dev);
 		SLIST_REMOVE(&vb->dev, vs, vb_softc, vs_next);
 		VB_UNLOCK;
+		iflib_link_state_change_unlocked(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(200));
 		vs->vs_flags &= ~(VS_ENQUEUED|VS_READY);
 
 		/*
@@ -1418,6 +1418,7 @@ vtnet_be_cleanup_(struct vtnet_be *vb)
 		vs->vs_negotiated_caps = 0;
 		vs->vs_io_start = 0;
 		vs->vs_io_size = 0;
+		vs->vs_msix_enabled = 0;
 		for (i = 0; i < vs->shared->isc_nrxqsets; i++) {
 			vs->vs_rx_queues[i].vr_cidx = 0;
 			vs->vs_rx_queues[i].vr_pidx = 0;
