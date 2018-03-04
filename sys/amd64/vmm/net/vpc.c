@@ -230,6 +230,32 @@ vpc_art_tree_clone(art_tree *src, art_tree **dstp, struct malloc_type *type)
 	return (rc);
 }
 
+static void *
+m_advance(struct mbuf **pm, int *poffset, int len)
+{
+	struct mbuf *m = *pm;
+	int offset = *poffset;
+	uintptr_t p = 0;
+
+	MPASS(!m_ismvec(m));
+	MPASS(len > 0);
+
+	for (;;) {
+		if (offset + len < m->m_len) {
+			offset += len;
+			p = mtod(m, uintptr_t) + offset;
+			break;
+		}
+		len -= m->m_len - offset;
+		m = m->m_next;
+		offset = 0;
+		MPASS(m != NULL);
+	}
+	*poffset = offset;
+	*pm = m;
+	return ((void *)p);
+}
+
 int
 vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 {
@@ -238,17 +264,18 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	struct mvec_cursor mc;
 	struct mbuf *m;
 	int eh_type, ipproto;
-	int l2len, l3len;
+	int l2len, l3len, offset;
 	void *l3hdr;
 	void *l4hdr;
-
-	MPASS(!(m0->m_flags & M_EXT) || m_ismvec(m0));
+	bool ismvec;
 
 	mc.mc_off = mc.mc_idx = 0;
 	m = m0;
 	if (m0->m_len < ETHER_HDR_LEN)
 		return (0);
 
+	offset = 0;
+	ismvec = m_ismvec(m);
 	evh = (void*)m0->m_data;
 	eh_type = ntohs(evh->evl_encap_proto);
 	if (eh_type == ETHERTYPE_VLAN) {
@@ -256,8 +283,10 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 		l2len = sizeof(*evh);
 	} else
 		l2len = ETHER_HDR_LEN;
-
-	l3hdr = mvec_advance(m, &mc, l2len);
+	if (ismvec)
+		l3hdr = mvec_advance(m, &mc, l2len);
+	else
+		l3hdr = m_advance(&m, &offset, l2len);
 	switch(eh_type) {
 #ifdef INET6
 	case ETHERTYPE_IPV6:
@@ -292,7 +321,14 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	tpi->vpi_proto = ipproto;
 	m->m_pkthdr.l2hlen = tpi->vpi_l2_len = l2len;
 	m->m_pkthdr.l3hlen = tpi->vpi_l3_len = l3len;
-	l4hdr = mvec_advance(m, &mc, l3len);
+	if (l3len == 0)
+		return (0);
+
+	if (ismvec)
+		l4hdr = mvec_advance(m, &mc, l3len);
+	else
+	    l4hdr = m_advance(&m, &offset, l3len);
+
 	if (ipproto == IPPROTO_TCP) {
 		th = l4hdr;
 		m->m_pkthdr.l4hlen = tpi->vpi_l4_len = th->th_off << 2;
