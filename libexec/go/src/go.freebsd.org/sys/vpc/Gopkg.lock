@@ -2,20 +2,6 @@
 
 
 [[projects]]
-  branch = "projects/VPC"
-  name = "github.com/freebsd/freebsd"
-  packages = [
-    "libexec/go/src/go.freebsd.org/sys/vpc",
-    "libexec/go/src/go.freebsd.org/sys/vpc/ethlink",
-    "libexec/go/src/go.freebsd.org/sys/vpc/mgmt",
-    "libexec/go/src/go.freebsd.org/sys/vpc/vmnic",
-    "libexec/go/src/go.freebsd.org/sys/vpc/vpcsw",
-    "libexec/go/src/go.freebsd.org/sys/vpc/vpctest"
-  ]
-  revision = "c20d5d004fe589518ffe467bc2d2c2aa21f7a619"
-  source = "github.com/joyent/freebsd/libexec/go/src/go.freebsd.org/sys/vpc"
-
-[[projects]]
   branch = "master"
   name = "github.com/kylelemons/godebug"
   packages = [
@@ -55,6 +41,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "c251378c5aaf22624e8171d852a6d16c30428bdd05faac5bc65828179ea66029"
+  inputs-digest = "184383151386e088bc597229a24bcee60f26d17fec184b165ddb604cdf348008"
   solver-name = "gps-cdcl"
   solver-version = 1
