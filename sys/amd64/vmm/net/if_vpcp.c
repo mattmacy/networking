@@ -310,10 +310,12 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 	struct vpcp_softc *vs;
 	enum vpc_obj_type prevtype;
 	uint64_t baudrate;
+	if_ctx_t switchctx;
 	int rc;
 
 	ifp = iflib_get_ifp(portctx);
 	vs = iflib_get_softc(portctx);
+	switchctx = vs->vs_ifswitch->if_softc;
 	ifdev = NULL;
 	baudrate = 0;
 
@@ -365,6 +367,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 				}
 				ifdev->if_bridge = NULL;
 				wmb();
+				vpcsw_port_disconnect(switchctx, ifp);
 				ifdev->if_bridge_input = NULL;
 				ifdev->if_bridge_output = NULL;
 				ifdev->if_bridge_linkstate = NULL;
@@ -381,6 +384,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
 			wmb();
 			ifdev->if_bridge = vs;
+			vpcsw_port_connect(switchctx, ifp, ifdev);
 			break;
 		case VPC_OBJ_ETHLINK:
 			if_settransmitfn(ifp, phys_transmit);
@@ -390,6 +394,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			ifdev->if_bridge_input = phys_bridge_input;
 			ifdev->if_bridge_output = phys_bridge_output;
 			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
+			vpcsw_port_connect(switchctx, ifp, ifdev);
 			wmb();
 			ifdev->if_bridge = vs;
 			break;
