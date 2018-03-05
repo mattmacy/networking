@@ -82,25 +82,25 @@ union q_util {
 
 #ifdef INVARIANTS
 void
-mvec_sanity(struct mbuf *m)
+mvec_sanity(const struct mbuf *m)
 {
-	struct mbuf_ext *mext;
-	struct mvec_header *mh;
-	struct mvec_ent *me;
-	m_refcnt_t *me_count;
+	const struct mbuf_ext *mext;
+	const struct mvec_header *mh;
+	const struct mvec_ent *me;
+	const m_refcnt_t *me_count;
 	int i, total;
 
-	mext = (void*)m;
+	mext = (const void*)m;
 	mh = &mext->me_mh;
 	me = &mext->me_ents[mh->mh_start];
 
-	MPASS((caddr_t)me != m->m_data);
-	me_count = &((m_refcnt_t *)(mext->me_ents + mh->mh_count))[mh->mh_start];
-	MPASS(me_count == &MBUF2REF(m)[mh->mh_start]);
+	MPASS((const char *)me != m->m_data);
+	me_count = &((const m_refcnt_t *)(mext->me_ents + mh->mh_count))[mh->mh_start];
+	MPASS(me_count == &MBUF2REF((uintptr_t)m)[mh->mh_start]);
 	total = 0;
 	MPASS(m->m_len == me->me_len);
 	MPASS(m->m_data == (me->me_cl + me->me_off));
-	MPASS((m->m_flags & (M_EXT|M_PKTHDR)) == (M_EXT|M_PKTHDR));
+	MPASS((m->m_flags & (M_EXT|M_PKTHDR|M_NOFREE|M_UNUSED_8)) == (M_EXT|M_PKTHDR));
 	MPASS(mh->mh_count >= (mh->mh_start + mh->mh_used));
 	for (i = mh->mh_start; i < mh->mh_used + mh->mh_start; i++, me++, me_count++) {
 		if (__predict_false(me->me_len == 0)) {
@@ -116,7 +116,7 @@ mvec_sanity(struct mbuf *m)
 		}
 
 		MPASS(me->me_cl);
-		MPASS(me->me_cl != (void *)0xdeadc0dedeadc0de);
+		MPASS(me->me_cl != (const void *)0xdeadc0dedeadc0de);
 		total += me->me_len;
 	}
 	MPASS(total == m->m_pkthdr.len);
