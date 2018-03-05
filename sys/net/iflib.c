@@ -540,24 +540,6 @@ pkt_info_zero(if_pkt_info_t pi)
 #endif	
 }
 
-static inline void
-rxd_info_zero(if_rxd_info_t ri)
-{
-	if_rxd_info_pad_t ri_pad;
-	int i;
-
-	ri_pad = (if_rxd_info_pad_t)ri;
-	for (i = 0; i < RXD_LOOP_BOUND; i += 4) {
-		ri_pad->rxd_val[i] = 0;
-		ri_pad->rxd_val[i+1] = 0;
-		ri_pad->rxd_val[i+2] = 0;
-		ri_pad->rxd_val[i+3] = 0;
-	}
-#ifdef __LP64__
-	ri_pad->rxd_val[RXD_INFO_SIZE-1] = 0;
-#endif
-}
-
 /*
  * Only allow a single packet to take up most 1/nth of the tx ring
  */
@@ -1102,7 +1084,7 @@ iflib_netmap_rxsync(struct netmap_kring *kring, int flags)
 			nm_i = netmap_idx_n2k(kring, nic_i);
 			avail = iflib_rxd_avail(ctx, rxq, nic_i, USHRT_MAX);
 			for (n = 0; avail > 0; n++, avail--) {
-				rxd_info_zero(&ri);
+				bzero(&ri, sizeof(ri));
 				ri.iri_frags = rxq->ifr_frags;
 				ri.iri_qsidx = kring->ring_id;
 				ri.iri_ifp = ctx->ifc_ifp;
@@ -2854,7 +2836,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		/*
 		 * Reset client set fields to their default values
 		 */
-		rxd_info_zero(&ri);
+		bzero(&ri, sizeof(ri));
 		ri.iri_qsidx = rxq->ifr_id;
 		ri.iri_cidx = *cidxp;
 		ri.iri_ifp = ifp;
