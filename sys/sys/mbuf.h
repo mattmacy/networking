@@ -483,9 +483,9 @@ struct mbuf *mvec_defrag(const struct mbuf *m, int how);
 struct mbuf *mvec_collapse(struct mbuf *m, int how, int maxfrags);
 
 #ifdef INVARIANTS
-void mvec_sanity(struct mbuf *m);
+void mvec_sanity(const struct mbuf *m);
 #else
-static __inline void mvec_sanity(struct mbuf *m __unused) {}
+static __inline void mvec_sanity(const struct mbuf *m __unused) {}
 #endif
 
 #endif
