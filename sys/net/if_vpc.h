@@ -217,6 +217,7 @@ struct ifp_cache {
 
 struct vpc_pkt_info {
 	uint16_t vpi_etype;
+	uint16_t vpi_hash;
 	uint8_t vpi_l2_len;
 	uint8_t vpi_l3_len;
 	uint8_t vpi_l4_len;
