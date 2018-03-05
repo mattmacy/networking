@@ -184,6 +184,7 @@ static int
 vmi_transmit(if_t ifp, struct mbuf *m)
 {
 
+	panic("unsupported\n");
 	MPASS(ifp->if_bridge);
 	/*
 	 * Preprocess
@@ -198,7 +199,7 @@ vmi_input(if_t ifp, struct mbuf *m)
 	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
 	struct ifnet *devifp = vs->vs_ifdev;
 
-	vmi_input_process(ifp, m, false);
+	vmi_input_process(vs->vs_ifport, m, false);
 	devifp->if_transmit_txq(devifp, m);
 }
 
@@ -211,7 +212,7 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
 	m->m_pkthdr.rcvif = vs->vs_ifport;
-	vmi_input_process(ifp, m, true);
+	vmi_input_process(vs->vs_ifport, m, true);
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
