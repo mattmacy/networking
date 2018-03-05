@@ -261,10 +261,12 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 {
 	struct ether_vlan_header *evh;
 	struct tcphdr *th;
+	struct udphdr *uh;
 	struct mvec_cursor mc;
 	struct mbuf *m;
 	int eh_type, ipproto;
-	int l2len, l3len, offset;
+	int l2len, l3len, offset, hashtmp, rc;
+	uint16_t *macp;
 	void *l3hdr;
 	void *l4hdr;
 	bool ismvec;
@@ -277,16 +279,20 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	offset = 0;
 	ismvec = m_ismvec(m);
 	evh = (void*)m0->m_data;
+	macp = (void*)m0->m_data;
 	eh_type = ntohs(evh->evl_encap_proto);
 	if (eh_type == ETHERTYPE_VLAN) {
 		eh_type = ntohs(evh->evl_proto);
 		l2len = sizeof(*evh);
 	} else
 		l2len = ETHER_HDR_LEN;
+	hashtmp = eh_type ^ macp[0] ^ macp[1] ^ macp[2] ^
+		macp[3] ^ macp[4] ^ macp[5];
 	if (ismvec)
 		l3hdr = mvec_advance(m, &mc, l2len);
 	else
 		l3hdr = m_advance(&m, &offset, l2len);
+
 	switch(eh_type) {
 #ifdef INET6
 	case ETHERTYPE_IPV6:
@@ -304,6 +310,7 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	{
 		struct ip *ip = l3hdr;
 
+		hashtmp ^= ip->ip_src.s_addr ^ ip->ip_dst.s_addr;
 		l3len = ip->ip_hl << 2;
 		ipproto = ip->ip_p;
 		tpi->vpi_v6 = 0;
@@ -328,17 +335,21 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 		l4hdr = mvec_advance(m, &mc, l3len);
 	else
 	    l4hdr = m_advance(&m, &offset, l3len);
-
+	rc = 1;
 	if (ipproto == IPPROTO_TCP) {
 		th = l4hdr;
+		hashtmp ^= th->th_sport ^ th->th_dport;
 		m->m_pkthdr.l4hlen = tpi->vpi_l4_len = th->th_off << 2;
 	} else if (ipproto == IPPROTO_UDP) {
+		uh = l4hdr;
+		hashtmp ^= uh->uh_sport ^ uh->uh_dport;
 		m->m_pkthdr.l4hlen = tpi->vpi_l4_len = sizeof(struct udphdr);
 	} else {
-		return (0);
+		rc = 0;
 	}
-	MPASS(l2len && l3len && tpi->vpi_l4_len);
-	return (1);
+	tpi->vpi_hash = hashtmp;
+	MPASS((rc == 0) || (l2len && l3len && tpi->vpi_l4_len));
+	return (rc);
 }
 
 static void
