@@ -130,12 +130,28 @@ vpcp_stub_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 static void
 vmi_txflags(struct mbuf *m, struct vpc_pkt_info *vpi)
 {
-	m->m_pkthdr.tso_segsz = m->m_pkthdr.fibnum;
+	m->m_pkthdr.tso_segsz = m->m_pkthdr.flowid;
+	m->m_pkthdr.flowid = vpi->vpi_hash;
 	m->m_pkthdr.l2hlen = vpi->vpi_l2_len;
 	m->m_pkthdr.l3hlen = vpi->vpi_l3_len;
 	m->m_pkthdr.l4hlen = vpi->vpi_l4_len;
 	m->m_pkthdr.fibnum = 0;
+
+	MPASS((m->m_pkthdr.csum_flags & CSUM_TSO) == 0 || 
+		  m->m_pkthdr.flowid);
 }
+
+#ifdef INVARIANTS
+static inline void
+safe_mvec_sanity(const struct mbuf *m)
+{
+	if (m_ismvec(m))
+		mvec_sanity(m);
+}
+#else
+static inline void
+safe_mvec_sanity(const struct mbuf *m __unused) {}
+#endif
 
 static void
 vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
@@ -157,7 +173,9 @@ vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
 			m->m_flags |= M_HOLBLOCKING;
 			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
 			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
+
 		}
+		safe_mvec_sanity(m);
 		m = m->m_nextpkt;
 	} while (m != NULL);
 }
@@ -193,6 +211,7 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
 	m->m_pkthdr.rcvif = vs->vs_ifport;
+	vmi_input_process(ifp, m, true);
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
