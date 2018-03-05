@@ -2368,7 +2368,7 @@ restart:
 		goto restart;
 	}
 
-	if (__predict_false(nsegs > 2 && m0->m_pkthdr.len <= MHLEN)) {
+	if (__predict_false(nsegs > 2 && m0->m_pkthdr.len <= MHLEN && !m_ismvec(m0))) {
 		m0 = m_pullup(m0, m0->m_pkthdr.len);
 		if (m0 == NULL) {
 			/* Should have left well enough alone. */
