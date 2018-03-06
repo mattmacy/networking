@@ -85,6 +85,8 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
+#include <sys/sysctl.h>
+
 
 #include "vmm_ktr.h"
 #include "vmm_ioport.h"
@@ -119,6 +121,8 @@ const char * pci_cmds[] = {
 };
 #define VIRTIO_CMD_MAX VIRTIO_MSI_QUEUE_VECTOR
 
+
+#define VB_NQUEUES_DEFAULT 8
 #define VB_MAX_TX_SEGS	64
 #define VB_RXQ_IDX 0
 #define VB_TXQ_IDX 1
@@ -584,7 +588,7 @@ vb_rxd_reclaim(struct vb_rxq *rxq)
 	RXDPRINTF("q: %128D\n", rxq->vr_completion, "");
 
 	nrxd = vs->shared->isc_nrxd[0];
-	mask_used = (nrxd*4)-1;
+	mask_used = (nrxd*2)-1;
 	mask = nrxd-1;
 
 	pidx = rxq->vr_pidx;
@@ -770,7 +774,7 @@ vb_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	cidx = ri->iri_cidx;
 	vcidx = rxq->vr_avail[cidx];
 	mask = scctx->isc_nrxd[0]-1;
-	used_mask = (4*scctx->isc_nrxd[0])-1;
+	used_mask = (2*scctx->isc_nrxd[0])-1;
 	if (cidx != (rxq->vr_cidx & mask))
 		printf("mismatch cidx: %d vr_cidx_masked:%d vr_cidx: %d",
 			   cidx, rxq->vr_cidx & mask, rxq->vr_cidx);
@@ -1466,7 +1470,7 @@ vb_rxq_init(struct vb_softc *vs, struct vb_rxq *rxq, int idx)
 	 * even or odd number of times
 	 */
 	rxq->vr_shift = ffs(vs->shared->isc_nrxd[0])-1;
-	rxq->vr_used = malloc(sizeof(uint16_t)*vs->shared->isc_nrxd[0]*4,
+	rxq->vr_used = malloc(sizeof(uint16_t)*vs->shared->isc_nrxd[0]*2,
 						  M_VMNIC, M_WAITOK|M_ZERO);
 	rxq->vr_completion =  malloc(sizeof(uint8_t)*vs->shared->isc_nrxd[0],
 						  M_VMNIC, M_WAITOK|M_ZERO);
@@ -1486,17 +1490,55 @@ vb_txq_init(struct vb_softc *vs, struct vb_txq *txq, int idx)
 	txq->vt_vs = vs;
 	txq->vt_cidx = 0;
 }
+
+static int
+vb_get_queues(SYSCTL_HANDLER_ARGS)
+{
+	struct vb_softc *vs = oidp->oid_arg1;
+	struct sbuf *sb;
+	struct vb_rxq *rxq;
+	int i, j, rc;
+	uint8_t *completion;
+
+	if ((rc = sysctl_wire_old_buffer(req, 0)))
+		return (rc);
+	sb = sbuf_new_for_sysctl(NULL, NULL, PAGE_SIZE, req);
+	if (sb == NULL)
+		return (ENOMEM);
+	sbuf_printf(sb, "Queues:\n");
+	for (i = 0; i < vs->vs_nqs; i++) {
+		rxq = &vs->vs_rx_queues[i];
+		sbuf_printf(sb, "\t rx(%d) state:\n", i);
+		sbuf_printf(sb, "\t\t cidx: %d pidx: %d\n",
+					rxq->vr_cidx, rxq->vr_pidx);
+		completion = rxq->vr_completion;
+		for (j = 0; j < 16; j++) {
+			sbuf_printf(sb, "\t\t%64D\n", completion, "");
+			completion += 64;
+		}
+	}
+	return (0);
+}
+
 static int
 vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
 	struct vb_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
+	device_t dev;
 
-	vs->vs_nqs = 1;
-	vs->vs_nvqs = 3;
+	vs->vs_nqs = VB_NQUEUES_DEFAULT;
+	vs->vs_nvqs = 2*VB_NQUEUES_DEFAULT + 1;
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	vs->vs_ctx = ctx;
 	vs->vs_gpa_hint = 0;
+	dev = iflib_get_dev(ctx);
+
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+		SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "queue_dump", CTLTYPE_STRING | CTLFLAG_RD, vs, 0,
+		vb_get_queues, "A", "Dump private queues");
 
 	scctx->isc_tx_nsegments = VB_MAX_SCATTER;
 	scctx->isc_tx_tso_segments_max = scctx->isc_tx_nsegments;
@@ -1861,11 +1903,13 @@ vb_ctrl_mq(struct vb_softc *vs, int cmd, void *arg, int len)
 	}
 	printf("%s cmd: %d requested: %d\n",
 		   __func__, cmd, requested);
+#ifdef notyet
 	if (requested != vs->vs_nqs) {
 		vs->vs_nqs = requested;
 		vs->vs_nvqs = 2*requested + 1;
 		vb_dev_reset(vs);
 	}
+#endif	
 	return (0);
 }
 
