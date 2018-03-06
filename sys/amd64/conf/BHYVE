@@ -240,7 +240,6 @@ device		vmx
 
 options         NUMA
 options		MAXPHYS=(1024*1024)
-options		DEBUG_MEMGUARD
 
 options		ALT_BREAK_TO_DEBUGGER
 #options KTR
