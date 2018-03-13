@@ -128,14 +128,16 @@ vpcp_stub_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 }
 
 static void
-vmi_txflags(struct mbuf *m, struct vpc_pkt_info *vpi)
+vmi_txflags(struct mbuf *m, struct vpc_pkt_info *vpi, bool egress)
 {
-	m->m_pkthdr.tso_segsz = m->m_pkthdr.flowid;
+	if (egress) {
+		m->m_pkthdr.tso_segsz = m->m_pkthdr.flowid;
+		m->m_pkthdr.fibnum = 0;
+	}
 	m->m_pkthdr.flowid = vpi->vpi_hash;
 	m->m_pkthdr.l2hlen = vpi->vpi_l2_len;
 	m->m_pkthdr.l3hlen = vpi->vpi_l3_len;
 	m->m_pkthdr.l4hlen = vpi->vpi_l4_len;
-	m->m_pkthdr.fibnum = 0;
 
 	MPASS((m->m_pkthdr.csum_flags & CSUM_TSO) == 0 || 
 		  m->m_pkthdr.flowid);
@@ -154,7 +156,7 @@ safe_mvec_sanity(const struct mbuf *m __unused) {}
 #endif
 
 static void
-vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
+vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool egress)
 {
 	struct vpcp_softc *vs;
 	struct vpc_pkt_info vpi;
@@ -167,12 +169,14 @@ vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool setid)
 		ETHER_BPF_MTAP(ifp, m);
 		hdr = mtod(m, caddr_t);
 		vpc_parse_pkt(m, &vpi);
-		vmi_txflags(m, &vpi);
-		if (setid) {
+		vmi_txflags(m, &vpi, egress);
+		if (egress) {
 			m->m_flags |= vs->vs_mflags;
 			m->m_flags |= M_HOLBLOCKING;
 			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
 			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
+		} else if ((m->m_flags & M_TRUNK) == 0) {
+			m->m_pkthdr.csum_flags |= CSUM_DATA_VALID;
 
 		}
 		safe_mvec_sanity(m);
