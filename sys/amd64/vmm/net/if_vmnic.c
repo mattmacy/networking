@@ -277,7 +277,11 @@ struct vb_queue {
 
 #define VB_CIDX_VALID (1 << 18)
 
+#define SCRATCHCHECK(vs)						\
+	MPASS(((vs)->pad[0] | (vs)->pad[1] | (vs)->pad[2] | (vs)->pad[3]) == 0)
+
 struct vb_softc {
+	uint64_t pad[4];
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 #define tx_num_queues shared->isc_ntxqsets
@@ -951,6 +955,7 @@ vb_status_change(struct vb_softc *vs, uint32_t val)
 {
 	struct ifnet *ifp = iflib_get_ifp(vs->vs_ctx);
 
+	SCRATCHCHECK(vs);
 	/*
 	 * For legacy guest drivers - e.g. FreeBSD
 	 */
@@ -1024,6 +1029,7 @@ vb_handle(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 #endif
 	offset = port - vs->vs_io_start;
 
+	SCRATCHCHECK(vs);
 	cfgoffset = VIRTIO_PCI_CONFIG_OFF(vs->vs_msix_enabled);
 
 	/* Handle the device-specific config region */
@@ -1311,6 +1317,7 @@ vb_vring_mmap(struct vb_softc *vs, uint32_t pfn, int q)
 
 	if (q == vs->vs_nvqs-1)
 		vs->vs_flags |= VS_READY;
+	SCRATCHCHECK(vs);
 }
 
 static void
@@ -1353,6 +1360,7 @@ vb_dev_reset(struct vb_softc *vs)
 		vs->vs_queues[i].vq_msix_idx = 0;
 		vs->vs_queues[i].vq_id = i;
 	}
+	SCRATCHCHECK(vs);
 }
 
 static int
@@ -1380,6 +1388,7 @@ vb_dev_msix(struct vb_softc *vs, const struct vb_msix *vx, int length)
 			vs->vs_msix[i].msg = vx->vm_q[i].msg;
 		}
 	}
+	SCRATCHCHECK(vs);
 	return (0);
 }
 
@@ -1534,7 +1543,6 @@ vb_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t par
 	vs->vs_gpa_hint = 0;
 	dev = iflib_get_dev(ctx);
 
-
 	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
 		SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
 	    OID_AUTO, "queue_dump", CTLTYPE_STRING | CTLFLAG_RD, vs, 0,
@@ -1603,6 +1611,7 @@ vb_attach_post(if_ctx_t ctx)
 	 */
 	ifp = iflib_get_ifp(ctx);
 	ifp->if_input = vb_if_input;
+	SCRATCHCHECK(vs);
 	return (0);
 }
 
@@ -1631,6 +1640,7 @@ vb_if_attach(struct vb_softc *vs)
 			   vs->vs_cfg.mac, ":", vs->vs_cfg.status, vs->vs_cfg.max_virtqueue_pairs,
 			   vs->vs_cfg.mtu);
 	}
+	SCRATCHCHECK(vs);
 	return (0);
 }
 
@@ -1665,7 +1675,7 @@ vb_vm_attach(struct vb_softc *vs, const struct vb_vm_attach *vva)
 	SLIST_INSERT_HEAD(&vb->dev, vs, vs_next);
 	VB_UNLOCK;
 	vs->vs_flags |= VS_ENQUEUED;
-
+	SCRATCHCHECK(vs);
 	return (0);
 }
 
@@ -1686,6 +1696,7 @@ vb_vm_deferred_attach(struct vb_softc *vs, const struct vb_vm_attach *va)
 		if (!rc)
 			vs->vs_flags &= ~VS_NQS_CHANGED;
 	}
+	SCRATCHCHECK(vs);
 	return (rc);
 }
 
@@ -1732,6 +1743,7 @@ vmnic_mtu_set(if_ctx_t ctx, uint32_t mtu)
 		return (EBUSY);
 	ifp->if_mtu = mtu;
 	vs->vs_cfg.mtu = mtu;
+	SCRATCHCHECK(vs);
 	return (0);
 }
 
@@ -1750,6 +1762,7 @@ vmnic_mac_set(if_ctx_t ctx, const uint8_t *mac)
 	sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 	MPASS(sdl->sdl_type == IFT_ETHER);
 	memcpy(LLADDR(sdl), vs->vs_origmac, ETHER_ADDR_LEN);
+	SCRATCHCHECK(vs);
 	return (0);
 }
 
@@ -1776,6 +1789,7 @@ vb_stop(if_ctx_t ctx)
 	}
 	for (i = 0; i < scctx->isc_ntxqsets; i++)
 		vs->vs_tx_queues[i].vt_cidx = 0;
+	SCRATCHCHECK(vs);
 }
 
 static void
@@ -1785,6 +1799,7 @@ vb_rx_clset(if_ctx_t ctx, uint16_t fl __unused, uint16_t qidx,
 	struct vb_softc *vs = iflib_get_softc(ctx);
 
 	vs->vs_rx_queues[qidx].vr_sdcl = sdcl;
+	SCRATCHCHECK(vs);
 }
 
 int
@@ -1852,6 +1867,7 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			rc = ENOIOCTL;
 			break;
 	}
+	SCRATCHCHECK(vs);
 	return (rc);
 }
 
