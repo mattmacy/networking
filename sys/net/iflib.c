@@ -3432,17 +3432,19 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	if_shared_ctx_t		sctx;
 	if_softc_ctx_t		scctx;
 	struct mbuf *m, **ifsd_m;
+	struct mbuf_ext *mext;
 	struct mvec_header *mh;
 	struct mvec_ent *me;
 	bus_dma_segment_t *segs;
 
+	mext = (struct mbuf_ext *)*m0;
 	m = *m0;
-	mh = MBUF2MH(m);
-	me = MHMEI(m, mh, 0);
+	mh = &mext->me_mh;
+	me = &mext->me_ents[mh->mh_start];
 	ifsd_m = txq->ift_sds.ifsd_m;
 	ntxd = txq->ift_size;
 	pidx = txq->ift_pidx;
-	count = mh->mh_count - mh->mh_start;
+	count = mh->mh_used;
 	count = min(count, max_segs);
 	rem = m->m_pkthdr.len;
 	ctx = txq->ift_ctx;
@@ -3452,8 +3454,8 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	txq->ift_pktcount = pktlen = segcount = 0;
 	txq->ift_pkt_offs[0] = txq->ift_seg_offs[0] = 0;
 	if (sctx->isc_flags & IFLIB_TXD_ENCAP_PIO) {
-		for (i = 0; i < count && me->me_len; i++, me++, segs++) {
-			segs->ds_addr = (bus_addr_t)(me->me_cl + me->me_off);
+		for (i = 0; i < count; i++, me++, segs++) {
+			segs->ds_addr = (bus_addr_t)me_data(me);
 			segs->ds_len = me->me_len;
 			rem -= me->me_len;
 			if (!mh->mh_multipkt)
@@ -3475,6 +3477,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			txq->ift_seg_counts[0] = count;
 			txq->ift_pktcount = 1;
 		}
+		MPASS(rem == 0);
 		return (rem ? EFBIG : 0);
 	} else if (map != NULL) {
 		/*
