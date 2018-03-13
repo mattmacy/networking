@@ -3819,11 +3819,13 @@ iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struc
 {
 	struct if_pkt_info	pi;
 	struct mbuf *m_head;
-	if_ctx_t		ctx;
 	int err, ndesc, pidx, pktidx;
+	if_ctx_t		ctx = txq->ift_ctx;
+#ifdef INVARIANTS
+	if_shared_ctx_t		sctx = ctx->ifc_sctx;
+#endif
 
 	m_head = *m_headp;
-	ctx = txq->ift_ctx;
 	pkt_info_zero(&pi);
 	pi.ipi_mflags = (m_head->m_flags & (M_VLANTAG|M_BCAST|M_MCAST));
 	pidx = pi.ipi_pidx = txq->ift_pidx;
@@ -3878,7 +3880,7 @@ iflib_encap_one(iflib_txq_t txq, bus_dma_tag_t desc_tag, bus_dmamap_t map, struc
 		 * drivers can need as many as 
 		 * two sentinels
 		 */
-		MPASS(ndesc <= pi.ipi_nsegs + 2);
+		MPASS((sctx->isc_flags & IFLIB_TXD_ENCAP_PIO) || (ndesc <= pi.ipi_nsegs + 2));
 		MPASS(pi.ipi_new_pidx != pidx);
 		MPASS(ndesc > 0);
 		txq->ift_in_use += ndesc;
