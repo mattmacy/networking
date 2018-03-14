@@ -163,7 +163,7 @@ void ipfw_bpf_mtap2(void *, u_int, struct mbuf *);
 void ipfw_log(struct ip_fw_chain *chain, struct ip_fw *f, u_int hlen,
     struct ip_fw_args *args, struct mbuf *m, struct ifnet *oif,
     u_short offset, uint32_t tablearg, struct ip *ip);
-int ipfw_check_frame(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
+int ipfw_check_frame(struct mbuf **m0, struct ifnet *ifp, int dir,
 					 struct ip_fw_chain *chain);
 VNET_DECLARE(u_int64_t, norule_counter);
 #define	V_norule_counter	VNET(norule_counter)

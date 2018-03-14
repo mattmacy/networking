@@ -410,10 +410,10 @@ ipfw_check_frame_vnet(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
 }
 
 int
-ipfw_check_frame(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
+ipfw_check_frame(struct mbuf **m0, struct ifnet *ifp, int dir,
 						struct ip_fw_chain *chain)
 {
-	return (ipfw_check_frame_(arg, m0, ifp, dir, NULL, chain));
+	return (ipfw_check_frame_(NULL, m0, ifp, dir, NULL, chain));
 }
 
 /* do the divert, return 1 on error 0 on success */
