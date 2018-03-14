@@ -13,6 +13,8 @@ MAN=	bhyve.8
 
 BHYVE_SYSDIR?=${SRCTOP}
 
+#	pci_nvme.c		\
+
 SRCS=	\
 	atkbdc.c		\
 	acpi.c			\
@@ -36,7 +38,6 @@ SRCS=	\
 	pci_hostbridge.c	\
 	pci_irq.c		\
 	pci_lpc.c		\
-	pci_nvme.c		\
 	pci_passthru.c		\
 	pci_virtio_block.c	\
 	pci_virtio_console.c	\
