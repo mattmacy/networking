@@ -40,6 +40,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/lock.h>
 #include <sys/priv.h>
 #include <sys/mutex.h>
+#include <sys/rwlock.h>
+#include <sys/rmlock.h>
 #include <sys/module.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -59,9 +61,18 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/if_clone.h>
 #include <net/if_bridgevar.h>
+#include <net/pfil.h>
+
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/ip_var.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/ip_fw.h>
+
+#include <netinet/ip6.h>
+#include <netpfil/ipfw/ip_fw_private.h>
 
 #include <net/if_vpc.h>
-
 #include "ifdi_if.h"
 
 
@@ -82,6 +93,9 @@ ctx_to_vs(if_ctx_t ctx)
 /*
  *
  */
+#define VS_IPFW_EGRESS	0x1
+#define VS_IPFW_INGRESS	0x2
+
 struct vpcp_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
@@ -90,9 +104,11 @@ struct vpcp_softc {
 	struct ifnet *vs_ifport;
 	uint32_t vs_mflags;
 	uint32_t vs_vxlanid;
+	uint32_t vs_flags;
 	uint16_t vs_vlanid;
 	vpc_id_t vs_devid;
 	enum vpc_obj_type vs_type;
+	struct ip_fw_chain *vs_chain;
 	void *vs_pcpu_cache;
 };
 
@@ -156,32 +172,54 @@ safe_mvec_sanity(const struct mbuf *m __unused) {}
 #endif
 
 static void
-vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool egress)
+vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
 {
 	struct vpcp_softc *vs;
 	struct vpc_pkt_info vpi;
+	struct mbuf *mnext, *mh, *mt, *m;
 	caddr_t hdr;
+	bool filter;
+	int dir = egress ? PFIL_OUT : PFIL_IN;
+	int action;
 	//vni = (vs->vs_flags & VS_VXLANTAG) ? vs->vs_vni : 0;
 
+	m = *m0;
+	mh = mt = NULL;
 	vs = iflib_get_softc(ifp->if_softc);
+	filter = (egress && (vs->vs_flags & VS_IPFW_EGRESS)) ||
+		(!egress && (vs->vs_flags & VS_IPFW_INGRESS));
 	do {
+		mnext = m->m_nextpkt;
 		/* set mbuf flags for transmit */
 		ETHER_BPF_MTAP(ifp, m);
 		hdr = mtod(m, caddr_t);
 		vpc_parse_pkt(m, &vpi);
 		vmi_txflags(m, &vpi, egress);
+		if (filter) {
+			action = ipfw_check_frame(&m, m->m_pkthdr.rcvif, dir, vs->vs_chain);
+			if (__predict_false(action != IP_FW_PASS)) {
+				m_freem(m);
+				goto next;
+			}
+		}
+		if (mh == NULL) {
+			mh = mt = m;
+		} else {
+			mt->m_nextpkt = m;
+			mt = m;
+		}
 		if (egress) {
 			m->m_flags |= vs->vs_mflags;
 			m->m_flags |= M_HOLBLOCKING;
 			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
 			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
-		} else if ((m->m_flags & M_TRUNK) == 0) {
+		} else if ((m->m_flags & M_TRUNK) == 0)
 			m->m_pkthdr.csum_flags |= CSUM_DATA_VALID;
-
-		}
+		next:
 		safe_mvec_sanity(m);
-		m = m->m_nextpkt;
+		m = mnext;
 	} while (m != NULL);
+	*m0 = mh;
 }
 
 static int
@@ -193,7 +231,9 @@ vmi_transmit(if_t ifp, struct mbuf *m)
 	/*
 	 * Preprocess
 	 */
-	vmi_input_process(ifp, m, true);
+	vmi_input_process(ifp, &m, true);
+	if (__predict_false(m == NULL))
+		return (0);
 	return ((*(ifp)->if_bridge_output)(ifp, m, NULL, NULL));
 }
 
@@ -203,8 +243,9 @@ vmi_input(if_t ifp, struct mbuf *m)
 	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
 	struct ifnet *devifp = vs->vs_ifdev;
 
-	vmi_input_process(vs->vs_ifport, m, false);
-	devifp->if_transmit_txq(devifp, m);
+	vmi_input_process(vs->vs_ifport, &m, false);
+	if (__predict_true(m != NULL))
+		devifp->if_transmit_txq(devifp, m);
 }
 
 static int
@@ -216,7 +257,9 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
 	m->m_pkthdr.rcvif = vs->vs_ifport;
-	vmi_input_process(vs->vs_ifport, m, true);
+	vmi_input_process(vs->vs_ifport, &m, true);
+	if (__predict_false(m == NULL))
+		return (0);
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
@@ -581,14 +624,74 @@ vpcp_object_info_get(if_ctx_t ctx, void *arg, int size)
 	IFCAP_LINKSTATE
 
 static int
+vpcp_ipfw_init(struct ip_fw_chain *chain)
+{
+	int error;
+	struct ip_fw *rule = NULL;
+
+	ipfw_init_srv(chain);
+	error = ipfw_init_tables(chain, 0);
+
+	if (error) {
+		printf("ipfw2: setting up tables failed\n");
+		free(chain->map, M_IPFW);
+		return (ENOSPC);
+	}
+
+	IPFW_LOCK_INIT(chain);
+	/* fill and insert the default rule */
+	rule = ipfw_alloc_rule(chain, sizeof(struct ip_fw));
+	rule->cmd_len = 1;
+	rule->cmd[0].len = 1;
+	rule->cmd[0].opcode = O_ACCEPT;
+	chain->default_rule = rule;
+	ipfw_add_protected_rule(chain, rule, 0);
+
+	ipfw_dyn_init(chain);
+	ipfw_eaction_init(chain, 0);
+
+	return (0);
+}
+
+static void
+vpcp_ipfw_deinit(struct ip_fw_chain *chain)
+{
+	struct ip_fw *reap;
+	int i;
+
+	reap = NULL;
+	IPFW_UH_WLOCK(chain);
+	IPFW_WLOCK(chain);
+	for (i = 0; i < chain->n_rules; i++)
+		ipfw_reap_add(chain, &reap, chain->map[i]);
+
+	IPFW_WUNLOCK(chain);
+	IPFW_UH_WUNLOCK(chain);
+
+	ipfw_destroy_tables(chain, 0);
+	ipfw_eaction_uninit(chain, 0);
+	if (reap != NULL)
+		ipfw_reap_rules(reap);
+	vnet_ipfw_iface_destroy(chain);
+	ipfw_destroy_srv(chain);
+	IPFW_LOCK_DESTROY(chain);
+}
+
+static int
 vpcp_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
 	struct vpcp_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
+	int rc;
 
 	atomic_add_int(&clone_count, 1);
 	vs->vs_ctx = ctx;
 	vs->vs_ifport = iflib_get_ifp(ctx);
+	vs->vs_chain = malloc(sizeof(struct ip_fw_chain), M_VPCP, M_WAITOK|M_ZERO);
+	if ((rc = vpcp_ipfw_init(vs->vs_chain))) {
+		free(vs->vs_chain, M_VPCP);
+		return (rc);
+	}
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
 	scctx->isc_capenable = VPCP_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
@@ -622,6 +725,8 @@ vpcp_detach(if_ctx_t ctx)
 	}
 	if (vs->vs_ifswitch != NULL)
 		if_rele(vs->vs_ifswitch);
+	vpcp_ipfw_deinit(vs->vs_chain);
+	free(vs->vs_chain, M_VPCP);
 	atomic_add_int(&clone_count, -1);
 
 	return (0);
