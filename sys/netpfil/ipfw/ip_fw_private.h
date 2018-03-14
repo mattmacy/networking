@@ -149,6 +149,7 @@ enum {
 
 /* attach (arg = 1) or detach (arg = 0) hooks */
 int ipfw_attach_hooks(int);
+
 #ifdef NOTYET
 void ipfw_nat_destroy(void);
 #endif
@@ -162,6 +163,8 @@ void ipfw_bpf_mtap2(void *, u_int, struct mbuf *);
 void ipfw_log(struct ip_fw_chain *chain, struct ip_fw *f, u_int hlen,
     struct ip_fw_args *args, struct mbuf *m, struct ifnet *oif,
     u_short offset, uint32_t tablearg, struct ip *ip);
+int ipfw_check_frame(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
+					 struct ip_fw_chain *chain);
 VNET_DECLARE(u_int64_t, norule_counter);
 #define	V_norule_counter	VNET(norule_counter)
 VNET_DECLARE(int, verbose_limit);
@@ -650,7 +653,7 @@ void ipfw_init_skipto_cache(struct ip_fw_chain *chain);
 void ipfw_destroy_skipto_cache(struct ip_fw_chain *chain);
 int ipfw_find_rule(struct ip_fw_chain *chain, uint32_t key, uint32_t id);
 int ipfw_ctl3(struct sockopt *sopt);
-int ipfw_chk(struct ip_fw_args *args);
+int ipfw_chk(struct ip_fw_chain *chain, struct ip_fw_args *args);
 int ipfw_add_protected_rule(struct ip_fw_chain *chain, struct ip_fw *rule,
     int locked);
 void ipfw_reap_add(struct ip_fw_chain *chain, struct ip_fw **head,

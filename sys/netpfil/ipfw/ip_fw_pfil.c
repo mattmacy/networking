@@ -87,8 +87,6 @@ int ipfw_chg_hook(SYSCTL_HANDLER_ARGS);
 static int ipfw_divert(struct mbuf **, int, struct ipfw_rule_ref *, int);
 int ipfw_check_packet(void *, struct mbuf **, struct ifnet *, int,
 	struct inpcb *);
-int ipfw_check_frame(void *, struct mbuf **, struct ifnet *, int,
-	struct inpcb *);
 
 #ifdef SYSCTL_NODE
 
@@ -125,10 +123,12 @@ ipfw_check_packet(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
     struct inpcb *inp)
 {
 	struct ip_fw_args args;
+	struct ip_fw_chain *chain;
 	struct m_tag *tag;
 	int ipfw;
 	int ret;
 
+	chain = &V_layer3_chain;
 	/* convert dir to IPFW values */
 	dir = (dir == PFIL_IN) ? DIR_IN : DIR_OUT;
 	bzero(&args, sizeof(args));
@@ -150,7 +150,7 @@ again:
 	args.oif = dir == DIR_OUT ? ifp : NULL;
 	args.inp = inp;
 
-	ipfw = ipfw_chk(&args);
+	ipfw = ipfw_chk(chain, &args);
 	*m0 = args.m;
 
 	KASSERT(*m0 != NULL || ipfw == IP_FW_DENY, ("%s: m0 is NULL",
@@ -306,15 +306,16 @@ again:
 /*
  * ipfw processing for ethernet packets (in and out).
  */
-int
-ipfw_check_frame(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
-    struct inpcb *inp)
+static int
+ipfw_check_frame_(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
+				  struct inpcb *inp, struct ip_fw_chain *chain)
 {
 	struct ether_header *eh;
 	struct ether_header save_eh;
 	struct mbuf *m;
 	int i, ret;
 	struct ip_fw_args args;
+	struct ip_fw_chain *chain;
 	struct m_tag *mtag;
 
 	/* fetch start point from rule, if any.  remove the tag if present. */
@@ -348,7 +349,7 @@ ipfw_check_frame(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
 	args.next_hop6 = NULL;	/* we do not support forward yet	*/
 	args.eh = &save_eh;	/* MAC header for bridged/MAC packets	*/
 	args.inp = NULL;	/* used by ipfw uid/gid/jail rules	*/
-	i = ipfw_chk(&args);
+	i = ipfw_chk(chain, &args);
 	m = args.m;
 	if (m != NULL) {
 		/*
@@ -398,6 +399,21 @@ ipfw_check_frame(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
 	}
 
 	return ret;
+}
+
+static int
+ipfw_check_frame_vnet(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
+				 struct inpcb *inp)
+{
+	return (ipfw_check_frame_(arg, m0, ifp, dir, inp, &V_layer3_chain));
+
+}
+
+int
+ipfw_check_frame(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
+						struct ip_fw_chain *chain)
+{
+	return (ipfw_check_frame_(arg, m0, ifp, dir, NULL, chain));
 }
 
 /* do the divert, return 1 on error 0 on success */
@@ -505,7 +521,7 @@ ipfw_hook(int onoff, int pf)
 	if (pfh == NULL)
 		return ENOENT;
 
-	hook_func = (pf == AF_LINK) ? ipfw_check_frame : ipfw_check_packet;
+	hook_func = (pf == AF_LINK) ? ipfw_check_frame_vnet : ipfw_check_packet;
 
 	(void) (onoff ? pfil_add_hook : pfil_remove_hook)
 	    (hook_func, NULL, PFIL_IN | PFIL_OUT | PFIL_WAITOK, pfh);

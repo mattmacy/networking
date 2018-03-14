@@ -1287,7 +1287,7 @@ jump_linear(struct ip_fw_chain *chain, struct ip_fw *f, int num,
  *
  */
 int
-ipfw_chk(struct ip_fw_args *args)
+ipfw_chk(struct ip_fw_chain *chain, struct ip_fw_args *args)
 {
 
 	/*
