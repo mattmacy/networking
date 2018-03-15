@@ -91,7 +91,7 @@ struct vpcsw_op_header {
 struct vpcsw_op_context {
 	uint32_t voc_vni;
 	uint16_t voc_vtag;
-	uint8_t voc_smac[ETHER_ADDR_LEN];
+	uint16_t voc_len;
 };
 
 union vpcsw_request_data {
@@ -104,38 +104,13 @@ union vpcsw_request_data {
 };
 
 struct vpcsw_request {
-	struct vpcsw_op_header vrq_header;
-	struct vpcsw_op_context vrq_context;
-	union vpcsw_request_data vrq_data;
-};
-
-union vpcsw_response_data {
-	struct {
-		struct in_addr target;
-		uint8_t ether_addr[ETHER_ADDR_LEN];
-	} vrsd_ndv4;
-	struct {
-		struct in6_addr target;
-		uint8_t ether_addr[ETHER_ADDR_LEN];
-	} vrsd_ndv6;
-	struct {
-		struct in_addr client_addr;
-		struct in_addr gw_addr;
-		struct in_addr dns_addr;
-		uint8_t prefixlen;
-	} vrsd_dhcpv4;
-	struct {
-		struct in6_addr client_addr;
-		struct in6_addr gw_addr;
-		struct in6_addr dns_addr;
-		uint8_t prefixlen;
-	} vrsd_dhcpv6;
+	vpc_id_t vrq_id;
+	uint8_t vrq_data[0];
 };
 
 struct vpcsw_response {
-	struct vpcsw_op_header vrs_header;
 	struct vpcsw_op_context vrs_context;
-	union vpcsw_response_data vrs_data;
+	uint8_t vrs_data[0];
 };
 
 struct vpcrtr_request_v4 {
@@ -285,6 +260,7 @@ int vpc_async_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr,
 int vpcp_port_disconnect_ifp(struct ifnet *ifp);
 void vpcp_set_pcpu_cache(if_ctx_t ctx, void *cache);
 void *vpcp_get_pcpu_cache(if_ctx_t ctx);
+void vpcp_get_id(struct ifnet *portifp, vpc_id_t *id);
 
 int vpcsw_transmit_ext(struct ifnet *ifp, struct mbuf *m, void *cache);
 int vpcsw_port_connect(if_ctx_t switchctx, struct ifnet *portifp, struct ifnet *devifp);
@@ -353,11 +329,8 @@ enum vpc_vpcsw_op_type {
 	VPC_VPCSW_STATE_GET =		5,
 	VPC_VPCSW_STATE_SET =		6,
 	VPC_VPCSW_RESET =		7,
-	VPC_VPCSW_RESPONSE_NDV4 =	8,
-	VPC_VPCSW_RESPONSE_NDV6 =	9,
-	VPC_VPCSW_RESPONSE_DHCPV4 =	10,
-	VPC_VPCSW_RESPONSE_DHCPV6 =	11,
-	VPC_VPCSW_OP_TYPE_MAX =			11,
+	VPC_VPCSW_RESPONSE =		8,
+	VPC_VPCSW_OP_TYPE_MAX =		8,
 };
 
 enum vpc_vpcp_op_type {
@@ -488,10 +461,7 @@ enum vpc_ethlink_op_type {
 #define VPC_VPCSW_OP_STATE_GET VPC_OP_O(VPC_OBJ_SWITCH, VPC_VPCSW_STATE_GET)
 #define VPC_VPCSW_OP_STATE_SET VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_STATE_SET)
 #define VPC_VPCSW_OP_RESET VPC_OP_MP(VPC_OBJ_SWITCH, VPC_VPCSW_RESET)
-#define VPC_VPCSW_OP_RESPONSE_NDV4 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_NDV4)
-#define VPC_VPCSW_OP_RESPONSE_DHCPV4 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_DHCPV4)
-#define VPC_VPCSW_OP_RESPONSE_NDV6 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_NDV6)
-#define VPC_VPCSW_OP_RESPONSE_DHCPV6 VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE_DHCPV6)
+#define VPC_VPCSW_OP_RESPONSE VPC_OP_IMP(VPC_OBJ_SWITCH, VPC_VPCSW_RESPONSE)
 
 #define VPC_VMNIC_OP_NQUEUES_GET VPC_OP_O(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_GET)
 #define VPC_VMNIC_OP_NQUEUES_SET VPC_OP_IMP(VPC_OBJ_VMNIC, VPC_VMNIC_NQUEUES_SET)

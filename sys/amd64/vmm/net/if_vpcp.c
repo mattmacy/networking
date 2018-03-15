@@ -531,6 +531,16 @@ vpcp_port_disconnect_ifp(struct ifnet *ifp)
 	return (vpcp_port_type_set(ctx, NULL, VPC_OBJ_INVALID));
 }
 
+void
+vpcp_get_id(struct ifnet *portifp, vpc_id_t *id)
+{
+	if_ctx_t ctx = portifp->if_softc;
+	struct vpcp_softc *vs;
+
+	vs = iflib_get_softc(ctx);
+	memcpy(id, &vs->vs_devid, sizeof(*id));
+}
+
 int
 vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)

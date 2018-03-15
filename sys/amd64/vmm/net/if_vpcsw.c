@@ -101,6 +101,11 @@ struct arphdr_ether {
 	u_char ar_pad[60 - ETHER_HDR_LEN - 24 /*arphdr*/];
 };
 
+struct vpcsw_request_priv {
+	TAILQ_ENTRY(vpcsw_request_priv) vrp_entry;
+	vpc_id_t vrp_id;
+	struct mbuf *vrp_m;
+};
 
 struct vpcsw_source {
 	uint16_t vs_dmac[3]; /* destination mac address */
@@ -118,8 +123,7 @@ static volatile int32_t modrefcnt;
 
 struct vpcsw_mcast_queue {
 	int vmq_mcount;
-	struct mbuf *vmq_mh;
-	struct mbuf *vmq_mt;
+	TAILQ_HEAD(vrp_head, vpcsw_request_priv) vmq_head;
 };
 
 struct vpcsw_softc {
@@ -134,129 +138,89 @@ struct vpcsw_softc {
 	art_tree *vs_ftable_rw;
 	struct ifnet *vs_ifdefault;
 	vpc_id_t vs_uplink_id;
-	struct mtx vs_vtep_mtx;
 	struct grouptask vs_vtep_gtask;
 	uint32_t vs_vni;
-	bool vs_req_read;
 	/* pad */
-	struct vpcsw_request vs_req_pending;
+	struct vpcsw_request_priv *vs_req_pending;
 	struct arphdr_ether vs_arp_template;
 	struct vpc_copy_info vs_vci;
 };
 
 static int
-vpcsw_update_req(struct vpcsw_softc *vs)
-{
-	struct vpcsw_mcast_queue *vmq;
-	struct vpcsw_request *vr;
-	struct vpc_pkt_info pinfo;
-	struct ether_header *eh;
-	struct mbuf *m;
-	bool valid;
-
-	vmq = &vs->vs_vmq;
-	valid = false;
-	vr = &vs->vs_req_pending;
- restart:
-	bzero(vr, sizeof(*vr));
-	mtx_lock(&vs->vs_lock);
-	if (vmq->vmq_mh == NULL) {
-		mtx_unlock(&vs->vs_lock);
-		vr->vrq_header.voh_op = 0;
-		return (ENOBUFS);
-	}
-	m  = vmq->vmq_mh;
-	vmq->vmq_mh = m->m_nextpkt;
-	if (vmq->vmq_mh == NULL)
-		vmq->vmq_mt = NULL;
-	vmq->vmq_mcount--;
-	mtx_unlock(&vs->vs_lock);
-
-	if (m->m_flags & M_VXLANTAG)
-		vr->vrq_context.voc_vni = m->m_pkthdr.vxlanid;
-	if (m->m_flags & M_VLANTAG)
-		vr->vrq_context.voc_vtag = m->m_pkthdr.ether_vtag;
-	vpc_parse_pkt(m, &pinfo);
-	eh = (void*)m->m_data;
-	memcpy(vr->vrq_context.voc_smac, eh->ether_shost, ETHER_ADDR_LEN);
-	switch (pinfo.vpi_etype) {
-		case ETHERTYPE_ARP: {
-			struct arphdr *ah = (struct arphdr *)(m->m_data + m->m_pkthdr.l2hlen);
-			vr->vrq_header.voh_op = VPCSW_REQ_NDv4;
-			memcpy(&vr->vrq_data.vrqd_ndv4.target, ar_tpa(ah), sizeof(struct in_addr));
-			valid = true;
-			break;
-		}
-		case ETHERTYPE_IP: {
-			struct udphdr *uh = (struct udphdr *)(m->m_data + m->m_pkthdr.l2hlen + m->m_pkthdr.l3hlen);
-
-			/* validate DHCP or move on to next packet*/
-			if (pinfo.vpi_proto != IPPROTO_UDP)
-				break;
-			if (uh->uh_sport != DHCP_SPORT || uh->uh_dport != DHCP_DPORT)
-				break;
-			vr->vrq_header.voh_op = VPCSW_REQ_DHCPv4;
-			valid = true;
-			break;
-		}
-		case ETHERTYPE_IPV6:
-			/* validate DHCP/ND or move on to next packet*/
-			printf("parse v6!\n");
-			break;
-	}
-	m_freem(m);
-	if (!valid)
-		goto restart;
-	return (0);
-}
-
-static int
 vpcsw_knote_event(if_ctx_t ctx, struct knote *kn, int hint)
 {
-	void *uaddr;
+	struct mbuf *m;
 	struct kevent *kev;
 	struct vpcsw_softc *vs;
-	struct vpcsw_request *vr;
-	int op;
+	struct vpcsw_request_priv *vrp;
+	char *uaddr;
+	void *usize;
+	int32_t size;
+	int rc;
 
 	vs = iflib_get_softc(ctx);
 	if (hint == 0) {
 		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
 		return (0);
 	}
-	vr = &vs->vs_req_pending;
-	op = vr->vrq_header.voh_op;
-	if (op == 0)
-		return (0);
-
+	vrp = vs->vs_req_pending;
 	kev = &kn->kn_kevent;
-	kev->fflags |= op;
-	uaddr = (void*)kev->ext[0];
-	if (uaddr != NULL) {
-		vs->vs_vci.vci_proc = kn->kn_hook;
-		vpc_async_copyout(&vs->vs_vci, vr, uaddr, sizeof(*vr));
-		vs->vs_vci.vci_proc = NULL;
+	usize = (void*)kev->ext[1];
+	uaddr = (void*)kev->ext[1];
+	if (usize == NULL)
+		return (0);
+	vs->vs_vci.vci_proc = kn->kn_hook;
+	if (uaddr == NULL) {
+		size = EFAULT;
+		rc = vpc_async_copyout(&vs->vs_vci, &size, usize, sizeof(size));
+		if (rc)
+			goto fail;
 	}
-	return (kn->kn_fflags != 0);
+	m = vrp->vrp_m;
+	size = m->m_len + sizeof(vrp->vrp_id);
+	rc = vpc_async_copyout(&vs->vs_vci, &size, usize, sizeof(size));
+	if (rc)
+		goto fail;
+	rc = vpc_async_copyout(&vs->vs_vci, &vrp->vrp_id, uaddr, sizeof(vrp->vrp_id));
+	if (rc)
+		goto fail;
+	rc = vpc_async_copyout(&vs->vs_vci, m->m_data, uaddr + sizeof(vrp->vrp_id), m->m_len);
+	if (rc)
+		goto fail;
+	vs->vs_vci.vci_proc = NULL;
+	return (1);
+ fail:
+	vs->vs_vci.vci_proc = NULL;
+	return (0);
 }
 
 static void
 _task_fn_vtep(void *arg)
 {
 	struct vpcsw_softc *vs;
+	struct vpcsw_mcast_queue *vmq;
+	struct vpcsw_request_priv *vrp;
 	if_ctx_t ctx;
 
 	ctx = arg;
 	vs = iflib_get_softc(ctx);
-	mtx_lock(&vs->vs_vtep_mtx);
-	if(!vs->vs_req_read ||
-	   (vpcsw_update_req(vs) != 0)) {
-		mtx_unlock(&vs->vs_vtep_mtx);
+	vmq = &vs->vs_vmq;
+
+	mtx_lock(&vs->vs_lock);
+	if (TAILQ_EMPTY(&vmq->vmq_head)) {
+		MPASS(vmq->vmq_mcount == 0);
+		mtx_unlock(&vs->vs_lock);
 		return;
 	}
-	vs->vs_req_read = false;
-	mtx_unlock(&vs->vs_vtep_mtx);
+	vrp = TAILQ_FIRST(&vmq->vmq_head);
+	TAILQ_REMOVE(&vmq->vmq_head, vrp, vrp_entry);
+	vmq->vmq_mcount--;
+	mtx_unlock(&vs->vs_lock);
+	vs->vs_req_pending = vrp;
 	iflib_event_signal(ctx, 1);
+	vs->vs_req_pending = NULL;
+	m_freem(vrp->vrp_m);
+	free(vrp, M_VPCSW);
 }
 
 #ifdef notyet
@@ -379,45 +343,35 @@ vpcsw_process_mcast(struct vpcsw_softc *vs, struct mbuf **msrc)
 
 	vmq = &vs->vs_vmq;
 	m = *msrc;
-	if (m->m_flags & M_HOLBLOCKING) {
+	if ((m->m_flags & M_HOLBLOCKING) ||
+		(m->m_flags & (M_VXLANTAG|M_TRUNK)) == M_VXLANTAG) {
 		mp = mvec_dup(m, M_NOWAIT);
 		m_freem(m);
 		m = mp;
 		*msrc = m;
+		if (m == NULL)
+			return (ENOMEM);
 	}
 	if ((m->m_flags & (M_VXLANTAG|M_TRUNK)) == M_VXLANTAG) {
-		if (m->m_flags & M_EXT) {
-			if (__predict_false(m->m_next != NULL || m->m_pkthdr.len > MCLBYTES)) {
-				m_freem(m);
-				return (0);
-			}
-			if (__predict_false(m->m_pkthdr.len > MHLEN)) {
-				mp = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
-			} else {
-				mp = m_gethdr(M_NOWAIT, MT_DATA);
-			}
-			if (mp != NULL) {
-				memcpy(&mp->m_pkthdr, &m->m_pkthdr, sizeof(struct pkthdr));
-				memcpy(mp->m_data, m->m_data, m->m_pkthdr.len);
-			}
+		struct vpcsw_request_priv *vrp;
+
+		vrp = malloc(sizeof(*vrp), M_VPCSW, M_NOWAIT);
+		if (vrp == NULL) {
 			m_freem(m);
-			m = mp;
-			if (__predict_false(m == NULL))
-				return (ENOBUFS);
+			*msrc = NULL;
+			return (ENOMEM);
 		}
+		vpcp_get_id(m->m_pkthdr.rcvif, &vrp->vrp_id);
+
 		mtx_lock(&vs->vs_lock);
-		if (vmq->vmq_mt)
-			vmq->vmq_mt->m_nextpkt = m;
-		else
-			vmq->vmq_mh = vmq->vmq_mt = m;
-		vmq->vmq_mcount++;
-		if (vmq->vmq_mcount > 128) {
-			m = vmq->vmq_mh;
-			vmq->vmq_mh = m->m_nextpkt;
-			m->m_nextpkt = NULL;
-			m_freem(m);
-			vmq->vmq_mcount--;
-		}
+		TAILQ_INSERT_HEAD(&vmq->vmq_head, vrp, vrp_entry);
+		if (vmq->vmq_mcount >= 128) {
+			vrp = TAILQ_LAST(&vmq->vmq_head, vrp_head);
+			TAILQ_REMOVE(&vmq->vmq_head, vrp, vrp_entry);
+			m_freem(vrp->vrp_m);
+			free(vrp, M_VPCSW);
+		} else
+			vmq->vmq_mcount++;
 		mtx_unlock(&vs->vs_lock);
 		GROUPTASK_ENQUEUE(&vs->vs_vtep_gtask);
 		*msrc = NULL;
@@ -634,13 +588,11 @@ vpcsw_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t 
 	vs->vs_ctx = ctx;
 	vs->vs_ifp = iflib_get_ifp(ctx);
 	refcount_init(&vs->vs_refcnt, 0);
-	mtx_init(&vs->vs_lock, "vpcsw softc", NULL, MTX_DEF);
+	mtx_init(&vs->vs_lock, "vpcsw sc internal", NULL, MTX_DEF);
 	vs->vs_ftable_ro = malloc(sizeof(art_tree), M_VPCSW, M_WAITOK|M_ZERO);
 	vs->vs_ftable_rw = malloc(sizeof(art_tree), M_VPCSW, M_WAITOK|M_ZERO);
 	art_tree_init(vs->vs_ftable_ro, ETHER_ADDR_LEN);
 	art_tree_init(vs->vs_ftable_rw, ETHER_ADDR_LEN);
-	vs->vs_req_read = true;
-	mtx_init(&vs->vs_vtep_mtx, "vtep mtx", NULL, MTX_DEF);
 	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_vtep_gtask, _task_fn_vtep, "vtep task");
 	vs->vs_vci.vci_pages = malloc(sizeof(vm_page_t *)*(ARG_MAX/PAGE_SIZE), M_VPCSW, M_WAITOK|M_ZERO);
 	vs->vs_vci.vci_max_count = ARG_MAX/PAGE_SIZE;
@@ -775,26 +727,13 @@ vpcsw_port_uplink_get(struct vpcsw_softc *vs, vpc_id_t *vp_id)
 }
 
 static int
-vpcsw_ndv4_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
+vpcsw_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
 {
 	struct mbuf *m;
-	struct ether_header *eh;
-	struct arphdr_ether *ae;
+	int len;
 
-	m = m_gethdr(M_WAITOK, MT_DATA);
-	eh = (void*)m->m_data;
-
-	bcopy(rsp->vrs_context.voc_smac, eh->ether_dhost, ETHER_ADDR_LEN);
-	bcopy(rsp->vrs_data.vrsd_ndv4.ether_addr, eh->ether_shost, ETHER_ADDR_LEN);
-	eh->ether_type = htons(ETHERTYPE_ARP);
-
-	ae = (void *)(eh + 1);
-	bcopy(&vs->vs_arp_template, ae, sizeof(*ae));
-
-	ae->ar_tpa = rsp->vrs_data.vrsd_ndv4.target.s_addr;
-	bcopy(rsp->vrs_data.vrsd_ndv4.ether_addr, ae->ar_tha, ETHER_ADDR_LEN);
-	ae->ar_spa = rsp->vrs_data.vrsd_ndv4.target.s_addr;
-	bcopy(rsp->vrs_data.vrsd_ndv4.ether_addr, ae->ar_sha, ETHER_ADDR_LEN);
+	len = rsp->vrs_context.voc_len;
+	m = (struct mbuf *)mvec_alloc(1, len, M_WAITOK);
 	if (rsp->vrs_context.voc_vni) {
 		m->m_pkthdr.vxlanid = rsp->vrs_context.voc_vni;
 		m->m_flags |= M_VXLANTAG;
@@ -803,13 +742,10 @@ vpcsw_ndv4_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
 		m->m_pkthdr.ether_vtag = rsp->vrs_context.voc_vtag;
 		m->m_flags |= M_VLANTAG;
 	}
+	memcpy(m->m_data, rsp->vrs_data, len);
+	m->m_len = len;
+	m->m_pkthdr.len = len;
 	return (vpcsw_transit(vs, NULL, m, NULL));
-}
-
-static int
-vpcsw_dhcpv4_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
-{
-	return (EOPNOTSUPP);
 }
 
 int
@@ -828,12 +764,6 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			if (inlen != sizeof(vpc_id_t))
 				return (EBADRPC);
 			break;
-		case VPC_VPCSW_OP_RESPONSE_NDV4:
-		case VPC_VPCSW_OP_RESPONSE_DHCPV4:
-		case VPC_VPCSW_OP_RESPONSE_NDV6:
-		case VPC_VPCSW_OP_RESPONSE_DHCPV6:
-			if (inlen != sizeof(struct vpcsw_response))
-				return (EBADRPC);
 	}
 	switch (op) {
 		case VPC_VPCSW_OP_PORT_ADD:
@@ -869,12 +799,8 @@ vpcsw_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 		case VPC_VPCSW_OP_RESET:
 			/* hrrrm.... */
 			break;
-		case VPC_VPCSW_OP_RESPONSE_NDV4:
-			return (vpcsw_ndv4_resp_send(vs, in));
-		case VPC_VPCSW_OP_RESPONSE_DHCPV4:
-			return (vpcsw_dhcpv4_resp_send(vs, in));
-		case VPC_VPCSW_OP_RESPONSE_NDV6:
-		case VPC_VPCSW_OP_RESPONSE_DHCPV6:
+		case VPC_VPCSW_OP_RESPONSE:
+			return (vpcsw_resp_send(vs, in));
 		default:
 			rc = ENOTSUP;
 	}
@@ -986,19 +912,27 @@ vpcsw_detach(if_ctx_t ctx)
 {
 	struct vpcsw_softc *vs = iflib_get_softc(ctx);
 	struct vpcsw_mcast_queue *vmq;
-	struct mbuf *m;
+	struct vpcsw_request_priv *vrp;
 
 	if (vs->vs_refcnt != 0)
 		return (EBUSY);
 
 	ck_epoch_synchronize(&vpc_global_record);
 
+	mtx_lock(&vs->vs_lock);
+	vrp = vs->vs_req_pending;
+	vs->vs_req_pending = NULL;
+	m_freem(vrp->vrp_m);
+	free(vrp, M_VPCSW);
+
 	vmq = &vs->vs_vmq;
-	while (vmq->vmq_mh != NULL) {
-		m = vmq->vmq_mh;
-		vmq->vmq_mh = m->m_nextpkt;
-		m_freem(m);
+	while (!TAILQ_EMPTY(&vmq->vmq_head)) {
+		vrp = TAILQ_FIRST(&vmq->vmq_head);
+		TAILQ_REMOVE(&vmq->vmq_head, vrp, vrp_entry);
+		m_freem(vrp->vrp_m);
+		free(vrp, M_VPCSW);
 	}
+	mtx_unlock(&vs->vs_lock);
 	iflib_config_gtask_deinit(&vs->vs_vtep_gtask);
 	art_iter(vs->vs_ftable_rw, clear_bridge, NULL);
 	if (vs->vs_ifdefault) {
@@ -1016,7 +950,6 @@ vpcsw_detach(if_ctx_t ctx)
 		vmmnet_delete(&vs->vs_uplink_id);
 	}
 	mtx_destroy(&vs->vs_lock);
-	mtx_destroy(&vs->vs_vtep_mtx);
 	vpc_art_free(vs->vs_ftable_ro, M_VPCSW);
 	vpc_art_free(vs->vs_ftable_rw, M_VPCSW);
 
