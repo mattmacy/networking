@@ -165,8 +165,8 @@ vpcsw_knote_event(if_ctx_t ctx, struct knote *kn, int hint)
 	}
 	vrp = vs->vs_req_pending;
 	kev = &kn->kn_kevent;
-	usize = (void*)kev->ext[1];
-	uaddr = (void*)kev->ext[1];
+	usize = (void*)kev->ext[VPCSW_SIZE_IDX];
+	uaddr = (void*)kev->ext[VPCSW_ADDR_IDX];
 	if (usize == NULL)
 		return (0);
 	vs->vs_vci.vci_proc = kn->kn_hook;

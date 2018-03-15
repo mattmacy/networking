@@ -488,4 +488,8 @@ enum vpc_ethlink_op_type {
 #define VPC_F_OPEN (1ULL << 1)
 #define VPC_F_READ (1ULL << 2)
 #define VPC_F_WRITE (1ULL << 3)
+
+#define VPCSW_SIZE_IDX 0
+#define VPCSW_ADDR_IDX 1
+
 #endif
