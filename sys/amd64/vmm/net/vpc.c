@@ -117,8 +117,7 @@ static MALLOC_DEFINE(M_VPC, "vpc", "virtual private cloud utilities");
 int
 vpc_async_copyout(struct vpc_copy_info *vci, const void *kaddr, void *uaddr, size_t len)
 {
-	struct knote *kn = vci->vci_kn;
-	struct proc *p = kn->kn_hook;
+	struct proc *p = vci->vci_proc;
 	vm_page_t *pages = vci->vci_pages;
 	const char *ckaddr = kaddr;
 	int off, count, rem, copylen;

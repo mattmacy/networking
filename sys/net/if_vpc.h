@@ -269,7 +269,7 @@ typedef struct vpcctx_public {
 } *vpc_ctx_t;
 
 struct vpc_copy_info {
-	struct knote *vci_kn;
+	struct proc *vci_proc;
 	vm_page_t *vci_pages;
 	int vci_max_count;
 };
