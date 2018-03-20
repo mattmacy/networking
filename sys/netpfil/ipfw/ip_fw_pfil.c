@@ -315,7 +315,6 @@ ipfw_check_frame_(void *arg, struct mbuf **m0, struct ifnet *ifp, int dir,
 	struct mbuf *m;
 	int i, ret;
 	struct ip_fw_args args;
-	struct ip_fw_chain *chain;
 	struct m_tag *mtag;
 
 	/* fetch start point from rule, if any.  remove the tag if present. */
