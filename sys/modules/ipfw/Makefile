@@ -16,7 +16,7 @@ CFLAGS+= -DIPFIREWALL -I${SRCTOP}/sys/contrib/ck/include
 #CFLAGS+= -DIPFIREWALL_VERBOSE_LIMIT=100
 #
 #If you want it to pass all packets by default
-#CFLAGS+= -DIPFIREWALL_DEFAULT_TO_ACCEPT
+CFLAGS+= -DIPFIREWALL_DEFAULT_TO_ACCEPT
 #
 
 .include <bsd.kmod.mk>
