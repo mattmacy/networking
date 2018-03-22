@@ -281,11 +281,15 @@ phys_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 	return (0);
 }
 
+/*
+ * Transmit from host stack to NIC
+ */
 static int
-phys_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
+phys_bridge_output(struct ifnet *ifp, struct mbuf *m,
+				   struct sockaddr *s __unused, struct rtentry *r __unused)
 {
-	panic("%s should not be called\n", __func__);
-	return (0);
+
+	return (ifp->if_transmit_txq(ifp, m));
 }
 
 /*
