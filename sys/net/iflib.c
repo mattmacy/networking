@@ -6815,6 +6815,9 @@ iflib_add_device_sysctl_pre(if_ctx_t ctx)
 	SYSCTL_ADD_U8(ctx_list, oid_list, OID_AUTO, "min_tx_latency",
 		       CTLFLAG_RWTUN, &ctx->ifc_softc_ctx.isc_min_tx_latency, 0,
                        "disable tx doorbell update batching");
+	SYSCTL_ADD_U8(ctx_list, oid_list, OID_AUTO, "rx_mvec_enable",
+		       CTLFLAG_RWTUN, &ctx->ifc_softc_ctx.isc_rx_mvec_enable, 0,
+                       "enable rx to produce mvecs");
 
 	/* XXX change for per-queue sizes */
 	SYSCTL_ADD_PROC(ctx_list, oid_list, OID_AUTO, "override_ntxds",

@@ -1604,7 +1604,6 @@ vb_attach_post(if_ctx_t ctx)
 	vb_dev_reset(vs);
 	iflib_config_gtask_init(vs->vs_ctx, &vs->vs_deferred_uptask, deferred_up, "deferred up");
 	scctx->isc_min_tx_latency = 1;
-	scctx->isc_rx_mvec_enable = 1;
 	/*
 	 * If interface was created by bhyve
 	 * plug everything together here
