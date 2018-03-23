@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Matthew Macy <matt.macy@joyent.com>
+ * Copyright (C) 2017-2018 Matthew Macy <mmacy@mattmacy.io>
  * Copyright (C) 2017 Joyent Inc.
  * All rights reserved.
  *
@@ -64,288 +64,152 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
-static MALLOC_DEFINE(M_VPCI, "vpci", "virtual private cloud interface");
+static MALLOC_DEFINE(M_HOSTLINK, "hostlink", "virtual private cloud interface");
 
 
-#define VPCI_DEBUG
+#define HOSTLINK_DEBUG
 
-#ifdef VPCI_DEBUG
+#ifdef HOSTLINK_DEBUG
 #define  DPRINTF printf
 #else
 #define DPRINTF(...)
 #endif
 
-/*
- * ifconfig vpci0 create
- * ifconfig vpci0 192.168.0.100
- * ifconfig vpci0 attach vpc0
- */
-
-struct vpci_softc {
+struct hostlink_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
-	struct ifnet *vs_ifparent;
-	uint32_t vs_vni;
 };
 
 static int clone_count;
 
 static int
-vpci_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+hostlink_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 {
 	return (0);
 }
 
 static int
-vpci_transmit(if_t ifp, struct mbuf *m)
+hostlink_transmit(if_t ifp, struct mbuf *m)
 {
-	struct mbuf *mp, *mh;
-	if_ctx_t ctx = ifp->if_softc;
-	struct vpci_softc *vs = iflib_get_softc(ctx);
-	struct ifnet *parent = vs->vs_ifparent;
-
-	if (__predict_false(vs->vs_ifparent == NULL)) {
+	if (ifp->if_bridge == NULL) {
 		m_freechain(m);
-		DPRINTF("freeing without parent\n");
 		return (ENOBUFS);
 	}
-	mh = mp = (void*)pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
-	if (__predict_false(mp == NULL)) {
-		/* better error? */
-		return (ENOBUFS);
-	}
-	while (mp) {
-		mp->m_flags |= M_VXLANTAG;
-		mp->m_pkthdr.vxlanid = vs->vs_vni;
-		mp = mp->m_nextpkt;
-	}
-	return (parent->if_transmit_txq(parent, mh));
+	return ((*(ifp)->if_bridge_output)(ifp, m, NULL, NULL));
 }
 
-#define VPCI_CAPS														\
+#define HOSTLINK_CAPS														\
 	IFCAP_TSO | IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
-	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | \
+	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | \
 	IFCAP_LINKSTATE
 
 static int
-vpci_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
+hostlink_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
-	struct vpci_softc *vs = iflib_get_softc(ctx);
+	struct hostlink_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
 	atomic_add_int(&clone_count, 1);
 	vs->vs_ctx = ctx;
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
-	scctx->isc_capenable = VPCI_CAPS;
+	scctx->isc_capenable = HOSTLINK_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
 		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	return (0);
 }
 
 static int
-vpci_attach_post(if_ctx_t ctx)
+hostlink_attach_post(if_ctx_t ctx)
 {
 	struct ifnet *ifp;
 
 	ifp = iflib_get_ifp(ctx);
-	if_settransmitfn(ifp, vpci_transmit);
-	if_settransmittxqfn(ifp, vpci_transmit);
-	if_setmbuftoqidfn(ifp, vpci_mbuf_to_qid);
+	if_settransmitfn(ifp, hostlink_transmit);
+	if_settransmittxqfn(ifp, hostlink_transmit);
+	if_setmbuftoqidfn(ifp, hostlink_mbuf_to_qid);
 	return (0);
 }
 
 static int
-vpci_detach(if_ctx_t ctx)
+hostlink_detach(if_ctx_t ctx)
 {
-	struct vpci_softc *vs = iflib_get_softc(ctx);
-
-	if (vs->vs_ifparent != NULL)
-		if_rele(vs->vs_ifparent);
 	atomic_add_int(&clone_count, -1);
-
 	return (0);
 }
 
 static void
-vpci_init(if_ctx_t ctx)
+hostlink_init(if_ctx_t ctx)
 {
 }
 
 static void
-vpci_stop(if_ctx_t ctx)
+hostlink_stop(if_ctx_t ctx)
 {
 }
 
-static int
-vpci_set_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
+int
+hostlink_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata)
 {
-	struct ifnet *ifp;
-
-	if ((ifp = ifunit_ref(va->va_ifname)) == NULL)
-		return (ENXIO);
-	if (ifp == vs->vs_ifparent)
-		if_rele(ifp);
-	else if (vs->vs_ifparent)
-		if_rele(vs->vs_ifparent);
-	vs->vs_ifparent = ifp;
-
-	iflib_get_ifp(vs->vs_ctx)->if_mtu = ifp->if_mtu;
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, IF_Gbps(50));
 	return (0);
 }
 
-static int
-vpci_get_ifparent(struct vpci_softc *vs, struct vpci_attach *va)
-{
-	if (vs->vs_ifparent == NULL)
-		return (ENOENT);
-	bcopy(vs->vs_ifparent->if_xname, va->va_ifname, IFNAMSIZ);
-	return (0);
-}
-
-static void
-vpci_clear_ifparent(struct vpci_softc *vs)
-{
-	if (vs->vs_ifparent == NULL)
-		return;
-	if_rele(vs->vs_ifparent);
-	vs->vs_ifparent = NULL;
-	iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, 0);
-}
-
-
-static void
-vpci_vni(struct vpci_softc *vs, struct vpci_vni *vv, int set)
-{
-	if (set)
-		vs->vs_vni = vv->vv_vni;
-	else
-		vv->vv_vni = vs->vs_vni;
-}
-
-static int
-vpci_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
-{
-	struct vpci_softc *vs = iflib_get_softc(ctx);
-	struct ifreq *ifr = (struct ifreq *)data;
-	struct ifreq_buffer *ifbuf = &ifr->ifr_ifru.ifru_buffer;
-	struct vpc_ioctl_header *ioh =
-	    (struct vpc_ioctl_header *)(ifbuf->buffer);
-	int rc = 0;
-	struct vpci_ioctl_data *iod = NULL;
-
-	if (command != SIOCGPRIVATE_0)
-		return (EINVAL);
-
-	if ((rc = priv_check(curthread, PRIV_DRIVER)) != 0)
-		return (rc);
-	/*
-	 * XXX --- need to make sure that nothing is in transmit
-	 * while we're fiddling with state
-	 *
-	 */
-
-#ifdef notyet
-	/* need sx lock for iflib context */
-	iod = malloc(ifbuf->length, M_VPCI, M_WAITOK | M_ZERO);
-#endif
-	if (IOCPARM_LEN(ioh->vih_type) != ifbuf->length) {
-		DPRINTF("IOCPARM_LEN: %d ifbuf->length: %d\n",
-			   (int)IOCPARM_LEN(ioh->vih_type), (int)ifbuf->length);
-		return (EINVAL);
-	}
-	iod = malloc(ifbuf->length, M_VPCI, M_NOWAIT | M_ZERO);
-	if (iod == NULL)
-		return (ENOMEM);
-	rc = copyin(ioh, iod, ifbuf->length);
-	if (rc) {
-		free(iod, M_VPCI);
-		return (rc);
-	}
-	switch (ioh->vih_type) {
-		case VPCI_ATTACH:
-			rc = vpci_set_ifparent(vs, (struct vpci_attach *)iod);
-			break;
-		case VPCI_ATTACHED_GET:
-			rc = vpci_get_ifparent(vs, (struct vpci_attach *)iod);
-			if (!rc)
-				rc = copyout(iod, ioh, sizeof(struct vpci_attach));
-			break;
-		case VPCI_DETACH:
-			vpci_clear_ifparent(vs);
-			break;
-		case VPCI_VNI_SET:
-			vpci_vni(vs, (struct vpci_vni *)iod, 1);
-			break;
-		case VPCI_VNI_GET:
-			vpci_vni(vs, (struct vpci_vni *)iod, 0);
-			rc = copyout(iod, ioh, sizeof(struct vpci_vni));
-			break;
-		default:
-			rc = ENOIOCTL;
-			break;
-	}
-	free(iod, M_VPCI);
-	return (rc);
-}
-
-static device_method_t vpci_if_methods[] = {
-	DEVMETHOD(ifdi_cloneattach, vpci_cloneattach),
-	DEVMETHOD(ifdi_attach_post, vpci_attach_post),
-	DEVMETHOD(ifdi_detach, vpci_detach),
-	DEVMETHOD(ifdi_init, vpci_init),
-	DEVMETHOD(ifdi_stop, vpci_stop),
-	DEVMETHOD(ifdi_priv_ioctl, vpci_priv_ioctl),
+static device_method_t hostlink_if_methods[] = {
+	DEVMETHOD(ifdi_cloneattach, hostlink_cloneattach),
+	DEVMETHOD(ifdi_attach_post, hostlink_attach_post),
+	DEVMETHOD(ifdi_detach, hostlink_detach),
+	DEVMETHOD(ifdi_init, hostlink_init),
+	DEVMETHOD(ifdi_stop, hostlink_stop),
 	DEVMETHOD_END
 };
 
-static driver_t vpci_iflib_driver = {
-	"vpci", vpci_if_methods, sizeof(struct vpci_softc)
+static driver_t hostlink_iflib_driver = {
+	"hostlink", hostlink_if_methods, sizeof(struct hostlink_softc)
 };
 
-char vpci_driver_version[] = "0.0.1";
+char hostlink_driver_version[] = "0.0.1";
 
-static struct if_shared_ctx vpci_sctx_init = {
+static struct if_shared_ctx hostlink_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
-	.isc_driver_version = vpci_driver_version,
-	.isc_driver = &vpci_iflib_driver,
+	.isc_driver_version = hostlink_driver_version,
+	.isc_driver = &hostlink_iflib_driver,
 	.isc_flags = IFLIB_PSEUDO,
-	.isc_name = "vpci",
+	.isc_name = "hostlink",
 };
 
-if_shared_ctx_t vpci_sctx = &vpci_sctx_init;
+if_shared_ctx_t hostlink_sctx = &hostlink_sctx_init;
 
 
-static if_pseudo_t vpci_pseudo;	
+static if_pseudo_t hostlink_pseudo;
 
 static int
-vpci_module_init(void)
+hostlink_module_init(void)
 {
-	vpci_pseudo = iflib_clone_register(vpci_sctx);
+	hostlink_pseudo = iflib_clone_register(hostlink_sctx);
 
-	return vpci_pseudo != NULL ? 0 : ENXIO;
+	return hostlink_pseudo != NULL ? 0 : ENXIO;
 }
 
 static void
-vpci_module_deinit(void)
+hostlink_module_deinit(void)
 {
-	iflib_clone_deregister(vpci_pseudo);
+	iflib_clone_deregister(hostlink_pseudo);
 }
 
 static int
-vpci_module_event_handler(module_t mod, int what, void *arg)
+hostlink_module_event_handler(module_t mod, int what, void *arg)
 {
 	int err;
 
 	switch (what) {
 	case MOD_LOAD:
-		if ((err = vpci_module_init()) != 0)
+		if ((err = hostlink_module_init()) != 0)
 			return (err);
 		break;
 	case MOD_UNLOAD:
 		if (clone_count == 0)
-			vpci_module_deinit();
+			hostlink_module_deinit();
 		else
 			return (EBUSY);
 		break;
@@ -356,12 +220,12 @@ vpci_module_event_handler(module_t mod, int what, void *arg)
 	return (0);
 }
 
-static moduledata_t vpci_moduledata = {
-	"vpci",
-	vpci_module_event_handler,
+static moduledata_t hostlink_moduledata = {
+	"hostlink",
+	hostlink_module_event_handler,
 	NULL
 };
 
-DECLARE_MODULE(vpci, vpci_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
-MODULE_VERSION(vpci, 1);
-MODULE_DEPEND(vpci, iflib, 1, 1, 1);
+DECLARE_MODULE(hostlink, hostlink_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+MODULE_VERSION(hostlink, 1);
+MODULE_DEPEND(hostlink, iflib, 1, 1, 1);

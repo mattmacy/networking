@@ -18,6 +18,7 @@ CFLAGS+= -I${SRCTOP}/sys/contrib/ck/include
 SRCS+=	art.c \
 	if_ethlink.c \
 	if_vmnic.c \
+	if_vpci.c \
 	if_vpclink.c \
 	if_vpcp.c \
 	if_vpcsw.c \
