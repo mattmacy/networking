@@ -17,8 +17,8 @@ CFLAGS+= -I${SRCTOP}/sys/contrib/ck/include
 .PATH: ${SRCTOP}/sys/amd64/vmm/net
 SRCS+=	art.c \
 	if_ethlink.c \
+	if_hostlink.c \
 	if_vmnic.c \
-	if_vpci.c \
 	if_vpclink.c \
 	if_vpcp.c \
 	if_vpcsw.c \
