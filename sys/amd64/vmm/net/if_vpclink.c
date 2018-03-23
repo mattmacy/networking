@@ -148,18 +148,6 @@ SX_SYSINIT(vpclink, &vpclink_lock, "VPC global");
 
 static DPCPU_DEFINE(struct egress_cache *, hdr_cache);
 
-/*
- * ifconfig ixl0 alias 10.1.3.4
- *
- * # Virtual Private Cloud
- * ifconfig vpc0 create
- * ifconfig vpc0 az az0
- * ifconfig vpc0 listen 10.1.3.4:3947
- *
- * ifconfig vpcb0 addm vpc0
- *
- */
-
 static MALLOC_DEFINE(M_VPCLINK, "vpclink", "virtual private cloud link (vxlan encap)");
 
 struct vpclink_softc {
@@ -736,47 +724,63 @@ vpclink_stop(if_ctx_t ctx)
 static int
 vpclink_set_listen(struct vpclink_softc *vs, const struct sockaddr *addr)
 {
-	struct route ro;
-	struct ifnet *ifp;
-	struct ifreq ifr;
-	struct rtentry *rt;
 	const struct sockaddr_in *sin;
-	int rc;
 
-	rc = 0;
 	/* v4 only XXX */
 	sin = (const struct sockaddr_in *)addr;
 	vs->vs_vxlan_port = sin->sin_port;
 	bcopy(sin, &vs->vs_addr, sizeof(*sin));
-	bzero(&ro, sizeof(ro));
-	bcopy(sin, &ro.ro_dst, sizeof(struct sockaddr));
-	/* lookup route to find interface */
-	in_rtalloc_ign(&ro, 0, vs->vs_fibnum);
-	rt = ro.ro_rt;
-	if (__predict_false(rt == NULL))
-		return (ENETUNREACH);
-	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
-						(rt->rt_ifp == NULL))) {
-		rc = ENETUNREACH;
-		goto fail;
+	return (0);
+}
+
+static int
+vpclink_underlay_attach(struct vpclink_softc *vs, const vpc_id_t *id)
+{
+	struct ifnet *ifp;
+	struct ifreq ifr;
+	vpc_ctx_t vctx;
+	if_ctx_t ethctx;
+	device_t dev;
+	vpc_handle_type_t *htype;
+	uint8_t objtype;
+	int rc;
+
+	dev = iflib_get_dev(vs->vs_ctx);
+	if (vs->vs_vxlan_port == 0) {
+		device_printf(dev, "%s vxlan port not set", __func__);
+		return (EAGAIN);
 	}
-	ifp = rt->rt_ifp;
+	vctx = vmmnet_lookup(id);
+	htype = (void *)&vctx->v_obj_type;
+	objtype = htype->vht_obj_type;
+	if (objtype != VPC_OBJ_ETHLINK) {
+		if (bootverbose)
+			device_printf(dev,"bad type passed to %s id: %16D type: %d expected type: %d\n",
+				   __func__, id, ":", objtype, VPC_OBJ_ETHLINK);
+		return (EINVAL);
+	}
+	if (vctx->v_ifp == NULL) {
+		if (bootverbose)
+			device_printf(dev, "underlay ethlink not attached %s id: %16D\n",
+				   __func__, id, ":");
+		return (EAGAIN);
+
+	}
+	ethctx = vctx->v_ifp->if_softc;
+	ifp = ethlink_ifp_get(ethctx);
 	if (!(ifp->if_capabilities & IFCAP_VXLANDECAP)) {
-		rc = EOPNOTSUPP;
-		goto fail;
+		if (bootverbose)
+			device_printf(dev, "%s underlay interface %s id: %16D doesn't support vxlan decap\n",
+				   __func__, ifp->if_xname, id, ":");
+		return (EOPNOTSUPP);
 	}
-	/* XXX temporary until we have vpcb in place */
-	if (vs->vs_ifparent == NULL) {
-		vs->vs_old_if_input = ifp->if_input;
-		vs->vs_ifparent = ifp;
-	}
+
 	ifr.ifr_index = vs->vs_vxlan_port;
 
 	rc = ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
- fail:
-	RTFREE(rt);
 	return (rc);
 }
+
 
 static int
 vpclink_fte_update(struct vpclink_softc *vs, const struct vpclink_fte *vfte, bool add)
@@ -901,7 +905,7 @@ vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	struct vpclink_softc *vs = iflib_get_softc(ifctx);
 
 	switch(op) {
-		case VPC_VPCLINK_LISTEN: {
+		case VPC_VPCLINK_OP_LISTEN: {
 			const struct sockaddr *vl_addr = in;
 
 			if (inlen != sizeof(*vl_addr))
@@ -909,8 +913,15 @@ vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			return (vpclink_set_listen(vs, vl_addr));
 			break;
 		}
-		case VPC_VPCLINK_FTE_DEL:
-		case VPC_VPCLINK_FTE_SET: {
+		case VPC_VPCLINK_OP_UNDERLAY_ATTACH: {
+			const vpc_id_t *id = in;
+
+			if (inlen != sizeof(*id))
+				return (EBADRPC);
+			return (vpclink_underlay_attach(vs, id));
+		}
+		case VPC_VPCLINK_OP_FTE_DEL:
+		case VPC_VPCLINK_OP_FTE_SET: {
 			const struct vpclink_fte *vfte = in;
 
 			if (inlen != sizeof(*vfte))
@@ -918,7 +929,7 @@ vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			return (vpclink_fte_update(vs, vfte, op == VPC_VPCLINK_FTE_SET));
 			break;
 		}
-		case VPC_VPCLINK_FTE_LIST: {
+		case VPC_VPCLINK_OP_FTE_LIST: {
 			struct vpclink_fte_list *vfl;
 			int rc;
 
