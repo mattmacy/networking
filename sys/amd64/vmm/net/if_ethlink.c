@@ -141,9 +141,11 @@ ethlink_detach(if_ctx_t ctx)
 {
 	struct ethlink_softc *ls = iflib_get_softc(ctx);
 
-	if (ls->ls_ifp != NULL)
+	if (ls->ls_ifp != NULL) {
+		if (ls->ls_ifp->if_bridge)
+			vpcp_port_disconnect_ifp(ls->ls_ifp);
 		if_rele(ls->ls_ifp);
-
+	}
 	atomic_add_int(&clone_count, -1);
 
 	return (0);
