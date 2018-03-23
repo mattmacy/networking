@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Matthew Macy <matt.macy@joyent.com>
+ * Copyright (C) 2018 Matthew Macy <mmacy@mattmacy.io>
  * Copyright (C) 2018 Joyent Inc.
  * All rights reserved.
  *
@@ -261,10 +261,11 @@ static char *if_names[] = {
 	"vpcnat",
 	"vpclink",
 	"vmnic",
-	"NONE",
+	"MGMT",
 	"ethlink",
-	"NONE",
-	"NONE"
+	"META",
+	"TYPE_ANY",
+	"hostlink"
 };
 
 int
@@ -515,7 +516,10 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	vpclink_ctl,
 	vmnic_ctl,
 	vpcmgmt_ctl,
-	ethlink_ctl
+	ethlink_ctl,
+	NULL, /* META */
+	NULL, /* TYPE_ANY */
+	hostlink_ctl
 };
 static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
