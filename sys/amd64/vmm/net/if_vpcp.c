@@ -127,6 +127,7 @@ vpcp_stub_linkstate(if_t ifp __unused)
 static int
 vpcp_stub_transmit(if_t ifp __unused, struct mbuf *m)
 {
+	panic("switch port transmit should never be called");
 	m_freechain(m);
 	return (0);
 }
@@ -222,14 +223,6 @@ vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
 	*m0 = mh;
 }
 
-static int
-vmi_transmit(if_t ifp, struct mbuf *m)
-{
-
-	panic("unsupported\n");
-	MPASS(ifp->if_bridge);
-}
-
 static void
 vmi_input(if_t ifp, struct mbuf *m)
 {
@@ -249,7 +242,7 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
-	vmi_input_process(vs->vs_ifport, &m, true);
+	vmi_input_process(vs->vs_ifport, m, true);
 	if (__predict_false(m == NULL))
 		return (0);
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
@@ -262,14 +255,6 @@ static struct mbuf *
 vmi_bridge_input(if_t ifp, struct mbuf *m)
 {
 	panic("%s should not be called\n", __func__);
-}
-
-static int
-phys_transmit(if_t ifp __unused, struct mbuf *m)
-{
-	panic("%s should not be called\n", __func__);
-	m_freechain(m);
-	return (0);
 }
 
 /*
@@ -371,14 +356,6 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 	return (mret);
 }
 
-static int
-hostlink_transmit(if_t ifp, struct mbuf *m)
-{
-	panic("unsupported\n");
-	MPASS(ifp->if_bridge);
-	return (0);
-}
-
 static void
 hostlink_input(if_t ifp, struct mbuf *m)
 {
@@ -472,8 +449,6 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 
 	switch (type) {
 		case VPC_OBJ_INVALID:
-			if_settransmitfn(ifp, vpcp_stub_transmit);
-			if_settransmittxqfn(ifp, vpcp_stub_transmit);
 			ifp->if_input = vpcp_stub_input;
 			ifp->if_bridge_linkstate = vpcp_stub_linkstate;
 			if (vs->vs_ifdev) {
@@ -493,39 +468,24 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 				vs->vs_ifdev = NULL;
 			}
 			break;
-		case VPC_OBJ_VMNIC:
-			if_settransmitfn(ifp, vmi_transmit);
-			if_settransmittxqfn(ifp, vmi_transmit);
-			ifp->if_input = vmi_input;
-			ifdev->if_bridge_input = vmi_bridge_input;
-			ifdev->if_bridge_output = vmi_bridge_output;
-			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
-			wmb();
-			ifdev->if_bridge = vs;
-			vpcsw_port_connect(switchctx, ifp, ifdev);
-			break;
-		case VPC_OBJ_HOSTLINK:
-			if_settransmitfn(ifp, hostlink_transmit);
-			if_settransmittxqfn(ifp, hostlink_transmit);
-			ifp->if_input = hostlink_input;
-			ifdev->if_bridge_input = hostlink_bridge_input;
-			ifdev->if_bridge_output = hostlink_bridge_output;
-			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
-			wmb();
-			ifdev->if_bridge = vs;
-			vpcsw_port_connect(switchctx, ifp, ifdev);
-			break;
 		case VPC_OBJ_ETHLINK:
-			if_settransmitfn(ifp, phys_transmit);
-			if_settransmittxqfn(ifp, phys_transmit);
 			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);
 			ifp->if_input = phys_input;
 			ifdev->if_bridge_input = phys_bridge_input;
 			ifdev->if_bridge_output = phys_bridge_output;
 			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
-			vpcsw_port_connect(switchctx, ifp, ifdev);
-			wmb();
-			ifdev->if_bridge = vs;
+			break;
+		case VPC_OBJ_HOSTLINK:
+			ifp->if_input = hostlink_input;
+			ifdev->if_bridge_input = hostlink_bridge_input;
+			ifdev->if_bridge_output = hostlink_bridge_output;
+			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
+			break;
+		case VPC_OBJ_VMNIC:
+			ifp->if_input = vmi_input;
+			ifdev->if_bridge_input = vmi_bridge_input;
+			ifdev->if_bridge_output = vmi_bridge_output;
+			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
 			break;
 		default:
 			vs->vs_type = prevtype;
@@ -537,6 +497,9 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			MPASS(vs->vs_ifdev == NULL);
 			iflib_link_state_change(vs->vs_ctx, LINK_STATE_DOWN, IF_Gbps(100));
 		} else {
+			wmb();
+			ifdev->if_bridge = vs;
+			vpcsw_port_connect(switchctx, ifp, ifdev);
 			iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, baudrate);
 			if_ref(ifdev);
 			vs->vs_ifdev = ifdev;
