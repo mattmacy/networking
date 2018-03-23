@@ -91,10 +91,18 @@ hostlink_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 static int
 hostlink_transmit(if_t ifp, struct mbuf *m)
 {
+	struct mbuf *mp = m;
+
+	do {
+		ETHER_BPF_MTAP(ifp, mp);
+		mp = mp->m_nextpkt;
+	} while (mp);
+
 	if (ifp->if_bridge == NULL) {
 		m_freechain(m);
 		return (ENOBUFS);
 	}
+
 	return ((*(ifp)->if_bridge_output)(ifp, m, NULL, NULL));
 }
 
