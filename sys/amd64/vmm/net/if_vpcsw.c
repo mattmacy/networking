@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Matthew Macy <matt.macy@joyent.com>
+ * Copyright (C) 2018 Matthew Macy <mmacy@mattmacy.io>
  * Copyright (C) 2018 Joyent Inc.
  * All rights reserved.
  *
@@ -475,6 +475,7 @@ vpcsw_transit(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
+		ETHER_BPF_MTAP(vs->vs_ifp, m);
 		rc = vpcsw_process_one(vs, cache, &m);
 		if (m == NULL) {
 			m = mnext;
