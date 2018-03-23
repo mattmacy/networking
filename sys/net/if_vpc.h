@@ -285,6 +285,8 @@ int vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 int ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			   size_t *outlen, void **outdata);
 
+int hostlink_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
+				 size_t *outlen, void **outdata);
 
 struct ifnet *ethlink_ifp_get(if_ctx_t ctx);
 
