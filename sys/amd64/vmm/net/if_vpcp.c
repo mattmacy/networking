@@ -190,11 +190,6 @@ vmi_transmit(if_t ifp, struct mbuf *m)
 
 	panic("unsupported\n");
 	MPASS(ifp->if_bridge);
-	/*
-	 * Preprocess
-	 */
-	vmi_input_process(ifp, m, true);
-	return ((*(ifp)->if_bridge_output)(ifp, m, NULL, NULL));
 }
 
 static void
@@ -215,8 +210,9 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
-	m->m_pkthdr.rcvif = vs->vs_ifport;
-	vmi_input_process(vs->vs_ifport, m, true);
+	vmi_input_process(vs->vs_ifport, &m, true);
+	if (__predict_false(m == NULL))
+		return (0);
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
@@ -337,6 +333,56 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 }
 
 static int
+hostlink_transmit(if_t ifp, struct mbuf *m)
+{
+	panic("unsupported\n");
+	MPASS(ifp->if_bridge);
+	return (0);
+}
+
+static void
+hostlink_input(if_t ifp, struct mbuf *m)
+{
+	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
+	struct ifnet *devifp = vs->vs_ifdev;
+	struct mbuf *mp = m;
+
+	do {
+		mp->m_pkthdr.rcvif = devifp;
+		mp = mp->m_nextpkt;
+	} while (mp);
+
+	devifp->if_input(devifp, m);
+}
+
+static int
+hostlink_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
+{
+	struct mbuf *mp;
+	struct vpcp_softc *vs;
+	struct ifnet *ifswitch;
+
+	vs = ifp->if_bridge;
+	ifswitch = vs->vs_ifswitch;
+	mp = m;
+
+	do {
+		mp->m_pkthdr.rcvif = vs->vs_ifport;
+		mp = m->m_nextpkt;
+	} while (mp);
+	mp = (void*)pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
+	if (__predict_false(mp == NULL))
+		return (0);
+	return (vpcsw_transmit_ext(ifswitch, mp, vs->vs_pcpu_cache));
+}
+
+static struct mbuf *
+hostlink_bridge_input(if_t ifp, struct mbuf *m)
+{
+	return (m);
+}
+
+static int
 vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 {
 	struct ifnet *ifp, *ifdev;
@@ -414,6 +460,17 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			ifp->if_input = vmi_input;
 			ifdev->if_bridge_input = vmi_bridge_input;
 			ifdev->if_bridge_output = vmi_bridge_output;
+			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
+			wmb();
+			ifdev->if_bridge = vs;
+			vpcsw_port_connect(switchctx, ifp, ifdev);
+			break;
+		case VPC_OBJ_HOSTLINK:
+			if_settransmitfn(ifp, hostlink_transmit);
+			if_settransmittxqfn(ifp, hostlink_transmit);
+			ifp->if_input = hostlink_input;
+			ifdev->if_bridge_input = hostlink_bridge_input;
+			ifdev->if_bridge_output = hostlink_bridge_output;
 			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
 			wmb();
 			ifdev->if_bridge = vs;

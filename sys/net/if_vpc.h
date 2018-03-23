@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 Matthew Macy <matt.macy@joyent.com>
+ * Copyright (C) 2017-2018 Matthew Macy <mmacy@mattmacy.io>
  * Copyright (C) 2017-2018 Joyent Inc.
  * All rights reserved.
  *
@@ -343,7 +343,8 @@ enum vpc_obj_type {
 	VPC_OBJ_ETHLINK = 8,
 	VPC_OBJ_META = 9,
 	VPC_OBJ_TYPE_ANY = 10,
-	VPC_OBJ_TYPE_MAX = 10,
+	VPC_OBJ_HOSTLINK = 11,
+	VPC_OBJ_TYPE_MAX = 11,
 };
 
 enum vpc_vpcsw_op_type {
@@ -443,6 +444,13 @@ enum vpc_ethlink_op_type {
 	VPC_ETHLINK_DEVCTL = 3,
 	VPC_ETHLINK_MAX = 3,
 };
+
+
+enum vpc_hostlink_op_type {
+	VPC_HOSTLINK_INVALID = 0,
+	VPC_HOSTLINK_MAX = 0,
+};
+
 
 #define IOC_MUT IOC_VOID
 #define IOC_PRIV 0x10000000
