@@ -433,7 +433,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 				vs->vs_ifdev = NULL;
 			}
 			break;
-		case VPC_OBJ_VPCLINK:
+		case VPC_OBJ_VPCMUX:
 		case VPC_OBJ_ETHLINK:
 			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);
 			ifp->if_input = phys_input;
