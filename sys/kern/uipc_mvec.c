@@ -884,12 +884,10 @@ pktchain_to_mvec(struct mbuf *m, int mtu, int how)
 	mh = mt = NULL;
 	while (mp) {
 		mnext = mp->m_nextpkt;
-		if (mp->m_pkthdr.csum_flags & CSUM_TSO) {
-			mnew = mchain_to_mvec(mp, how);
-		} else  {
-			MPASS(mp->m_pkthdr.len <= mtu + 14);
+		if (m_ismvec(mp) || (mp->m_pkthdr.csum_flags & CSUM_TSO) == 0)
 			mnew = (void*)mp;
-		}
+		else
+			mnew = mchain_to_mvec(mp, how);
 		if (__predict_false(mnew == NULL)) {
 			m_freem(mp);
 			mp = mnext;
