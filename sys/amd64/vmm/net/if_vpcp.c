@@ -616,7 +616,7 @@ vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			vpcp_vlanid_set(ctx, vtag);
 			break;
 		}
-		case VPC_VPCP_OP_PEER_ID_GET: {
+		case VPC_VPCP_OP_CONNECTED_ID_GET: {
 			vpc_id_t *id;
 
 			if (vs->vs_type == VPC_OBJ_INVALID)
