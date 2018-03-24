@@ -122,9 +122,9 @@ struct vxlan_header {
 } __packed;
 
 
-struct vpclink_ftable {
+struct vpcmux_ftable {
 	uint32_t vf_vni;
-	struct vpclink_softc *vf_vs;
+	struct vpcmux_softc *vf_vs;
 	art_tree vf_ftable;
 };
 
@@ -139,18 +139,18 @@ struct vf_entry {
 	struct sockaddr ve_addr;
 };
 
-static struct sx vpclink_lock;
-SX_SYSINIT(vpclink, &vpclink_lock, "VPC global");
+static struct sx vpcmux_lock;
+SX_SYSINIT(vpcmux, &vpcmux_lock, "VPC global");
 
-#define VPCLINK_LOCK() sx_xlock(&vpclink_lock)
-#define VPCLINK_UNLOCK() sx_xunlock(&vpclink_lock)
+#define VPCMUX_LOCK() sx_xlock(&vpcmux_lock)
+#define VPCMUX_UNLOCK() sx_xunlock(&vpcmux_lock)
 
 
 static DPCPU_DEFINE(struct egress_cache *, hdr_cache);
 
-static MALLOC_DEFINE(M_VPCLINK, "vpclink", "virtual private cloud link (vxlan encap)");
+static MALLOC_DEFINE(M_VPCMUX, "vpcmux", "virtual private cloud mux (vxlan encap)");
 
-struct vpclink_softc {
+struct vpcmux_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 	struct ifnet *vs_ifp;
@@ -165,7 +165,7 @@ struct vpclink_softc {
 	vpc_ctx_t vs_underlay_vctx;
 };
 
-static void vpclink_fte_print(struct vpclink_softc *vs);
+static void vpcmux_fte_print(struct vpcmux_softc *vs);
 
 static int clone_count;
 
@@ -177,15 +177,15 @@ hdrcmp(uint16_t *lhs, uint16_t *rhs)
 			(lhs[2] ^ rhs[2]));
 }
 
-static struct vpclink_ftable *
-vpclink_vxlanid_lookup(struct vpclink_softc *vs, uint32_t vxlanid)
+static struct vpcmux_ftable *
+vpcmux_vxlanid_lookup(struct vpcmux_softc *vs, uint32_t vxlanid)
 {
 
 	return (art_search(&vs->vs_vxftable, (const unsigned char *)&vxlanid));
 }
 
 static int
-vpclink_ftable_lookup(struct vpclink_ftable *vf, struct ether_vlan_header *evh,
+vpcmux_ftable_lookup(struct vpcmux_ftable *vf, struct ether_vlan_header *evh,
 				  struct sockaddr *dst)
 {
 	struct vf_entry *vfe;
@@ -198,18 +198,18 @@ vpclink_ftable_lookup(struct vpclink_ftable *vf, struct ether_vlan_header *evh,
 }
 
 static void
-vpclink_ftable_insert(struct vpclink_ftable *vf, const char *evh,
+vpcmux_ftable_insert(struct vpcmux_ftable *vf, const char *evh,
 					  const struct sockaddr *dst)
 {
 	struct vf_entry *vfe;
 
-	vfe = malloc(sizeof(*vfe), M_VPCLINK, M_WAITOK);
+	vfe = malloc(sizeof(*vfe), M_VPCMUX, M_WAITOK);
 	bcopy(dst, &vfe->ve_addr, sizeof(struct sockaddr));
 	art_insert(&vf->vf_ftable, (const unsigned char *)evh, vfe);
 }
 
 static uint16_t
-vpclink_sport_hash(struct vpclink_softc *vs, caddr_t data, uint16_t seed)
+vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint16_t seed)
 {
 	uint16_t *hdr;
 	uint16_t src, dst, hash, range;
@@ -224,7 +224,7 @@ vpclink_sport_hash(struct vpclink_softc *vs, caddr_t data, uint16_t seed)
 
 
 static void
-vpclink_ip_init(struct vpclink_ftable *vf, struct vxlan_header *vh, struct sockaddr *dstip, int len, int mtu)
+vpcmux_ip_init(struct vpcmux_ftable *vf, struct vxlan_header *vh, struct sockaddr *dstip, int len, int mtu)
 {
 	struct ip *ip;
 	struct sockaddr_in *sin;
@@ -264,7 +264,7 @@ vpc_cksum_skip(struct mbuf *m, int len, int skip)
 }
 
 static void
-vpclink_vxlanhdr_init(struct vpclink_ftable *vf, struct vxlan_header *vh, 
+vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf, struct vxlan_header *vh, 
 				  struct sockaddr *dstip, struct ifnet *ifp, struct mbuf *m,
 				  caddr_t hdr, struct vpc_pkt_info *tpi)
 {
@@ -294,10 +294,10 @@ vpclink_vxlanhdr_init(struct vpclink_ftable *vf, struct vxlan_header *vh,
 	/* arp resolve fills in dest */
 	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
 
-	vpclink_ip_init(vf, vh, dstip, m->m_pkthdr.len, ifp->if_mtu);
+	vpcmux_ip_init(vf, vh, dstip, m->m_pkthdr.len, ifp->if_mtu);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
-	uh->uh_sport = htons(vpclink_sport_hash(vf->vf_vs, hdr, seed));
+	uh->uh_sport = htons(vpcmux_sport_hash(vf->vf_vs, hdr, seed));
 	//m->m_pkthdr.rsstype = M_HASHTYPE_OPAQUE;
 	//m->m_pkthdr.flowid = uh->uh_sport;
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
@@ -315,7 +315,7 @@ vpclink_vxlanhdr_init(struct vpclink_ftable *vf, struct vxlan_header *vh,
 }
 
 static int
-vpclink_cache_lookup(struct vpclink_softc *vs, struct mbuf *m, struct ether_vlan_header *evh)
+vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_header *evh)
 {
 	struct egress_cache *ecp;
 	struct ifnet *ifp;
@@ -353,7 +353,7 @@ vpclink_cache_lookup(struct vpclink_softc *vs, struct mbuf *m, struct ether_vlan
 }
 
 static void
-vpclink_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex)
+vpcmux_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex)
 {
 	struct egress_cache *ecp;
 	uint16_t *src;
@@ -373,7 +373,7 @@ vpclink_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifi
 
 
 static int
-vpclink_nd_lookup(struct vpclink_softc *vs, if_t *ifpp, const struct sockaddr *dst, uint8_t *ether_addr)
+vpcmux_nd_lookup(struct vpcmux_softc *vs, if_t *ifpp, const struct sockaddr *dst, uint8_t *ether_addr)
 {
 	struct rtentry *rt;
 	int rc;
@@ -417,7 +417,7 @@ vpclink_nd_lookup(struct vpclink_softc *vs, if_t *ifpp, const struct sockaddr *d
 }
 
 static struct mbuf *
-vpclink_header_pullup(struct mbuf *mp, struct vpc_pkt_info *tpi)
+vpcmux_header_pullup(struct mbuf *mp, struct vpc_pkt_info *tpi)
 {
 	int minhlen;
 	struct mbuf *m;
@@ -432,13 +432,13 @@ vpclink_header_pullup(struct mbuf *mp, struct vpc_pkt_info *tpi)
 }
 
 static int
-vpclink_vxlan_encap(struct vpclink_softc *vs, struct mbuf **mp)
+vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 {
 	struct ether_vlan_header *evh, *evhvx;
 	struct vxlan_header *vh;
 	struct mbuf_ext *mtmp;
 	struct mbuf *mh, *m;
-	struct vpclink_ftable *vf;
+	struct vpcmux_ftable *vf;
 	struct sockaddr *dst;
 	struct route ro;
 	struct ifnet *ifp;
@@ -482,7 +482,7 @@ vpclink_vxlan_encap(struct vpclink_softc *vs, struct mbuf **mp)
 	}
 	mh->m_pkthdr.encaplen = hdrsize;
 	if ((oldflags & CSUM_TSO) &&
-		(mh = vpclink_header_pullup(mh, &tpi)) == NULL)
+		(mh = vpcmux_header_pullup(mh, &tpi)) == NULL)
 			return (ENOMEM);
 	mh->m_pkthdr.csum_flags = CSUM_UDP;
 	mh->m_pkthdr.csum_flags |= ((oldflags & CSUM_TSO) << 2);
@@ -490,12 +490,12 @@ vpclink_vxlan_encap(struct vpclink_softc *vs, struct mbuf **mp)
 
 	vh = (struct vxlan_header *)mh->m_data;
 	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
-	if (__predict_true(vpclink_cache_lookup(vs, mh, evhvx))) {
+	if (__predict_true(vpcmux_cache_lookup(vs, mh, evhvx))) {
 		*mp = mh;
 		return (0);
 	}
 	/* lookup MAC->IP forwarding table */
-	vf = vpclink_vxlanid_lookup(vs, mh->m_pkthdr.vxlanid);
+	vf = vpcmux_vxlanid_lookup(vs, mh->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
 		DPRINTF("vxlanid %d not found\n", mh->m_pkthdr.vxlanid);
 		m_freem(mh);
@@ -503,22 +503,22 @@ vpclink_vxlan_encap(struct vpclink_softc *vs, struct mbuf **mp)
 	}
 	dst = &ro.ro_dst;
 	/*   lookup IP using encapsulated dmac */
-	rc = vpclink_ftable_lookup(vf, evhvx, dst);
+	rc = vpcmux_ftable_lookup(vf, evhvx, dst);
 	if (__predict_false(rc)) {
 		DPRINTF("no forwarding entry for dmac: %*D\n",
 			   ETHER_ADDR_LEN, (caddr_t)evhvx, ":");
-		vpclink_fte_print(vs);
+		vpcmux_fte_print(vs);
 		m_freem(mh);
 		return (rc);
 	}
 	ifp = NULL;
-	if ((rc = vpclink_nd_lookup(vs, &ifp, dst, evh->evl_dhost))) {
+	if ((rc = vpcmux_nd_lookup(vs, &ifp, dst, evh->evl_dhost))) {
 		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
 	}
 	mh->m_pkthdr.rcvif = ifp;
-	vpclink_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx, &tpi);
-	vpclink_cache_update(mh, evhvx, ifp->if_index);
+	vpcmux_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx, &tpi);
+	vpcmux_cache_update(mh, evhvx, ifp->if_index);
 
 	MPASS(mh->m_pkthdr.len == m_length(mh, NULL));
 	/*
@@ -548,7 +548,7 @@ vpclink_vxlan_encap(struct vpclink_softc *vs, struct mbuf **mp)
 }
 
 static int
-vpclink_vxlan_encap_chain(struct vpclink_softc *vs, struct mbuf **mp, bool *can_batch)
+vpcmux_vxlan_encap_chain(struct vpcmux_softc *vs, struct mbuf **mp, bool *can_batch)
 {
 	struct mbuf *mh, *mt, *mnext, *m;
 	struct ifnet *ifp;
@@ -562,7 +562,7 @@ vpclink_vxlan_encap_chain(struct vpclink_softc *vs, struct mbuf **mp, bool *can_
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		rc = vpclink_vxlan_encap(vs, &m);
+		rc = vpcmux_vxlan_encap(vs, &m);
 		if (__predict_false(rc))
 			break;
 		if (mh == NULL) {
@@ -586,17 +586,17 @@ vpclink_vxlan_encap_chain(struct vpclink_softc *vs, struct mbuf **mp, bool *can_
 }
 
 static int
-vpclink_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+vpcmux_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 {
 	return (0);
 }
 
 static int
-vpclink_transmit(if_t ifp, struct mbuf *m)
+vpcmux_transmit(if_t ifp, struct mbuf *m)
 {
 	struct ifnet *oifp;
 	if_ctx_t ctx;
-	struct vpclink_softc *vs;
+	struct vpcmux_softc *vs;
 	struct mbuf *mp, *mnext;
 	bool can_batch;
 	int lasterr, rc;
@@ -612,7 +612,7 @@ vpclink_transmit(if_t ifp, struct mbuf *m)
 	}
 	vpc_epoch_begin();
 
-	lasterr = vpclink_vxlan_encap_chain(vs, &m, &can_batch);
+	lasterr = vpcmux_vxlan_encap_chain(vs, &m, &can_batch);
 	if (__predict_false(lasterr))
 		goto done;
 	if (can_batch) {
@@ -639,9 +639,9 @@ vpclink_transmit(if_t ifp, struct mbuf *m)
 }
 
 static struct mbuf *
-vpclink_bridge_input(if_t ifp, struct mbuf *m)
+vpcmux_bridge_input(if_t ifp, struct mbuf *m)
 {
-	struct vpclink_softc *vs;
+	struct vpcmux_softc *vs;
 
 	vs = ifp->if_bridge;
 	ETHER_BPF_MTAP(vs->vs_ifp, m);
@@ -651,7 +651,7 @@ vpclink_bridge_input(if_t ifp, struct mbuf *m)
 }
 
 static int
-vpclink_bridge_output(struct ifnet *ifp, struct mbuf *m,
+vpcmux_bridge_output(struct ifnet *ifp, struct mbuf *m,
 					  struct sockaddr *s __unused, struct rtentry *r__unused)
 {
 	panic("%s should not be called", __func__);
@@ -660,24 +660,24 @@ vpclink_bridge_output(struct ifnet *ifp, struct mbuf *m,
 }
 
 static void
-vpclink_bridge_linkstate(struct ifnet *ifp __unused)
+vpcmux_bridge_linkstate(struct ifnet *ifp __unused)
 {
 }
 
 
-#define VPCLINK_CAPS														\
+#define VPCMUX_CAPS														\
 	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
 
 static int
-vpclink_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
+vpcmux_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
-	struct vpclink_softc *vs = iflib_get_softc(ctx);
+	struct vpcmux_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
 	atomic_add_int(&clone_count, 1);
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
-	scctx->isc_capenable = VPCLINK_CAPS;
+	scctx->isc_capenable = VPCMUX_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
 		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	/* register vs_record */
@@ -693,14 +693,14 @@ vpclink_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_
 }
 
 static int
-vpclink_attach_post(if_ctx_t ctx)
+vpcmux_attach_post(if_ctx_t ctx)
 {
 	if_t ifp;
 
 	ifp = iflib_get_ifp(ctx);
-	if_settransmitfn(ifp, vpclink_transmit);
-	if_settransmittxqfn(ifp, vpclink_transmit);
-	if_setmbuftoqidfn(ifp, vpclink_mbuf_to_qid);
+	if_settransmitfn(ifp, vpcmux_transmit);
+	if_settransmittxqfn(ifp, vpcmux_transmit);
+	if_setmbuftoqidfn(ifp, vpcmux_mbuf_to_qid);
 	/*
 	 * should really be pulled from the lowest
 	 * interface configured, but hardcode for now
@@ -711,32 +711,32 @@ vpclink_attach_post(if_ctx_t ctx)
 
 
 static int
-vpclink_ftable_free_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+vpcmux_ftable_free_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
-	free(value, M_VPCLINK);
+	free(value, M_VPCMUX);
 	return (0);
 }
 
 static int
-vpclink_vxftable_free_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+vpcmux_vxftable_free_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
-	struct vpclink_ftable *ftable = value;
+	struct vpcmux_ftable *ftable = value;
 
-	art_iter(&ftable->vf_ftable, vpclink_ftable_free_callback, NULL);
-	free(value, M_VPCLINK);
+	art_iter(&ftable->vf_ftable, vpcmux_ftable_free_callback, NULL);
+	free(value, M_VPCMUX);
 	return (0);
 }
 
 
 static int
-vpclink_detach(if_ctx_t ctx)
+vpcmux_detach(if_ctx_t ctx)
 {
-	struct vpclink_softc *vs = iflib_get_softc(ctx);
+	struct vpcmux_softc *vs = iflib_get_softc(ctx);
 	struct ifreq ifr;
 	struct ifnet *ifp;
 
 	ck_epoch_unregister(&vs->vs_record);
-	art_iter(&vs->vs_vxftable, vpclink_vxftable_free_callback, NULL);
+	art_iter(&vs->vs_vxftable, vpcmux_vxftable_free_callback, NULL);
 	if (vs->vs_underlay_vctx) {
 		ifr.ifr_index = 0;
 		ifp = vs->vs_underlay_ifp;
@@ -753,17 +753,17 @@ vpclink_detach(if_ctx_t ctx)
 }
 
 static void
-vpclink_init(if_ctx_t ctx)
+vpcmux_init(if_ctx_t ctx)
 {
 }
 
 static void
-vpclink_stop(if_ctx_t ctx)
+vpcmux_stop(if_ctx_t ctx)
 {
 }
 
 static int
-vpclink_set_listen(struct vpclink_softc *vs, const struct sockaddr *addr)
+vpcmux_set_listen(struct vpcmux_softc *vs, const struct sockaddr *addr)
 {
 	const struct sockaddr_in *sin;
 
@@ -775,7 +775,7 @@ vpclink_set_listen(struct vpclink_softc *vs, const struct sockaddr *addr)
 }
 
 static int
-vpclink_underlay_attach(struct vpclink_softc *vs, const vpc_id_t *id)
+vpcmux_underlay_attach(struct vpcmux_softc *vs, const vpc_id_t *id)
 {
 	struct ifnet *ifp;
 	struct ifreq ifr;
@@ -823,9 +823,9 @@ vpclink_underlay_attach(struct vpclink_softc *vs, const vpc_id_t *id)
 		vmmnet_ref(vctx);
 		vs->vs_underlay_vctx = vctx;
 		vs->vs_underlay_ifp = ifp;
-		ifp->if_bridge_input = vpclink_bridge_input;
-		ifp->if_bridge_output = vpclink_bridge_output;
-		ifp->if_bridge_linkstate = vpclink_bridge_linkstate;
+		ifp->if_bridge_input = vpcmux_bridge_input;
+		ifp->if_bridge_output = vpcmux_bridge_output;
+		ifp->if_bridge_linkstate = vpcmux_bridge_linkstate;
 		wmb();
 		ifp->if_bridge = vs;
 	}
@@ -834,9 +834,9 @@ vpclink_underlay_attach(struct vpclink_softc *vs, const vpc_id_t *id)
 
 
 static int
-vpclink_fte_update(struct vpclink_softc *vs, const struct vpclink_fte *vfte, bool add)
+vpcmux_fte_update(struct vpcmux_softc *vs, const struct vpcmux_fte *vfte, bool add)
 {
-	struct vpclink_ftable *ftable;
+	struct vpcmux_ftable *ftable;
 	uint32_t addr, *addrp;
 	char buf[ETHER_ADDR_LEN];
 	if_t ifp;
@@ -845,11 +845,11 @@ vpclink_fte_update(struct vpclink_softc *vs, const struct vpclink_fte *vfte, boo
 	if (vfte->vf_protoaddr.sa_family != AF_INET)
 		return (EAFNOSUPPORT);
 	addr = ((const struct sockaddr_in *)(&vfte->vf_protoaddr))->sin_addr.s_addr; /* XXX v4 */
-	ftable = vpclink_vxlanid_lookup(vs, vfte->vf_vni);
+	ftable = vpcmux_vxlanid_lookup(vs, vfte->vf_vni);
 	if (ftable == NULL) {
 		if (add == false)
 			return (0);
-		ftable = malloc(sizeof(*ftable), M_VPCLINK, M_WAITOK|M_ZERO);
+		ftable = malloc(sizeof(*ftable), M_VPCMUX, M_WAITOK|M_ZERO);
 		art_tree_init(&ftable->vf_ftable, ETHER_ADDR_LEN);
 		ftable->vf_vni = vfte->vf_vni;
 		ftable->vf_vs = vs;
@@ -857,23 +857,23 @@ vpclink_fte_update(struct vpclink_softc *vs, const struct vpclink_fte *vfte, boo
 	}
 	if (add == false) {
 		addrp = art_delete(&ftable->vf_ftable, (const char *)&addr);
-		free(addrp, M_VPCLINK);
+		free(addrp, M_VPCMUX);
 		if (art_size(&ftable->vf_ftable) == 0) {
 			art_delete(&vs->vs_vxftable, (const char *)&vfte->vf_vni);
-			free(ftable, M_VPCLINK);
+			free(ftable, M_VPCMUX);
 		}
 	} else {
 		ifp = NULL;
 		/* do an arp resolve on proto addr so that it's in cache */
-		(void)vpclink_nd_lookup(vs, &ifp, &vfte->vf_protoaddr, buf);
-		vpclink_ftable_insert(ftable, (const char *)vfte->vf_hwaddr,
+		(void)vpcmux_nd_lookup(vs, &ifp, &vfte->vf_protoaddr, buf);
+		vpcmux_ftable_insert(ftable, (const char *)vfte->vf_hwaddr,
 							  &vfte->vf_protoaddr);
 	}
 	return (0);
 }
 
 static int
-vpclink_ftable_print_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+vpcmux_ftable_print_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
 	char buf[5];
 
@@ -885,23 +885,23 @@ vpclink_ftable_print_callback(void *data, const unsigned char *key, uint32_t key
 }
 
 static int
-vpclink_vxftable_print_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+vpcmux_vxftable_print_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
-	struct vpclink_ftable *ftable = value;
+	struct vpcmux_ftable *ftable = value;
 
-	art_iter(&ftable->vf_ftable, vpclink_ftable_print_callback, (void*)(uintptr_t)key);
+	art_iter(&ftable->vf_ftable, vpcmux_ftable_print_callback, (void*)(uintptr_t)key);
 	return (0);
 }
 
 static void
-vpclink_fte_print(struct vpclink_softc *vs)
+vpcmux_fte_print(struct vpcmux_softc *vs)
 {
 
-	art_iter(&vs->vs_vxftable, vpclink_vxftable_print_callback, NULL);
+	art_iter(&vs->vs_vxftable, vpcmux_vxftable_print_callback, NULL);
 }
 
 static int
-vpclink_ftable_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+vpcmux_ftable_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
 	uint32_t *count = data;
 	(*count)++;
@@ -909,37 +909,37 @@ vpclink_ftable_count_callback(void *data, const unsigned char *key, uint32_t key
 }
 
 static int
-vpclink_vxftable_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+vpcmux_vxftable_count_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
-	struct vpclink_ftable *ftable = value;
+	struct vpcmux_ftable *ftable = value;
 
-	art_iter(&ftable->vf_ftable, vpclink_ftable_count_callback, data);
+	art_iter(&ftable->vf_ftable, vpcmux_ftable_count_callback, data);
 	return (0);
 }
 
 static int
-vpc_fte_count(struct vpclink_softc *vs)
+vpc_fte_count(struct vpcmux_softc *vs)
 {
 	uint32_t count = 0;
 
-	art_iter(&vs->vs_vxftable, vpclink_vxftable_count_callback, &count);
+	art_iter(&vs->vs_vxftable, vpcmux_vxftable_count_callback, &count);
 	return (count);
 }
 
 static int
-vpclink_fte_list(struct vpclink_softc *vs, struct vpclink_fte_list **vflp, size_t *length)
+vpcmux_fte_list(struct vpcmux_softc *vs, struct vpcmux_fte_list **vflp, size_t *length)
 {
-	struct vpclink_fte_list *vfl;
+	struct vpcmux_fte_list *vfl;
 
-	if (*length == sizeof(struct vpclink_fte_list)) {
+	if (*length == sizeof(struct vpcmux_fte_list)) {
 		vfl = malloc(sizeof(*vfl), M_TEMP, M_WAITOK|M_ZERO);
 		vfl->vfl_count = vpc_fte_count(vs);
 		*vflp = vfl;
 		return (0);
 	}
 #if 0
-	if (length != (sizeof(struct vpclink_fte_list) +
-				   vfl->vfl_count*sizeof(struct vpclink_fte)))
+	if (length != (sizeof(struct vpcmux_fte_list) +
+				   vfl->vfl_count*sizeof(struct vpcmux_fte)))
 		return (EINVAL);
 #endif	
 	/* XXX implement me */
@@ -948,43 +948,43 @@ vpclink_fte_list(struct vpclink_softc *vs, struct vpclink_fte_list **vflp, size_
 
 
 int
-vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	struct ifnet *ifp = ctx->v_ifp;
 	if_ctx_t ifctx = ifp->if_softc;
-	struct vpclink_softc *vs = iflib_get_softc(ifctx);
+	struct vpcmux_softc *vs = iflib_get_softc(ifctx);
 
 	switch(op) {
-		case VPC_VPCLINK_OP_LISTEN: {
+		case VPC_VPCMUX_OP_LISTEN: {
 			const struct sockaddr *vl_addr = in;
 
 			if (inlen != sizeof(*vl_addr))
 				return (EBADRPC);
-			return (vpclink_set_listen(vs, vl_addr));
+			return (vpcmux_set_listen(vs, vl_addr));
 			break;
 		}
-		case VPC_VPCLINK_OP_UNDERLAY_ATTACH: {
+		case VPC_VPCMUX_OP_UNDERLAY_ATTACH: {
 			const vpc_id_t *id = in;
 
 			if (inlen != sizeof(*id))
 				return (EBADRPC);
-			return (vpclink_underlay_attach(vs, id));
+			return (vpcmux_underlay_attach(vs, id));
 		}
-		case VPC_VPCLINK_OP_FTE_DEL:
-		case VPC_VPCLINK_OP_FTE_SET: {
-			const struct vpclink_fte *vfte = in;
+		case VPC_VPCMUX_OP_FTE_DEL:
+		case VPC_VPCMUX_OP_FTE_SET: {
+			const struct vpcmux_fte *vfte = in;
 
 			if (inlen != sizeof(*vfte))
 				return (EBADRPC);
-			return (vpclink_fte_update(vs, vfte, op == VPC_VPCLINK_FTE_SET));
+			return (vpcmux_fte_update(vs, vfte, op == VPC_VPCMUX_FTE_SET));
 			break;
 		}
-		case VPC_VPCLINK_OP_FTE_LIST: {
-			struct vpclink_fte_list *vfl;
+		case VPC_VPCMUX_OP_FTE_LIST: {
+			struct vpcmux_fte_list *vfl;
 			int rc;
 
-			if ((rc = vpclink_fte_list(vs, &vfl, outlen)))
+			if ((rc = vpcmux_fte_list(vs, &vfl, outlen)))
 				return (rc);
 			*outdata = vfl;
 			break;
@@ -993,45 +993,45 @@ vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	return (EOPNOTSUPP);
 }
 
-static device_method_t vpclink_if_methods[] = {
-	DEVMETHOD(ifdi_cloneattach, vpclink_cloneattach),
-	DEVMETHOD(ifdi_attach_post, vpclink_attach_post),
-	DEVMETHOD(ifdi_detach, vpclink_detach),
-	DEVMETHOD(ifdi_init, vpclink_init),
-	DEVMETHOD(ifdi_stop, vpclink_stop),
+static device_method_t vpcmux_if_methods[] = {
+	DEVMETHOD(ifdi_cloneattach, vpcmux_cloneattach),
+	DEVMETHOD(ifdi_attach_post, vpcmux_attach_post),
+	DEVMETHOD(ifdi_detach, vpcmux_detach),
+	DEVMETHOD(ifdi_init, vpcmux_init),
+	DEVMETHOD(ifdi_stop, vpcmux_stop),
 	DEVMETHOD_END
 };
 
-static driver_t vpclink_iflib_driver = {
-	"vpclink", vpclink_if_methods, sizeof(struct vpclink_softc)
+static driver_t vpcmux_iflib_driver = {
+	"vpcmux", vpcmux_if_methods, sizeof(struct vpcmux_softc)
 };
 
-char vpclink_driver_version[] = "0.0.1";
+char vpcmux_driver_version[] = "0.0.1";
 
-static struct if_shared_ctx vpclink_sctx_init = {
+static struct if_shared_ctx vpcmux_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
-	.isc_driver_version = vpclink_driver_version,
-	.isc_driver = &vpclink_iflib_driver,
+	.isc_driver_version = vpcmux_driver_version,
+	.isc_driver = &vpcmux_iflib_driver,
 	.isc_flags = IFLIB_PSEUDO,
-	.isc_name = "vpclink",
+	.isc_name = "vpcmux",
 };
 
-if_shared_ctx_t vpclink_sctx = &vpclink_sctx_init;
-static if_pseudo_t vpclink_pseudo;
+if_shared_ctx_t vpcmux_sctx = &vpcmux_sctx_init;
+static if_pseudo_t vpcmux_pseudo;
 
 static int
-vpclink_module_init(void)
+vpcmux_module_init(void)
 {
 	struct egress_cache **ecpp, *ecp;
 	int i, ec_size;
 
-	vpclink_pseudo = iflib_clone_register(vpclink_sctx);
-	if (vpclink_pseudo == NULL)
+	vpcmux_pseudo = iflib_clone_register(vpcmux_sctx);
+	if (vpcmux_pseudo == NULL)
 		return (ENXIO);
 
 	/* DPCPU hdr_cache init */
 	ec_size = roundup(sizeof(*ecp), CACHE_LINE_SIZE);
-	ecp = malloc(ec_size*mp_ncpus, M_VPCLINK, M_WAITOK|M_ZERO);
+	ecp = malloc(ec_size*mp_ncpus, M_VPCMUX, M_WAITOK|M_ZERO);
 
 	CPU_FOREACH(i) {
 		ecpp = DPCPU_ID_PTR(i, hdr_cache);
@@ -1043,31 +1043,31 @@ vpclink_module_init(void)
 }
 
 static void
-vpclink_module_deinit(void)
+vpcmux_module_deinit(void)
 {
 	struct egress_cache *ecp;
 
-	VPCLINK_LOCK();
-	VPCLINK_UNLOCK();
+	VPCMUX_LOCK();
+	VPCMUX_UNLOCK();
 	ecp = DPCPU_ID_GET(0, hdr_cache);
-	free(ecp, M_VPCLINK);
-	iflib_clone_deregister(vpclink_pseudo);
+	free(ecp, M_VPCMUX);
+	iflib_clone_deregister(vpcmux_pseudo);
 }
 
 
 static int
-vpclink_module_event_handler(module_t mod, int what, void *arg)
+vpcmux_module_event_handler(module_t mod, int what, void *arg)
 {
 	int err;
 
 	switch (what) {
 		case MOD_LOAD:
-			if ((err = vpclink_module_init()) != 0)
+			if ((err = vpcmux_module_init()) != 0)
 				return (err);
 			break;
 		case MOD_UNLOAD:
 			if (clone_count == 0)
-				vpclink_module_deinit();
+				vpcmux_module_deinit();
 			else
 				return (EBUSY);
 			break;
@@ -1077,12 +1077,12 @@ vpclink_module_event_handler(module_t mod, int what, void *arg)
 	return (0);
 }
 
-static moduledata_t vpclink_moduledata = {
-	"vpclink",
-	vpclink_module_event_handler,
+static moduledata_t vpcmux_moduledata = {
+	"vpcmux",
+	vpcmux_module_event_handler,
 	NULL
 };
 
-DECLARE_MODULE(vpclink, vpclink_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
-MODULE_VERSION(vpclink, 1);
-MODULE_DEPEND(vpclink, iflib, 1, 1, 1);
+DECLARE_MODULE(vpcmux, vpcmux_moduledata, SI_SUB_PSEUDO, SI_ORDER_ANY);
+MODULE_VERSION(vpcmux, 1);
+MODULE_DEPEND(vpcmux, iflib, 1, 1, 1);

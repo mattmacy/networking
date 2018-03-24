@@ -402,7 +402,7 @@ vpc_ifp_cache(struct ifnet *ifp)
 	if (vpc_ic->ic_ifps[ifp->if_index] == ifp)
 		return (0);
 
-	/* XXX -- race if reference twice  -- need to actually serialize with VPCLINK_LOCK */
+	/* XXX -- race if reference twice  -- need to actually serialize with VPCMUX_LOCK */
 	if (vpc_ic->ic_ifindex_max < ifp->if_index)
 		vpc_ic->ic_ifindex_max = ifp->if_index;
 	MPASS(vpc_ic->ic_ifps[ifp->if_index] == NULL);

@@ -18,7 +18,7 @@ SRCS+=	art.c \
 	if_ethlink.c \
 	if_hostlink.c \
 	if_vmnic.c \
-	if_vpclink.c \
+	if_vpcmux.c \
 	if_vpcp.c \
 	if_vpcsw.c \
 	vmmnet.c \

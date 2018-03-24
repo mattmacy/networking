@@ -40,16 +40,16 @@ struct vpc_ioctl_header {
 	uint64_t vih_type;
 };
 
-struct vpclink_fte {
+struct vpcmux_fte {
 	uint32_t vf_vni;
 	uint16_t vf_vlanid;
 	uint8_t vf_hwaddr[ETHER_ADDR_LEN];
 	struct sockaddr vf_protoaddr;
 };
 
-struct vpclink_fte_list {
+struct vpcmux_fte_list {
 	uint32_t vfl_count;
-	struct vpclink_fte vfl_vftes[0];
+	struct vpcmux_fte vfl_vftes[0];
 };
 
 struct vpci_attach {
@@ -160,7 +160,7 @@ typedef struct {
 		struct {
 		} ethlink;
 		struct {
-		} vpclink;
+		} vpcmux;
 	};
 } vpc_obj_info_t;
 
@@ -282,7 +282,7 @@ int vpcp_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 int vpcrtr_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			   size_t *outlen, void **outdata);
 
-int vpclink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
+int vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				size_t *outlen, void **outdata);
 
 int ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
@@ -316,7 +316,7 @@ enum vpc_obj_type {
 	VPC_OBJ_PORT = 2,
 	VPC_OBJ_ROUTER = 3,
 	VPC_OBJ_NAT = 4,
-	VPC_OBJ_VPCLINK = 5,
+	VPC_OBJ_VPCMUX = 5,
 	VPC_OBJ_VMNIC = 6,
 	VPC_OBJ_MGMT = 7,
 	VPC_OBJ_ETHLINK = 8,
@@ -369,14 +369,14 @@ enum vpc_vpcnat_op_type {
 	VPC_VPCNAT_MAX = 0,
 };
 
-enum vpc_vpclink_op_type {
-	VPC_VPCLINK_INVALID = 0,
-	VPC_VPCLINK_LISTEN = 1,
-	VPC_VPCLINK_FTE_SET = 2,
-	VPC_VPCLINK_FTE_DEL = 3,
-	VPC_VPCLINK_FTE_LIST = 4,
-	VPC_VPCLINK_UNDERLAY_ATTACH = 5,
-	VPC_VPCLINK_MAX = 5,
+enum vpc_vpcmux_op_type {
+	VPC_VPCMUX_INVALID = 0,
+	VPC_VPCMUX_LISTEN = 1,
+	VPC_VPCMUX_FTE_SET = 2,
+	VPC_VPCMUX_FTE_DEL = 3,
+	VPC_VPCMUX_FTE_LIST = 4,
+	VPC_VPCMUX_UNDERLAY_ATTACH = 5,
+	VPC_VPCMUX_MAX = 5,
 };
 
 enum vpc_vmnic_op_type {
@@ -497,11 +497,11 @@ enum vpc_hostlink_op_type {
 #define VPC_ETHLINK_OP_ATTACH VPC_OP_IMP(VPC_OBJ_ETHLINK, VPC_ETHLINK_ATTACH)
 
 
-#define VPC_VPCLINK_OP_LISTEN VPC_OP_IMP(VPC_OBJ_VPCLINK, VPC_VPCLINK_LISTEN)
-#define VPC_VPCLINK_OP_FTE_SET VPC_OP_IMP(VPC_OBJ_VPCLINK, VPC_VPCLINK_FTE_SET)
-#define VPC_VPCLINK_OP_FTE_DEL VPC_OP_IMP(VPC_OBJ_VPCLINK, VPC_VPCLINK_FTE_DEL)
-#define VPC_VPCLINK_OP_UNDERLAY_ATTACH VPC_OP_IMP(VPC_OBJ_VPCLINK, VPC_VPCLINK_UNDERLAY_ATTACH)
-#define VPC_VPCLINK_OP_FTE_LIST VPC_OP_O(VPC_OBJ_VPCLINK, VPC_VPCLINK_FTE_LIST)
+#define VPC_VPCMUX_OP_LISTEN VPC_OP_IMP(VPC_OBJ_VPCMUX, VPC_VPCMUX_LISTEN)
+#define VPC_VPCMUX_OP_FTE_SET VPC_OP_IMP(VPC_OBJ_VPCMUX, VPC_VPCMUX_FTE_SET)
+#define VPC_VPCMUX_OP_FTE_DEL VPC_OP_IMP(VPC_OBJ_VPCMUX, VPC_VPCMUX_FTE_DEL)
+#define VPC_VPCMUX_OP_UNDERLAY_ATTACH VPC_OP_IMP(VPC_OBJ_VPCMUX, VPC_VPCMUX_UNDERLAY_ATTACH)
+#define VPC_VPCMUX_OP_FTE_LIST VPC_OP_O(VPC_OBJ_VPCMUX, VPC_VPCMUX_FTE_LIST)
 
 
 #define VPC_F_CREATE (1ULL << 0)
