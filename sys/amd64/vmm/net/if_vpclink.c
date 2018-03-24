@@ -647,8 +647,7 @@ vpclink_bridge_input(if_t ifp, struct mbuf *m)
 	ETHER_BPF_MTAP(vs->vs_ifp, m);
 	if (vs->vs_ifp->if_bridge == NULL)
 		return (m);
-	(void)(*(vs->vs_ifp)->if_bridge_output)(vs->vs_ifp, m, NULL, NULL);
-	return (NULL);
+	return (*(vs->vs_ifp)->if_bridge_input)(vs->vs_ifp, m);
 }
 
 static int
