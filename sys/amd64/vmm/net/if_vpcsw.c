@@ -366,6 +366,7 @@ vpc_broadcast_one(void *data, const unsigned char *key __unused, uint32_t key_le
 	m = mvec_dup(msrc, M_NOWAIT);
 	if (__predict_false(m == NULL))
 		return (ENOMEM);
+	m->m_pkthdr.rcvif = ifp;
 	ifp->if_input(ifp, m);
 	return (0);
 }
