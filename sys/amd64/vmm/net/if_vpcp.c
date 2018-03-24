@@ -398,47 +398,6 @@ hostlink_bridge_input(if_t ifp, struct mbuf *m)
 	return (m);
 }
 
-static void
-vpclink_input(if_t ifp, struct mbuf *m)
-{
-	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
-	struct ifnet *devifp = vs->vs_ifdev;
-	struct mbuf *mp = m;
-
-	do {
-		mp->m_pkthdr.rcvif = devifp;
-		mp = mp->m_nextpkt;
-	} while (mp);
-	panic("placeholder");
-	devifp->if_input(devifp, m);
-}
-
-static int
-vpclink_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
-{
-	struct mbuf *mp;
-	struct vpcp_softc *vs;
-	struct ifnet *ifswitch;
-
-	vs = ifp->if_bridge;
-	ifswitch = vs->vs_ifswitch;
-	mp = m;
-
-	do {
-		mp->m_pkthdr.rcvif = vs->vs_ifport;
-		mp = m->m_nextpkt;
-	} while (mp);
-	panic("placeholder");
-	return (vpcsw_transmit_ext(ifswitch, mp, vs->vs_pcpu_cache));
-}
-
-static struct mbuf *
-vpclink_bridge_input(if_t ifp, struct mbuf *m)
-{
-	panic("placeholder");
-	return (m);
-}
-
 static int
 vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 {
@@ -509,6 +468,7 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 				vs->vs_ifdev = NULL;
 			}
 			break;
+		case VPC_OBJ_VPCLINK:
 		case VPC_OBJ_ETHLINK:
 			if_setmbuftoqidfn(ifp, phys_mbuf_to_qid);
 			ifp->if_input = phys_input;
@@ -524,11 +484,6 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			ifp->if_input = vmi_input;
 			ifdev->if_bridge_input = vmi_bridge_input;
 			ifdev->if_bridge_output = vmi_bridge_output;
-			break;
-		case VPC_OBJ_VPCLINK:
-			ifp->if_input = vpclink_input;
-			ifdev->if_bridge_input = vpclink_bridge_input;
-			ifdev->if_bridge_output = vpclink_bridge_output;
 			break;
 		default:
 			vs->vs_type = prevtype;
