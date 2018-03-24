@@ -1214,8 +1214,9 @@ _mtx_lock_indefinite_check(struct mtx *m, struct lock_delay_arg *ldap)
 		if (td == NULL)
 			return;
 
-		printf( "spin lock %p (%s) held by %p (tid %d) too long\n",
-		    m, m->lock_object.lo_name, td, td->td_tid);
+		printf("spin lock %p (%s) held by %p (tid %d %s %s) too long\n",
+			   m, m->lock_object.lo_name, td, td->td_tid,
+			   td->td_name, td->td_proc->p_comm);
 #ifdef WITNESS
 		witness_display_spinlock(&m->lock_object, td, printf);
 #endif
