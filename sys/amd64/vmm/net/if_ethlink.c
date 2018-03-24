@@ -188,7 +188,7 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			struct ifnet *ifp;
 
 			bzero(buf, IFNAMSIZ);
-			memcpy(buf, in, min(inlen, IFNAMSIZ-1));
+			strncpy(buf, in, min(inlen, IFNAMSIZ-1));
 			if ((ifp = ifunit_ref(buf)) == NULL)
 				return (ENOENT);
 			if (ifp->if_addr == NULL) {
@@ -202,6 +202,27 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			}
 			iflib_set_mac(ifctx, LLADDR(sdl));
 			ls->ls_ifp = ifp;
+			break;
+		}
+		case VPC_ETHLINK_OP_DISCONNECT:
+			if (ls->ls_ifp != NULL) {
+				if (ls->ls_ifp->if_bridge)
+					vpcp_port_disconnect_ifp(ls->ls_ifp);
+				if_rele(ls->ls_ifp);
+				ls->ls_ifp = NULL;
+			}
+			break;
+		case VPC_ETHLINK_OP_CONNECTED_NAME_GET: {
+			char *ifname;
+
+			if (*outlen < IFNAMSIZ)
+				return (EOVERFLOW);
+			if (ls->ls_ifp == NULL)
+				return (EAGAIN);
+			ifname = malloc(IFNAMSIZ, M_TEMP, M_WAITOK|M_ZERO);
+			strncpy(ifname, ls->ls_ifp->if_xname, IFNAMSIZ);
+			*outdata = ifname;
+			*outlen = IFNAMSIZ;
 			break;
 		}
 		default:
