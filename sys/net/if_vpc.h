@@ -52,37 +52,6 @@ struct vpcmux_fte_list {
 	struct vpcmux_fte vfl_vftes[0];
 };
 
-struct vpci_attach {
-	struct vpc_ioctl_header va_vih;
-	char va_ifname[IFNAMSIZ];
-
-};
-struct vpci_vni {
-	struct vpc_ioctl_header vv_vih;
-	uint32_t vv_vni;
-};
-
-#define VPCI_ATTACH								\
-	_IOW('k', 1, struct vpci_attach)
-#define VPCI_ATTACHED_GET			   			\
-	_IOWR('k', 2, struct vpci_attach)
-#define VPCI_DETACH								\
-	_IOW('k', 3, struct vpc_ioctl_header)
-#define VPCI_VNI_SET							\
-	_IOW('k', 4, struct vpci_vni)
-#define VPCI_VNI_GET							\
-	_IOWR('k', 5, struct vpci_vni)
-
-
-#define VPCSW_REQ_NDv4 0x1
-#define VPCSW_REQ_NDv6 0x2
-#define VPCSW_REQ_DHCPv4 0x4
-#define VPCSW_REQ_DHCPv6 0x8
-#define VPCSW_REQ_MAX VPCSW_REQ_DHCPv6 
-
-#define VPCSW_VERSION 0x42
-
-
 struct vpcsw_op_header {
 	uint32_t voh_version;
 	uint32_t voh_op;
@@ -92,15 +61,6 @@ struct vpcsw_op_context {
 	uint32_t voc_vni;
 	uint16_t voc_vtag;
 	uint16_t voc_len;
-};
-
-union vpcsw_request_data {
-	struct {
-		struct in_addr target;
-	} vrqd_ndv4;
-	struct {
-		struct in6_addr target;
-	} vrqd_ndv6;
 };
 
 struct vpcsw_request {
