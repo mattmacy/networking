@@ -77,7 +77,7 @@ __FBSDID("$FreeBSD$");
  * Define the base address of the ACPI tables, and the offsets to
  * the individual tables
  */
-#define BHYVE_ACPI_BASE		0xf2400
+#define BHYVE_ACPI_BASE		0xf2A00
 #define RSDT_OFFSET		0x040
 #define XSDT_OFFSET		0x080
 #define MADT_OFFSET		0x100
