@@ -184,7 +184,7 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	rc = 0;
 	ls = iflib_get_softc(ifctx);
 	switch (op) {
-		case VPC_ETHLINK_OP_ATTACH: {
+		case VPC_ETHLINK_OP_CONNECT: {
 			struct ifnet *ifp;
 
 			bzero(buf, IFNAMSIZ);

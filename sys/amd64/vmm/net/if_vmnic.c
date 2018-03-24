@@ -1841,7 +1841,7 @@ vmnic_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			}
 			break;
 		}
-		case VPC_VMNIC_OP_ATTACH: {
+		case VPC_VMNIC_OP_CONNECT: {
 #ifdef DEVEL_BRINGUP
 			iflib_set_mtu(ctx, 1500);
 #else

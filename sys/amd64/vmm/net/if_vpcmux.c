@@ -751,7 +751,7 @@ vpcmux_set_listen(struct vpcmux_softc *vs, const struct sockaddr *addr)
 }
 
 static int
-vpcmux_underlay_attach(struct vpcmux_softc *vs, const vpc_id_t *id)
+vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 {
 	struct ifnet *ifp;
 	struct ifreq ifr;
@@ -938,12 +938,12 @@ vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			return (vpcmux_set_listen(vs, vl_addr));
 			break;
 		}
-		case VPC_VPCMUX_OP_UNDERLAY_ATTACH: {
+		case VPC_VPCMUX_OP_UNDERLAY_CONNECT: {
 			const vpc_id_t *id = in;
 
 			if (inlen != sizeof(*id))
 				return (EBADRPC);
-			return (vpcmux_underlay_attach(vs, id));
+			return (vpcmux_underlay_connect(vs, id));
 		}
 		case VPC_VPCMUX_OP_FTE_DEL:
 		case VPC_VPCMUX_OP_FTE_SET: {
