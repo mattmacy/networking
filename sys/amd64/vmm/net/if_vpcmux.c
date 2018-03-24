@@ -604,14 +604,15 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	ctx = ifp->if_softc;
 	vs = iflib_get_softc(ctx);
 	oifp = vs->vs_underlay_ifp;
-	can_batch = true;
-	if ((m->m_flags & M_VXLANTAG) == 0) {
-		DPRINTF("got untagged packet\n");
+	if (__predict_false(oifp == NULL)) {
 		m_freechain(m);
-		return (EINVAL);
+		return (ENOBUFS);
 	}
-	vpc_epoch_begin();
+	if ((m->m_flags & M_VXLANTAG) == 0)
+		return (oifp->if_transmit_txq(ifp, m));
 
+	vpc_epoch_begin();
+	can_batch = true;
 	lasterr = vpcmux_vxlan_encap_chain(vs, &m, &can_batch);
 	if (__predict_false(lasterr))
 		goto done;
