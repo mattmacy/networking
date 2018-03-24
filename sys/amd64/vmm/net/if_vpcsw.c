@@ -343,7 +343,6 @@ vpcsw_process_mcast(struct vpcsw_softc *vs, struct mbuf **msrc)
 
 	vmq = &vs->vs_vmq;
 	m = *msrc;
-	m->m_pkthdr.rcvif = NULL;
 	if ((m->m_flags & M_HOLBLOCKING) ||
 		(m->m_flags & (M_VXLANTAG|M_TRUNK)) == M_VXLANTAG) {
 		mp = mvec_dup(m, M_NOWAIT);
@@ -379,6 +378,7 @@ vpcsw_process_mcast(struct vpcsw_softc *vs, struct mbuf **msrc)
 		rc = 0;
 	} else if (!(m->m_flags & M_VXLANTAG)) {
 		art_iter(vs->vs_ftable_ro, vpc_broadcast_one, m);
+		m->m_pkthdr.rcvif = NULL;
 		rc = 0;
 	} else {
 		m_freem(m);
