@@ -168,6 +168,7 @@ vmi_input_process(struct ifnet *ifp, struct mbuf *m, bool egress)
 	do {
 		/* set mbuf flags for transmit */
 		ETHER_BPF_MTAP(ifp, m);
+		m->m_pkthdr.rcvif = ifp;
 		hdr = mtod(m, caddr_t);
 		vpc_parse_pkt(m, &vpi);
 		vmi_txflags(m, &vpi, egress);
