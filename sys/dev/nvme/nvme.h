@@ -1183,10 +1183,10 @@ void	nvme_error_information_entry_swapbytes(struct nvme_error_information_entry 
 	s->nsid = le32toh(s->nsid);
 }
 
+#if _BYTE_ORDER != _LITTLE_ENDIAN
 static inline
 void	nvme_le128toh(void *p)
 {
-#if _BYTE_ORDER != _LITTLE_ENDIAN
 	/* Swap 16 bytes in place */
 	char *tmp = (char*)p;
 	char b;
@@ -1196,8 +1196,11 @@ void	nvme_le128toh(void *p)
 		tmp[i] = tmp[15-i];
 		tmp[15-i] = b;
 	}
-#endif
 }
+#else
+static inline void	nvme_le128toh(void *p __unused) {}
+
+#endif
 
 static inline
 void	nvme_health_information_page_swapbytes(struct nvme_health_information_page *s)
