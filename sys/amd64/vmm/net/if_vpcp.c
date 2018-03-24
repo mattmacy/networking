@@ -621,6 +621,8 @@ vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 
 			if (vs->vs_type == VPC_OBJ_INVALID)
 				return (ENXIO);
+			if (*outlen < sizeof(vpc_id_t))
+				return (EOVERFLOW);
 			*outlen = sizeof(vpc_id_t);
 			id = malloc(*outlen, M_TEMP, M_WAITOK);
 			memcpy(id, &vs->vs_devid, *outlen);
