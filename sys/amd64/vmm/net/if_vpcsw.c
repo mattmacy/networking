@@ -419,7 +419,7 @@ vpcsw_process_one(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct 
 }
 
 static int
-vpcsw_transit(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf *m, struct mbuf **mret)
+vpcsw_transit(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf *m)
 {
 	struct ifnet *ifnext;
 	struct mbuf *mh, *mt, *mnext;
@@ -440,10 +440,7 @@ vpcsw_transit(struct vpcsw_softc *vs, struct vpcsw_cache_ent *cache, struct mbuf
 		if (__predict_false(rc))
 			break;
 		if (__predict_false(m->m_pkthdr.rcvif == NULL)) {
-			if (mret && *mret == NULL)
-				*mret = m;
-			else
-				m_freem(m);
+			m_freem(m);
 			goto next;
 		}
 		if (mh == NULL) {
@@ -500,7 +497,7 @@ vpcsw_transmit_ext(struct ifnet *ifp, struct mbuf *m, void *cache)
 	struct vpcsw_softc *vs;
 
 	vs = iflib_get_softc(ctx);
-	return (vpcsw_transit(vs, cache, m, NULL));
+	return (vpcsw_transit(vs, cache, m));
 }
 
 static int
@@ -515,7 +512,7 @@ vpcsw_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unus
 	ctx = ifp->if_softc;
 	cache = vpcp_get_pcpu_cache(ctx);
 	MPASS(cache != NULL);
-	return (vpcsw_transit(vs, cache, m, NULL));
+	return (vpcsw_transit(vs, cache, m));
 }
 
 static void
@@ -538,8 +535,8 @@ vpcsw_bridge_input(if_t ifp, struct mbuf *m)
 	cache = vpcp_get_pcpu_cache(ctx);
 	MPASS(cache != NULL);
 
-	vpcsw_transit(vs, cache, m, &mp);
-	return (mp);
+	vpcsw_transit(vs, cache, m);
+	return (NULL);
 }
 
 static int
@@ -748,7 +745,7 @@ vpcsw_resp_send(struct vpcsw_softc *vs, const struct vpcsw_response *rsp)
 	memcpy(m->m_data, rsp->vrs_data, len);
 	m->m_len = len;
 	m->m_pkthdr.len = len;
-	return (vpcsw_transit(vs, NULL, m, NULL));
+	return (vpcsw_transit(vs, NULL, m));
 }
 
 int
