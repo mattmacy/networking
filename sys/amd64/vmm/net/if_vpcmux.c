@@ -483,12 +483,12 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 		m_freem(mh);
 		return (rc);
 	}
-	ifp = NULL;
 	if ((rc = vpcmux_nd_lookup(vs, dst, evh->evl_dhost))) {
 		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
 	}
-	mh->m_pkthdr.rcvif = vs->vs_underlay_ifp;
+	ifp = vs->vs_underlay_ifp;
+	mh->m_pkthdr.rcvif = ifp;
 	vpcmux_vxlanhdr_init(vf, vh, dst, mh, (caddr_t)evhvx, &tpi);
 	vpcmux_cache_update(mh, evhvx);
 
@@ -583,6 +583,9 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	if ((m->m_flags & M_VXLANTAG) == 0)
 		return (oifp->if_transmit_txq(ifp, m));
 
+	mp = (void*)pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
+	if (__predict_false(mp == NULL))
+		return (ENOBUFS);
 	vpc_epoch_begin();
 	can_batch = true;
 	lasterr = vpcmux_vxlan_encap_chain(vs, &m, &can_batch);
