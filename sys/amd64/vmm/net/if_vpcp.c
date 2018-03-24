@@ -352,9 +352,9 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 	ifswitch = vs->vs_ifswitch;
 	if (__predict_true(mh != NULL))
 		vpcsw_transmit_ext(ifswitch, mh, vs->vs_pcpu_cache);
-	if (__predict_false((mret != NULL) && vpcsw_transmit_ext(ifswitch, mret, vs->vs_pcpu_cache)))
-		return (NULL);
-	return (mret);
+	if (__predict_false(mret != NULL))
+		vpcsw_transmit_ext(ifswitch, mret, vs->vs_pcpu_cache);
+	return (NULL);
 }
 
 static void
