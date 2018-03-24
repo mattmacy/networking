@@ -308,6 +308,31 @@ vmmnet_delete(const vpc_id_t *id)
 	free(ctx, M_VMMNET);
 }
 
+void
+vmmnet_ref(vpc_ctx_t vctx)
+{
+	struct vpcctx *vpcctx = (void *)vctx;
+
+	refcount_acquire(&vpcctx->v_refcnt);
+}
+
+void
+vmmnet_rele(vpc_ctx_t vctx)
+{
+	struct vpcctx *vpcctx = (void *)vctx;
+
+	sx_assert(&vmmnet_lock, SA_XLOCKED);
+	if (refcount_release(&vpcctx->v_refcnt)) {
+		sx_xlock(&vmmnet_lock);
+		art_delete(&vpc_uuid_table, (const char*)&vpcctx->v_id);
+		/* run object dtor */
+		if (vctx->v_ifp)
+			if_clone_destroy(vctx->v_ifp->if_xname);
+		sx_xunlock(&vmmnet_lock);
+		free(vctx, M_VMMNET);
+	}
+}
+
 static int
 kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			  vpc_type_t obj_type_full, vpc_flags_t flags,
