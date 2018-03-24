@@ -90,13 +90,10 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/in_cksum.h>
 
-#define VPC_DEBUG
-
-#ifdef VPC_DEBUG
-#define  DPRINTF printf
-#else
-#define DPRINTF(...)
-#endif
+#define	DPRINTF(...) do {								\
+	if (__predict_false(bootverbose))					\
+		printf(__VA_ARGS__);							\
+} while (0)
 
 struct vxlanhdr {
     uint32_t reserved0:4;
