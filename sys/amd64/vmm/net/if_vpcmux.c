@@ -127,7 +127,7 @@ struct vpcmux_ftable {
 
 struct egress_cache {
 	uint16_t ec_hdr[3];
-	uint16_t ec_ifindex;
+	uint16_t ec_pad;
 	int ec_ticks;
 	struct vxlan_header ec_vh;
 };
@@ -262,18 +262,20 @@ vpc_cksum_skip(struct mbuf *m, int len, int skip)
 
 static void
 vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf, struct vxlan_header *vh, 
-				  struct sockaddr *dstip, struct ifnet *ifp, struct mbuf *m,
+				  struct sockaddr *dstip, struct mbuf *m,
 				  caddr_t hdr, struct vpc_pkt_info *tpi)
 {
 	struct ether_header *eh;
 	struct ip *ip;
 	struct udphdr *uh;
 	struct vxlanhdr *vhdr;
+	struct ifnet *ifp;
 	caddr_t smac;
 	int len;
 	uint16_t seed;
 	struct mvec_cursor mc;
 
+	ifp = m->m_pkthdr.rcvif;
 	MPASS(!(m->m_flags & M_EXT) || m_ismvec(m));
 	seed = 0;
 	len = m->m_pkthdr.len;
@@ -315,7 +317,6 @@ static int
 vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_header *evh)
 {
 	struct egress_cache *ecp;
-	struct ifnet *ifp;
 
 	_critical_enter();
 	ecp = DPCPU_GET(hdr_cache);
@@ -329,10 +330,6 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 		goto skip;
 	}
 
-	if ((ifp = vpc_if_lookup(ecp->ec_ifindex)) == NULL) {
-		ecp->ec_ticks = 0;
-		goto skip;
-	}
 	/*
 	 * dmac & vxlanid match
 	 */
@@ -341,7 +338,6 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 		/* re-use last header */
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header));
 		_critical_exit();
-		m->m_pkthdr.rcvif = ifp;
 		return (1);
 	}
 	skip:
@@ -350,7 +346,7 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 }
 
 static void
-vpcmux_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifindex)
+vpcmux_cache_update(struct mbuf *m, struct ether_vlan_header *evh)
 {
 	struct egress_cache *ecp;
 	uint16_t *src;
@@ -364,38 +360,17 @@ vpcmux_cache_update(struct mbuf *m, struct ether_vlan_header *evh, uint16_t ifin
 	ecp->ec_hdr[2] = src[2];
 	bcopy(m->m_data, &ecp->ec_vh, sizeof(struct vxlan_header));
 	ecp->ec_ticks = ticks;
-	ecp->ec_ifindex = ifindex;
 	_critical_exit();
 }
 
 
 static int
-vpcmux_nd_lookup(struct vpcmux_softc *vs, if_t *ifpp, const struct sockaddr *dst, uint8_t *ether_addr)
+vpcmux_nd_lookup(struct vpcmux_softc *vs, const struct sockaddr *dst, uint8_t *ether_addr)
 {
-	struct rtentry *rt;
 	int rc;
 	if_t ifp;
 
-	if (*ifpp == NULL)  {
-		rt = rtalloc1_fib((struct sockaddr *)(uintptr_t)dst, 0, 0, vs->vs_fibnum);
-		if (__predict_false(rt == NULL))
-			return (ENETUNREACH);
-		if (__predict_false(!(rt->rt_flags & RTF_UP) ||
-							(rt->rt_ifp == NULL) ||
-							!RT_LINK_IS_UP(rt->rt_ifp))) {
-		RTFREE_LOCKED(rt);
-		return (ENETUNREACH);
-		}
-		ifp = rt->rt_ifp;
-		rc = vpc_ifp_cache(ifp);
-		RTFREE_LOCKED(rt);
-
-		if (__predict_false(rc)) {
-			DPRINTF("failed to cache interface reference\n");
-			return (EDOOFUS);
-		}
-	} else
-		ifp = *ifpp;
+	ifp = vs->vs_underlay_ifp;
 	/* get dmac */
 	switch(dst->sa_family) {
 		case AF_INET:
@@ -409,7 +384,6 @@ vpcmux_nd_lookup(struct vpcmux_softc *vs, if_t *ifpp, const struct sockaddr *dst
 		default:
 			rc = EOPNOTSUPP;
 	}
-	*ifpp = ifp;
 	return (rc);
 }
 
@@ -484,6 +458,7 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	mh->m_pkthdr.csum_flags = CSUM_UDP;
 	mh->m_pkthdr.csum_flags |= ((oldflags & CSUM_TSO) << 2);
 	mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+	mh->m_pkthdr.rcvif = vs->vs_underlay_ifp;
 
 	vh = (struct vxlan_header *)mh->m_data;
 	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
@@ -509,13 +484,13 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 		return (rc);
 	}
 	ifp = NULL;
-	if ((rc = vpcmux_nd_lookup(vs, &ifp, dst, evh->evl_dhost))) {
+	if ((rc = vpcmux_nd_lookup(vs, dst, evh->evl_dhost))) {
 		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
 	}
-	mh->m_pkthdr.rcvif = ifp;
-	vpcmux_vxlanhdr_init(vf, vh, dst, ifp, mh, (caddr_t)evhvx, &tpi);
-	vpcmux_cache_update(mh, evhvx, ifp->if_index);
+	mh->m_pkthdr.rcvif = vs->vs_underlay_ifp;
+	vpcmux_vxlanhdr_init(vf, vh, dst, mh, (caddr_t)evhvx, &tpi);
+	vpcmux_cache_update(mh, evhvx);
 
 	MPASS(mh->m_pkthdr.len == m_length(mh, NULL));
 	/*
@@ -837,7 +812,6 @@ vpcmux_fte_update(struct vpcmux_softc *vs, const struct vpcmux_fte *vfte, bool a
 	struct vpcmux_ftable *ftable;
 	uint32_t addr, *addrp;
 	char buf[ETHER_ADDR_LEN];
-	if_t ifp;
 
 	/* XXX v4 */
 	if (vfte->vf_protoaddr.sa_family != AF_INET)
@@ -861,9 +835,8 @@ vpcmux_fte_update(struct vpcmux_softc *vs, const struct vpcmux_fte *vfte, bool a
 			free(ftable, M_VPCMUX);
 		}
 	} else {
-		ifp = NULL;
 		/* do an arp resolve on proto addr so that it's in cache */
-		(void)vpcmux_nd_lookup(vs, &ifp, &vfte->vf_protoaddr, buf);
+		(void)vpcmux_nd_lookup(vs, &vfte->vf_protoaddr, buf);
 		vpcmux_ftable_insert(ftable, (const char *)vfte->vf_hwaddr,
 							  &vfte->vf_protoaddr);
 	}
