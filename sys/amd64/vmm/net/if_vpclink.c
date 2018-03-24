@@ -153,6 +153,7 @@ static MALLOC_DEFINE(M_VPCLINK, "vpclink", "virtual private cloud link (vxlan en
 struct vpclink_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
+	struct ifnet *vs_ifp;
 	struct sockaddr vs_addr;
 	uint16_t vs_vxlan_port;
 	uint16_t vs_fibnum;
@@ -160,10 +161,8 @@ struct vpclink_softc {
 	uint16_t vs_max_port;
 	art_tree vs_vxftable; /* vxlanid -> ftable */
 	ck_epoch_record_t vs_record;
-	/* XXX temporary */
-	void	(*vs_old_if_input)		/* input routine (from h/w driver) */
-		(struct ifnet *, struct mbuf *);
-	struct ifnet *vs_ifparent;
+	struct ifnet *vs_underlay_ifp;
+	vpc_ctx_t vs_underlay_vctx;
 };
 
 static void vpclink_fte_print(struct vpclink_softc *vs);
@@ -595,12 +594,16 @@ vpclink_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 static int
 vpclink_transmit(if_t ifp, struct mbuf *m)
 {
-	if_ctx_t ctx = ifp->if_softc;
-	struct vpclink_softc *vs = iflib_get_softc(ctx);
+	struct ifnet *oifp;
+	if_ctx_t ctx;
+	struct vpclink_softc *vs;
 	struct mbuf *mp, *mnext;
 	bool can_batch;
 	int lasterr, rc;
 
+	ctx = ifp->if_softc;
+	vs = iflib_get_softc(ctx);
+	oifp = vs->vs_underlay_ifp;
 	can_batch = true;
 	if ((m->m_flags & M_VXLANTAG) == 0) {
 		DPRINTF("got untagged packet\n");
@@ -612,9 +615,8 @@ vpclink_transmit(if_t ifp, struct mbuf *m)
 	lasterr = vpclink_vxlan_encap_chain(vs, &m, &can_batch);
 	if (__predict_false(lasterr))
 		goto done;
-	ifp = m->m_pkthdr.rcvif;
 	if (can_batch) {
-		lasterr = ifp->if_transmit_txq(ifp, m);
+		lasterr = oifp->if_transmit_txq(ifp, m);
 		goto done;
 	}
 
@@ -626,7 +628,7 @@ vpclink_transmit(if_t ifp, struct mbuf *m)
 		mp->m_nextpkt = NULL;
 		ifp = mp->m_pkthdr.rcvif;
 		mp->m_pkthdr.rcvif = NULL;
-		rc = ifp->if_transmit_txq(ifp, mp);
+		rc = oifp->if_transmit_txq(ifp, mp);
 		if (rc)
 			lasterr = rc;
 		mp = mnext;
@@ -635,6 +637,34 @@ vpclink_transmit(if_t ifp, struct mbuf *m)
 	vpc_epoch_end();
 	return (lasterr);
 }
+
+static struct mbuf *
+vpclink_bridge_input(if_t ifp, struct mbuf *m)
+{
+	struct vpclink_softc *vs;
+
+	vs = ifp->if_bridge;
+	ETHER_BPF_MTAP(vs->vs_ifp, m);
+	if (vs->vs_ifp->if_bridge == NULL)
+		return (m);
+	(void)(*(vs->vs_ifp)->if_bridge_output)(vs->vs_ifp, m, NULL, NULL);
+	return (NULL);
+}
+
+static int
+vpclink_bridge_output(struct ifnet *ifp, struct mbuf *m,
+					  struct sockaddr *s __unused, struct rtentry *r__unused)
+{
+	panic("%s should not be called", __func__);
+	m_freechain(m);
+	return (0);
+}
+
+static void
+vpclink_bridge_linkstate(struct ifnet *ifp __unused)
+{
+}
+
 
 #define VPCLINK_CAPS														\
 	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
@@ -654,6 +684,7 @@ vpclink_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_
 	/* register vs_record */
 	ck_epoch_register(&vpc_epoch, &vs->vs_record, NULL);
 	vs->vs_ctx = ctx;
+	vs->vs_ifp = iflib_get_ifp(ctx);
 	vs->vs_min_port = IPPORT_HIFIRSTAUTO;	/* 49152 */
 	vs->vs_max_port = IPPORT_HILASTAUTO;	/* 65535 */
 
@@ -702,11 +733,22 @@ static int
 vpclink_detach(if_ctx_t ctx)
 {
 	struct vpclink_softc *vs = iflib_get_softc(ctx);
+	struct ifreq ifr;
+	struct ifnet *ifp;
 
 	ck_epoch_unregister(&vs->vs_record);
-	vs->vs_ifparent->if_input = vs->vs_old_if_input;
 	art_iter(&vs->vs_vxftable, vpclink_vxftable_free_callback, NULL);
-
+	if (vs->vs_underlay_vctx) {
+		ifr.ifr_index = 0;
+		ifp = vs->vs_underlay_ifp;
+		(void)ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
+		ifp->if_bridge = NULL;
+		wmb();
+		ifp->if_bridge_input = NULL;
+		ifp->if_bridge_output = NULL;
+		ifp->if_bridge_linkstate = NULL;
+		vmmnet_rele(vs->vs_underlay_vctx);
+	}
 	atomic_add_int(&clone_count, -1);
 	return (0);
 }
@@ -778,6 +820,16 @@ vpclink_underlay_attach(struct vpclink_softc *vs, const vpc_id_t *id)
 	ifr.ifr_index = vs->vs_vxlan_port;
 
 	rc = ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
+	if (rc == 0) {
+		vmmnet_ref(vctx);
+		vs->vs_underlay_vctx = vctx;
+		vs->vs_underlay_ifp = ifp;
+		ifp->if_bridge_input = vpclink_bridge_input;
+		ifp->if_bridge_output = vpclink_bridge_output;
+		ifp->if_bridge_linkstate = vpclink_bridge_linkstate;
+		wmb();
+		ifp->if_bridge = vs;
+	}
 	return (rc);
 }
 
