@@ -671,8 +671,6 @@ vpcp_ipfw_init(struct ip_fw_chain *chain)
 	rule->cmd[0].opcode = O_ACCEPT;
 	chain->default_rule = rule;
 	ipfw_add_protected_rule(chain, rule, 0);
-
-	ipfw_dyn_init(chain);
 	ipfw_eaction_init(chain, 0);
 
 	return (0);
