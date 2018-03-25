@@ -163,7 +163,7 @@ struct vpcmux_softc {
 };
 
 static void vpcmux_fte_print(struct vpcmux_softc *vs);
-
+static int vpcmux_underlay_disconnect(struct vpcmux_softc *vs);
 static int clone_count;
 
 static __inline int
@@ -669,6 +669,16 @@ vpcmux_set_listen(struct vpcmux_softc *vs, const struct sockaddr *addr)
 	return (0);
 }
 
+static void
+vpcmux_get_listen(struct vpcmux_softc *vs, struct sockaddr *addr)
+{
+	struct sockaddr_in *sin;
+
+	/* v4 only XXX */
+	sin = (struct sockaddr_in *)addr;
+	bcopy(&vs->vs_addr, sin, sizeof(*sin));
+}
+
 static int
 vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 {
@@ -876,6 +886,17 @@ vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			if (inlen != sizeof(*vl_addr))
 				return (EBADRPC);
 			return (vpcmux_set_listen(vs, vl_addr));
+			break;
+		}
+		case VPC_VPCMUX_OP_LISTEN_ADDR_GET: {
+			struct sockaddr *vl_addr;
+
+			if (*outlen < sizeof(*vl_addr))
+				return (EOVERFLOW);
+			*outlen = sizeof(*vl_addr);
+			vl_addr = malloc(*outlen, M_TEMP, M_WAITOK|M_ZERO);
+			*outdata = vl_addr;
+			vpcmux_get_listen(vs, vl_addr);
 			break;
 		}
 		case VPC_VPCMUX_OP_UNDERLAY_CONNECT: {
