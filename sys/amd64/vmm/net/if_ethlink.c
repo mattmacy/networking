@@ -141,11 +141,7 @@ ethlink_detach(if_ctx_t ctx)
 {
 	struct ethlink_softc *ls = iflib_get_softc(ctx);
 
-	if (ls->ls_ifp != NULL) {
-		if (ls->ls_ifp->if_bridge)
-			vpcp_port_disconnect_ifp(ls->ls_ifp);
-		if_rele(ls->ls_ifp);
-	}
+	ethlink_disconnect(ls);
 	atomic_add_int(&clone_count, -1);
 
 	return (0);
@@ -170,6 +166,17 @@ ethlink_ifp_get(if_ctx_t ctx)
 	return (ls->ls_ifp);
 }
 
+static void
+ethlink_disconnect(struct ethlink_softc *ls)
+{
+	if (ls->ls_ifp == NULL)
+		return;
+	if (ls->ls_ifp->if_bridge)
+		vpcp_port_disconnect_ifp(ls->ls_ifp);
+	if_rele(ls->ls_ifp);
+	ls->ls_ifp = NULL;
+}
+
 int
 ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
@@ -180,13 +187,13 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 	char buf[IFNAMSIZ];
 	int rc;
 
-
 	rc = 0;
 	ls = iflib_get_softc(ifctx);
 	switch (op) {
 		case VPC_ETHLINK_OP_CONNECT: {
 			struct ifnet *ifp;
 
+			ethlink_disconnect(ls);
 			bzero(buf, IFNAMSIZ);
 			strncpy(buf, in, min(inlen, IFNAMSIZ-1));
 			if ((ifp = ifunit_ref(buf)) == NULL)
@@ -205,12 +212,7 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			break;
 		}
 		case VPC_ETHLINK_OP_DISCONNECT:
-			if (ls->ls_ifp != NULL) {
-				if (ls->ls_ifp->if_bridge)
-					vpcp_port_disconnect_ifp(ls->ls_ifp);
-				if_rele(ls->ls_ifp);
-				ls->ls_ifp = NULL;
-			}
+			ethlink_disconnect(ls);
 			break;
 		case VPC_ETHLINK_OP_CONNECTED_NAME_GET: {
 			char *ifname;
