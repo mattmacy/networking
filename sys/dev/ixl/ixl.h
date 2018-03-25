@@ -65,6 +65,8 @@
 #include <net/bpf.h>
 #include <net/if_types.h>
 #include <net/if_vlan_var.h>
+#include <net/iflib.h>
+
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -535,6 +537,7 @@ struct ixl_vsi {
 	struct ifmedia		media;
 	enum i40e_vsi_type	type;
 	int			id;
+	u16			vxlan_port;
 	u16			num_queues;
 	u32			rx_itr_setting;
 	u32			tx_itr_setting;

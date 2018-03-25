@@ -1928,6 +1928,7 @@ ixl_setup_interface(device_t dev, struct ixl_vsi *vsi)
 	ifp->if_capabilities |= IFCAP_TSO;
 	ifp->if_capabilities |= IFCAP_JUMBO_MTU;
 	ifp->if_capabilities |= IFCAP_LRO;
+	ifp->if_capabilities |= IFCAP_VXLANDECAP;
 
 	/* VLAN capabilties */
 	ifp->if_capabilities |= IFCAP_VLAN_HWTAGGING
@@ -5061,7 +5062,16 @@ ixl_ioctl(struct ifnet * ifp, u_long command, caddr_t data)
 			error = ether_ioctl(ifp, command, data);
 		break;
 #endif
-	case SIOCSIFMTU:
+		case SIOCSIFVXLANPORT:
+			IXL_PF_LOCK(pf);
+			if (ifr->ifr_index)
+				ifp->if_capenable |= IFCAP_VXLANDECAP;
+			else
+				ifp->if_capenable &= ~IFCAP_VXLANDECAP;
+			vsi->vxlan_port = ifr->ifr_index;
+			IXL_PF_UNLOCK(pf);
+			break;
+		case SIOCSIFMTU:
 		IOCTL_DEBUGOUT("ioctl: SIOCSIFMTU (Set Interface MTU)");
 		if (ifr->ifr_mtu > IXL_MAX_FRAME -
 		   ETHER_HDR_LEN - ETHER_CRC_LEN - ETHER_VLAN_ENCAP_LEN) {

@@ -1380,6 +1380,12 @@ ixl_rx_input(struct rx_ring *rxr, struct ifnet *ifp, struct mbuf *m, u8 ptype)
 {
 
 #if defined(INET6) || defined(INET)
+	struct ixl_vsi *vsi;
+
+	if (ifp->if_capenable & IFCAP_VXLANDECAP) {
+		vsi = ifp->if_softc;
+		iflib_vxlan_decap(ifp, m, vsi->vxlan_port, false);
+	}
         /*
          * ATM LRO is only for IPv4/TCP packets and TCP checksum of the packet
          * should be computed by hardware. Also it should not have VLAN tag in
