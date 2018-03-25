@@ -884,6 +884,8 @@ vpcmux_fte_list(struct vpcmux_softc *vs, struct vpcmux_fte_list **vflp, size_t *
 	count = vpc_fte_count(vs);
 	if (*length == sizeof(struct vpcmux_fte_list)) {
 		vfl = malloc(sizeof(*vfl), M_TEMP, M_WAITOK|M_ZERO);
+		vfl->vfl_len = (sizeof(struct vpcmux_fte_list) +
+				   count*sizeof(struct vpcmux_fte));
 		vfl->vfl_count = count;
 		*vflp = vfl;
 		return (0);
@@ -895,6 +897,7 @@ vpcmux_fte_list(struct vpcmux_softc *vs, struct vpcmux_fte_list **vflp, size_t *
 	*length = (sizeof(struct vpcmux_fte_list) +
 			   count*sizeof(struct vpcmux_fte));
 	vfl = malloc(*length, M_TEMP, M_WAITOK|M_ZERO);
+	vfl->vfl_len = *length;
 	vfl->vfl_count = count;
 	vpc_fte_copy(vs, (caddr_t *)&vfl->vfl_vftes);
 	*vflp = vfl;

@@ -48,6 +48,7 @@ struct vpcmux_fte {
 };
 
 struct vpcmux_fte_list {
+	uint64_t vfl_len;
 	uint32_t vfl_count;
 	struct vpcmux_fte vfl_vftes[0];
 };
