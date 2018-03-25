@@ -807,6 +807,8 @@ vpcp_vxlanid_set(if_ctx_t ctx, uint32_t vxlanid)
 
 	if (vxlanid)
 		vs->vs_mflags |= M_VXLANTAG;
+	else
+		vs->vs_mflags &= ~M_VXLANTAG;
 	vs->vs_vxlanid = vxlanid;
 }
 
@@ -825,6 +827,8 @@ vpcp_vlanid_set(if_ctx_t ctx, uint16_t vlanid)
 
 	if (vlanid)
 		vs->vs_mflags |= M_VLANTAG;
+	else
+		vs->vs_mflags &= ~M_VLANTAG;
 	vs->vs_vlanid = vlanid;
 }
 
