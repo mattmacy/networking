@@ -681,6 +681,8 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 	uint8_t objtype;
 	int rc;
 
+	if (vs->vs_underlay_vctx)
+		vpcmux_underlay_disconnect(vs);
 	dev = iflib_get_dev(vs->vs_ctx);
 	if (vs->vs_vxlan_port == 0) {
 		device_printf(dev, "%s vxlan port not set", __func__);
