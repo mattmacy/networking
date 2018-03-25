@@ -640,52 +640,6 @@ vpcmux_bridge_linkstate(struct ifnet *ifp __unused)
 {
 }
 
-
-#define VPCMUX_CAPS														\
-	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
-	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
-
-static int
-vpcmux_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
-{
-	struct vpcmux_softc *vs = iflib_get_softc(ctx);
-	if_softc_ctx_t scctx;
-
-	atomic_add_int(&clone_count, 1);
-	scctx = vs->shared = iflib_get_softc_ctx(ctx);
-	scctx->isc_capenable = VPCMUX_CAPS;
-	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
-		| CSUM_IP6_UDP | CSUM_IP6_TCP;
-	/* register vs_record */
-	ck_epoch_register(&vpc_epoch, &vs->vs_record, NULL);
-	vs->vs_ctx = ctx;
-	vs->vs_ifp = iflib_get_ifp(ctx);
-	vs->vs_min_port = IPPORT_HIFIRSTAUTO;	/* 49152 */
-	vs->vs_max_port = IPPORT_HILASTAUTO;	/* 65535 */
-
-	/* init vs_vxftable */
-	art_tree_init(&vs->vs_vxftable, 3 /* VXLANID is 3 bytes */);
-	return (0);
-}
-
-static int
-vpcmux_attach_post(if_ctx_t ctx)
-{
-	if_t ifp;
-
-	ifp = iflib_get_ifp(ctx);
-	if_settransmitfn(ifp, vpcmux_transmit);
-	if_settransmittxqfn(ifp, vpcmux_transmit);
-	if_setmbuftoqidfn(ifp, vpcmux_mbuf_to_qid);
-	/*
-	 * should really be pulled from the lowest
-	 * interface configured, but hardcode for now
-	 */
-	if_setmtu(ifp, ETHERMTU - 50);
-	return (0);
-}
-
-
 static int
 vpcmux_ftable_free_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
@@ -701,41 +655,6 @@ vpcmux_vxftable_free_callback(void *data, const unsigned char *key, uint32_t key
 	art_iter(&ftable->vf_ftable, vpcmux_ftable_free_callback, NULL);
 	free(value, M_VPCMUX);
 	return (0);
-}
-
-
-static int
-vpcmux_detach(if_ctx_t ctx)
-{
-	struct vpcmux_softc *vs = iflib_get_softc(ctx);
-	struct ifreq ifr;
-	struct ifnet *ifp;
-
-	ck_epoch_unregister(&vs->vs_record);
-	art_iter(&vs->vs_vxftable, vpcmux_vxftable_free_callback, NULL);
-	if (vs->vs_underlay_vctx) {
-		ifr.ifr_index = 0;
-		ifp = vs->vs_underlay_ifp;
-		(void)ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
-		ifp->if_bridge = NULL;
-		wmb();
-		ifp->if_bridge_input = NULL;
-		ifp->if_bridge_output = NULL;
-		ifp->if_bridge_linkstate = NULL;
-		vmmnet_rele(vs->vs_underlay_vctx);
-	}
-	atomic_add_int(&clone_count, -1);
-	return (0);
-}
-
-static void
-vpcmux_init(if_ctx_t ctx)
-{
-}
-
-static void
-vpcmux_stop(if_ctx_t ctx)
-{
 }
 
 static int
@@ -806,6 +725,26 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 		ifp->if_bridge = vs;
 	}
 	return (rc);
+}
+
+static int
+vpcmux_underlay_disconnect(struct vpcmux_softc *vs)
+{
+	struct ifreq ifr;
+	struct ifnet *ifp;
+
+	if (vs->vs_underlay_vctx) {
+		ifr.ifr_index = 0;
+		ifp = vs->vs_underlay_ifp;
+		(void)ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
+		ifp->if_bridge = NULL;
+		wmb();
+		ifp->if_bridge_input = NULL;
+		ifp->if_bridge_output = NULL;
+		ifp->if_bridge_linkstate = NULL;
+		vmmnet_rele(vs->vs_underlay_vctx);
+	}
+	return (0);
 }
 
 
@@ -920,7 +859,6 @@ vpcmux_fte_list(struct vpcmux_softc *vs, struct vpcmux_fte_list **vflp, size_t *
 	return (EOPNOTSUPP);
 }
 
-
 int
 vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
@@ -945,6 +883,21 @@ vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				return (EBADRPC);
 			return (vpcmux_underlay_connect(vs, id));
 		}
+		case VPC_VPCMUX_OP_UNDERLAY_DISCONNECT: {
+			return (vpcmux_underlay_disconnect(vs));
+		}
+		case VPC_VPCMUX_OP_CONNECTED_ID_GET: {
+			vpc_id_t *id;
+
+			if (vs->vs_underlay_vctx == NULL)
+				return (EAGAIN);
+			if (*outlen < sizeof(vpc_id_t))
+				return (EOVERFLOW);
+			*outlen = sizeof(vpc_id_t);
+			id = malloc(*outlen, M_TEMP, M_WAITOK);
+			memcpy(id, &vs->vs_underlay_vctx->v_id, *outlen);
+			break;
+		}
 		case VPC_VPCMUX_OP_FTE_DEL:
 		case VPC_VPCMUX_OP_FTE_SET: {
 			const struct vpcmux_fte *vfte = in;
@@ -963,8 +916,76 @@ vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			*outdata = vfl;
 			break;
 		}
+		default:
+			return (EOPNOTSUPP);
 	}
-	return (EOPNOTSUPP);
+	return (0);
+}
+
+#define VPCMUX_CAPS														\
+	IFCAP_TSO |IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
+	IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | IFCAP_LINKSTATE
+
+static int
+vpcmux_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
+{
+	struct vpcmux_softc *vs = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx;
+
+	atomic_add_int(&clone_count, 1);
+	scctx = vs->shared = iflib_get_softc_ctx(ctx);
+	scctx->isc_capenable = VPCMUX_CAPS;
+	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
+		| CSUM_IP6_UDP | CSUM_IP6_TCP;
+	/* register vs_record */
+	ck_epoch_register(&vpc_epoch, &vs->vs_record, NULL);
+	vs->vs_ctx = ctx;
+	vs->vs_ifp = iflib_get_ifp(ctx);
+	vs->vs_min_port = IPPORT_HIFIRSTAUTO;	/* 49152 */
+	vs->vs_max_port = IPPORT_HILASTAUTO;	/* 65535 */
+
+	/* init vs_vxftable */
+	art_tree_init(&vs->vs_vxftable, 3 /* VXLANID is 3 bytes */);
+	return (0);
+}
+
+static int
+vpcmux_attach_post(if_ctx_t ctx)
+{
+	if_t ifp;
+
+	ifp = iflib_get_ifp(ctx);
+	if_settransmitfn(ifp, vpcmux_transmit);
+	if_settransmittxqfn(ifp, vpcmux_transmit);
+	if_setmbuftoqidfn(ifp, vpcmux_mbuf_to_qid);
+	/*
+	 * should really be pulled from the lowest
+	 * interface configured, but hardcode for now
+	 */
+	if_setmtu(ifp, ETHERMTU - 50);
+	return (0);
+}
+
+static int
+vpcmux_detach(if_ctx_t ctx)
+{
+	struct vpcmux_softc *vs = iflib_get_softc(ctx);
+
+	ck_epoch_unregister(&vs->vs_record);
+	art_iter(&vs->vs_vxftable, vpcmux_vxftable_free_callback, NULL);
+	vpcmux_underlay_disconnect(vs);
+	atomic_add_int(&clone_count, -1);
+	return (0);
+}
+
+static void
+vpcmux_init(if_ctx_t ctx)
+{
+}
+
+static void
+vpcmux_stop(if_ctx_t ctx)
+{
 }
 
 static device_method_t vpcmux_if_methods[] = {
