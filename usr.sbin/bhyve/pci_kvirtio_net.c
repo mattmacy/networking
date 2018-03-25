@@ -252,7 +252,7 @@ vtnet_be_clone(struct vtnet_be_softc *vbs)
 	va.vva_io_start = vbs->vbs_pi->pi_bar[0].addr;
 	va.vva_io_size = VTNET_BE_REGSZ;
 	strncpy(va.vva_vmparent, vmname, VMNAMSIZ-1);
-	if (vpc_ctl(s, VPC_VMNIC_OP_ATTACH, sizeof(va), &va, NULL, NULL))
+	if (vpc_ctl(s, VPC_VMNIC_OP_CONNECT, sizeof(va), &va, NULL, NULL))
 		return (errno);
 
 #ifndef WITHOUT_CAPSICUM
