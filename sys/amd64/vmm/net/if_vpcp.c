@@ -224,8 +224,8 @@ vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
 			mt->m_nextpkt = m;
 			mt = m;
 		}
-		next:
 		safe_mvec_sanity(m);
+		next:
 		m = mnext;
 	} while (m != NULL);
 	*m0 = mh;
