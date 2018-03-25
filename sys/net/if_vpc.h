@@ -41,9 +41,9 @@ struct vpc_ioctl_header {
 };
 
 struct vpcmux_fte {
-	uint32_t vf_vni;
-	uint16_t vf_vlanid;
 	uint8_t vf_hwaddr[ETHER_ADDR_LEN];
+	uint16_t vf_vlanid;
+	uint32_t vf_vni;
 	struct sockaddr vf_protoaddr;
 };
 
