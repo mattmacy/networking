@@ -356,6 +356,7 @@ SUBDIR=	\
 	siis \
 	sis \
 	sk \
+	smartpqi \
 	smbfs \
 	sn \
 	snp \
