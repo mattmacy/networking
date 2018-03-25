@@ -850,24 +850,55 @@ vpc_fte_count(struct vpcmux_softc *vs)
 	return (count);
 }
 
+
+static int
+vpcmux_ftable_copy_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	caddr_t *dst = data;
+	memcpy(*dst, value, sizeof(struct vpcmux_fte));
+	*dst += sizeof(struct vpcmux_fte);
+	return (0);
+}
+
+static int
+vpcmux_vxftable_copy_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
+{
+	struct vpcmux_ftable *ftable = value;
+
+	art_iter(&ftable->vf_ftable, vpcmux_ftable_copy_callback, data);
+	return (0);
+}
+
+static int
+vpc_fte_copy(struct vpcmux_softc *vs, caddr_t *dst)
+{
+	return (art_iter(&vs->vs_vxftable, vpcmux_vxftable_copy_callback, dst));
+}
+
 static int
 vpcmux_fte_list(struct vpcmux_softc *vs, struct vpcmux_fte_list **vflp, size_t *length)
 {
 	struct vpcmux_fte_list *vfl;
+	int count;
 
+	count = vpc_fte_count(vs);
 	if (*length == sizeof(struct vpcmux_fte_list)) {
 		vfl = malloc(sizeof(*vfl), M_TEMP, M_WAITOK|M_ZERO);
-		vfl->vfl_count = vpc_fte_count(vs);
+		vfl->vfl_count = count;
 		*vflp = vfl;
 		return (0);
 	}
-#if 0
-	if (length != (sizeof(struct vpcmux_fte_list) +
-				   vfl->vfl_count*sizeof(struct vpcmux_fte)))
-		return (EINVAL);
-#endif	
-	/* XXX implement me */
-	return (EOPNOTSUPP);
+
+	if (*length < (sizeof(struct vpcmux_fte_list) +
+				   count*sizeof(struct vpcmux_fte)))
+		return (EOVERFLOW);
+	*length = (sizeof(struct vpcmux_fte_list) +
+			   count*sizeof(struct vpcmux_fte));
+	vfl = malloc(*length, M_TEMP, M_WAITOK|M_ZERO);
+	vfl->vfl_count = count;
+	vpc_fte_copy(vs, (caddr_t *)&vfl->vfl_vftes);
+	*vflp = vfl;
+	return (0);
 }
 
 int
