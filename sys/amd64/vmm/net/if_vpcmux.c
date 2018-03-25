@@ -691,8 +691,6 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 	uint8_t objtype;
 	int rc;
 
-	if (vs->vs_underlay_vctx)
-		vpcmux_underlay_disconnect(vs);
 	dev = iflib_get_dev(vs->vs_ctx);
 	if (vs->vs_vxlan_port == 0) {
 		device_printf(dev, "%s vxlan port not set", __func__);
@@ -722,10 +720,11 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 				   __func__, ifp->if_xname, id, ":");
 		return (EOPNOTSUPP);
 	}
-
 	ifr.ifr_index = vs->vs_vxlan_port;
 
 	rc = ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
+	if (vs->vs_underlay_vctx)
+		vpcmux_underlay_disconnect(vs);
 	if (rc == 0) {
 		vmmnet_ref(vctx);
 		vs->vs_underlay_vctx = vctx;
