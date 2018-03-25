@@ -1928,7 +1928,6 @@ ixl_setup_interface(device_t dev, struct ixl_vsi *vsi)
 	ifp->if_capabilities |= IFCAP_TSO;
 	ifp->if_capabilities |= IFCAP_JUMBO_MTU;
 	ifp->if_capabilities |= IFCAP_LRO;
-	ifp->if_capabilities |= IFCAP_VXLANDECAP;
 
 	/* VLAN capabilties */
 	ifp->if_capabilities |= IFCAP_VLAN_HWTAGGING
@@ -1946,6 +1945,7 @@ ixl_setup_interface(device_t dev, struct ixl_vsi *vsi)
 	** enable this and get full hardware tag filtering.
 	*/
 	ifp->if_capabilities |= IFCAP_VLAN_HWFILTER;
+	ifp->if_capabilities |= IFCAP_VXLANDECAP;
 
 	/*
 	 * Specify the media types supported by this adapter and register
