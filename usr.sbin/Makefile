@@ -93,6 +93,7 @@ SUBDIR=	adduser \
 	ugidfw \
 	vigr \
 	vipw \
+	vpc_vxfib \
 	wake \
 	watch \
 	watchdogd \
