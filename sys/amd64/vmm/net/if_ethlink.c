@@ -103,6 +103,17 @@ ethlink_transmit(if_t ifp, struct mbuf *m)
 	return (0);
 }
 
+static void
+ethlink_disconnect(struct ethlink_softc *ls)
+{
+	if (ls->ls_ifp == NULL)
+		return;
+	if (ls->ls_ifp->if_bridge)
+		vpcp_port_disconnect_ifp(ls->ls_ifp);
+	if_rele(ls->ls_ifp);
+	ls->ls_ifp = NULL;
+}
+
 #define ETHLINK_CAPS														\
 	IFCAP_TSO | IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_TXCSUM_IPV6 | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | \
@@ -164,17 +175,6 @@ ethlink_ifp_get(if_ctx_t ctx)
 	struct ethlink_softc *ls = iflib_get_softc(ctx);
 
 	return (ls->ls_ifp);
-}
-
-static void
-ethlink_disconnect(struct ethlink_softc *ls)
-{
-	if (ls->ls_ifp == NULL)
-		return;
-	if (ls->ls_ifp->if_bridge)
-		vpcp_port_disconnect_ifp(ls->ls_ifp);
-	if_rele(ls->ls_ifp);
-	ls->ls_ifp = NULL;
 }
 
 int
