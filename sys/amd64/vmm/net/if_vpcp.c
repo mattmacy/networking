@@ -204,19 +204,26 @@ vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
 				goto next;
 			}
 		}
+		if (egress) {
+			m->m_flags |= vs->vs_mflags;
+			m->m_flags |= M_HOLBLOCKING;
+			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
+			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
+		} else {
+			if ((m->m_pkthdr.vxlanid != vs->vs_vxlanid)||
+				(m->m_pkthdr.ether_vtag != vs->vs_vlanid)) {
+				m_freem(m);
+				goto next;
+			}
+			if ((m->m_flags & M_TRUNK) == 0)
+				m->m_pkthdr.csum_flags |= CSUM_DATA_VALID;
+		}
 		if (mh == NULL) {
 			mh = mt = m;
 		} else {
 			mt->m_nextpkt = m;
 			mt = m;
 		}
-		if (egress) {
-			m->m_flags |= vs->vs_mflags;
-			m->m_flags |= M_HOLBLOCKING;
-			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
-			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
-		} else if ((m->m_flags & M_TRUNK) == 0)
-			m->m_pkthdr.csum_flags |= CSUM_DATA_VALID;
 		next:
 		safe_mvec_sanity(m);
 		m = mnext;
