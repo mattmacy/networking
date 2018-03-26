@@ -265,9 +265,7 @@ static int
 ethlink_bridge_output(struct ifnet *ifp, struct mbuf *m,
 					  struct sockaddr *s __unused, struct rtentry *r__unused)
 {
-	panic("%s should not be called", __func__);
-	m_freechain(m);
-	return (0);
+	return (ethlink_transmit(ifp, m));
 }
 
 static void
