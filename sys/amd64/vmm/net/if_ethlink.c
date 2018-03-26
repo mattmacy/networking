@@ -191,16 +191,17 @@ ethlink_transmit(if_t ifp, struct mbuf *m)
 		m_freechain(m);
 		return (ENOBUFS);
 	}
+	MPASS(ifp == es->es_ifp);
 	if (es->es_vtag) {
 		m->m_flags |= M_VLANTAG;
 		m->m_pkthdr.ether_vtag = es->es_vtag;
 	}
-	ETHER_BPF_MTAP(es->es_ifp, m);
+	ETHER_BPF_MTAP(ifp, m);
 	m->m_pkthdr.rcvif = NULL;
 	qid = oifp->if_mbuf_to_qid(oifp, m);
 	mp = m->m_nextpkt;
 	while (mp) {
-		ETHER_BPF_MTAP(es->es_ifp, mp);
+		ETHER_BPF_MTAP(ifp, mp);
 		if (es->es_vtag) {
 			mp->m_flags |= M_VLANTAG;
 			mp->m_pkthdr.ether_vtag = es->es_vtag;
@@ -265,7 +266,10 @@ static int
 ethlink_bridge_output(struct ifnet *ifp, struct mbuf *m,
 					  struct sockaddr *s __unused, struct rtentry *r__unused)
 {
-	return (ethlink_transmit(ifp, m));
+	struct ethlink_softc *es;
+
+	es = ifp->if_bridge;
+	return (ethlink_transmit(es->es_ifp, m));
 }
 
 static void
