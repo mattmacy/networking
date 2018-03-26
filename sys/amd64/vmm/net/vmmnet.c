@@ -265,7 +265,7 @@ static char *if_names[] = {
 	"ethlink",
 	"META",
 	"TYPE_ANY",
-	"hostlink"
+	"hostif"
 };
 
 int
@@ -544,7 +544,7 @@ static vpc_ctl_fn vpc_ctl_dispatch[] = {
 	ethlink_ctl,
 	NULL, /* META */
 	NULL, /* TYPE_ANY */
-	hostlink_ctl
+	hostif_ctl
 };
 static int
 kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,

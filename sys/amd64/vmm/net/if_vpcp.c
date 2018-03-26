@@ -315,7 +315,7 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 }
 
 static void
-hostlink_input(if_t ifp, struct mbuf *m)
+hostif_input(if_t ifp, struct mbuf *m)
 {
 	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
 	struct ifnet *devifp = vs->vs_ifdev;
@@ -348,7 +348,7 @@ hostlink_input(if_t ifp, struct mbuf *m)
 }
 
 static int
-hostlink_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
+hostif_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
 {
 	struct mbuf *mp;
 	struct vpcp_softc *vs;
@@ -369,7 +369,7 @@ hostlink_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __u
 }
 
 static struct mbuf *
-hostlink_bridge_input(if_t ifp, struct mbuf *m)
+hostif_bridge_input(if_t ifp, struct mbuf *m)
 {
 	return (m);
 }
@@ -441,10 +441,10 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			ifdev->if_bridge_input = phys_bridge_input;
 			ifdev->if_bridge_output = phys_bridge_output;
 			break;
-		case VPC_OBJ_HOSTLINK:
-			ifp->if_input = hostlink_input;
-			ifdev->if_bridge_input = hostlink_bridge_input;
-			ifdev->if_bridge_output = hostlink_bridge_output;
+		case VPC_OBJ_HOSTIF:
+			ifp->if_input = hostif_input;
+			ifdev->if_bridge_input = hostif_bridge_input;
+			ifdev->if_bridge_output = hostif_bridge_output;
 			break;
 		case VPC_OBJ_VMNIC:
 			ifp->if_input = vmi_input;

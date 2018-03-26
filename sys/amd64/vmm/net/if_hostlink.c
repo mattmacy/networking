@@ -64,18 +64,18 @@ __FBSDID("$FreeBSD$");
 
 #include "ifdi_if.h"
 
-static MALLOC_DEFINE(M_HOSTLINK, "hostlink", "virtual private cloud interface");
+static MALLOC_DEFINE(M_HOSTIF, "hostif", "virtual private cloud interface");
 
 
-#define HOSTLINK_DEBUG
+#define HOSTIF_DEBUG
 
-#ifdef HOSTLINK_DEBUG
+#ifdef HOSTIF_DEBUG
 #define  DPRINTF printf
 #else
 #define DPRINTF(...)
 #endif
 
-struct hostlink_softc {
+struct hostif_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
 };
@@ -83,13 +83,13 @@ struct hostlink_softc {
 static int clone_count;
 
 static int
-hostlink_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
+hostif_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 {
 	return (0);
 }
 
 static int
-hostlink_transmit(if_t ifp, struct mbuf *m)
+hostif_transmit(if_t ifp, struct mbuf *m)
 {
 	struct mbuf *mp = m;
 
@@ -106,118 +106,118 @@ hostlink_transmit(if_t ifp, struct mbuf *m)
 	return ((*(ifp)->if_bridge_output)(ifp, m, NULL, NULL));
 }
 
-#define HOSTLINK_CAPS														\
+#define HOSTIF_CAPS														\
 	IFCAP_TSO | IFCAP_HWCSUM | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM |	\
 	IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_HWCSUM_IPV6 | IFCAP_JUMBO_MTU | \
 	IFCAP_LINKSTATE
 
 static int
-hostlink_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
+hostif_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
-	struct hostlink_softc *vs = iflib_get_softc(ctx);
+	struct hostif_softc *vs = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
 	atomic_add_int(&clone_count, 1);
 	vs->vs_ctx = ctx;
 
 	scctx = vs->shared = iflib_get_softc_ctx(ctx);
-	scctx->isc_capenable = HOSTLINK_CAPS;
+	scctx->isc_capenable = HOSTIF_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
 		| CSUM_IP6_UDP | CSUM_IP6_TCP;
 	return (0);
 }
 
 static int
-hostlink_attach_post(if_ctx_t ctx)
+hostif_attach_post(if_ctx_t ctx)
 {
 	struct ifnet *ifp;
 
 	ifp = iflib_get_ifp(ctx);
-	if_settransmitfn(ifp, hostlink_transmit);
-	if_settransmittxqfn(ifp, hostlink_transmit);
-	if_setmbuftoqidfn(ifp, hostlink_mbuf_to_qid);
+	if_settransmitfn(ifp, hostif_transmit);
+	if_settransmittxqfn(ifp, hostif_transmit);
+	if_setmbuftoqidfn(ifp, hostif_mbuf_to_qid);
 	return (0);
 }
 
 static int
-hostlink_detach(if_ctx_t ctx)
+hostif_detach(if_ctx_t ctx)
 {
 	atomic_add_int(&clone_count, -1);
 	return (0);
 }
 
 static void
-hostlink_init(if_ctx_t ctx)
+hostif_init(if_ctx_t ctx)
 {
 }
 
 static void
-hostlink_stop(if_ctx_t ctx)
+hostif_stop(if_ctx_t ctx)
 {
 }
 
 int
-hostlink_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
+hostif_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	return (0);
 }
 
-static device_method_t hostlink_if_methods[] = {
-	DEVMETHOD(ifdi_cloneattach, hostlink_cloneattach),
-	DEVMETHOD(ifdi_attach_post, hostlink_attach_post),
-	DEVMETHOD(ifdi_detach, hostlink_detach),
-	DEVMETHOD(ifdi_init, hostlink_init),
-	DEVMETHOD(ifdi_stop, hostlink_stop),
+static device_method_t hostif_if_methods[] = {
+	DEVMETHOD(ifdi_cloneattach, hostif_cloneattach),
+	DEVMETHOD(ifdi_attach_post, hostif_attach_post),
+	DEVMETHOD(ifdi_detach, hostif_detach),
+	DEVMETHOD(ifdi_init, hostif_init),
+	DEVMETHOD(ifdi_stop, hostif_stop),
 	DEVMETHOD_END
 };
 
-static driver_t hostlink_iflib_driver = {
-	"hostlink", hostlink_if_methods, sizeof(struct hostlink_softc)
+static driver_t hostif_iflib_driver = {
+	"hostif", hostif_if_methods, sizeof(struct hostif_softc)
 };
 
-char hostlink_driver_version[] = "0.0.1";
+char hostif_driver_version[] = "0.0.1";
 
-static struct if_shared_ctx hostlink_sctx_init = {
+static struct if_shared_ctx hostif_sctx_init = {
 	.isc_magic = IFLIB_MAGIC,
-	.isc_driver_version = hostlink_driver_version,
-	.isc_driver = &hostlink_iflib_driver,
+	.isc_driver_version = hostif_driver_version,
+	.isc_driver = &hostif_iflib_driver,
 	.isc_flags = IFLIB_PSEUDO,
-	.isc_name = "hostlink",
+	.isc_name = "hostif",
 };
 
-if_shared_ctx_t hostlink_sctx = &hostlink_sctx_init;
+if_shared_ctx_t hostif_sctx = &hostif_sctx_init;
 
 
-static if_pseudo_t hostlink_pseudo;
+static if_pseudo_t hostif_pseudo;
 
 static int
-hostlink_module_init(void)
+hostif_module_init(void)
 {
-	hostlink_pseudo = iflib_clone_register(hostlink_sctx);
+	hostif_pseudo = iflib_clone_register(hostif_sctx);
 
-	return hostlink_pseudo != NULL ? 0 : ENXIO;
+	return hostif_pseudo != NULL ? 0 : ENXIO;
 }
 
 static void
-hostlink_module_deinit(void)
+hostif_module_deinit(void)
 {
-	iflib_clone_deregister(hostlink_pseudo);
+	iflib_clone_deregister(hostif_pseudo);
 }
 
 static int
-hostlink_module_event_handler(module_t mod, int what, void *arg)
+hostif_module_event_handler(module_t mod, int what, void *arg)
 {
 	int err;
 
 	switch (what) {
 	case MOD_LOAD:
-		if ((err = hostlink_module_init()) != 0)
+		if ((err = hostif_module_init()) != 0)
 			return (err);
 		break;
 	case MOD_UNLOAD:
 		if (clone_count == 0)
-			hostlink_module_deinit();
+			hostif_module_deinit();
 		else
 			return (EBUSY);
 		break;
@@ -228,12 +228,12 @@ hostlink_module_event_handler(module_t mod, int what, void *arg)
 	return (0);
 }
 
-static moduledata_t hostlink_moduledata = {
-	"hostlink",
-	hostlink_module_event_handler,
+static moduledata_t hostif_moduledata = {
+	"hostif",
+	hostif_module_event_handler,
 	NULL
 };
 
-DECLARE_MODULE(hostlink, hostlink_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
-MODULE_VERSION(hostlink, 1);
-MODULE_DEPEND(hostlink, iflib, 1, 1, 1);
+DECLARE_MODULE(hostif, hostif_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
+MODULE_VERSION(hostif, 1);
+MODULE_DEPEND(hostif, iflib, 1, 1, 1);

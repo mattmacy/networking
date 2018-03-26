@@ -248,7 +248,7 @@ int vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 int ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			   size_t *outlen, void **outdata);
 
-int hostlink_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
+int hostif_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata);
 
 struct ifnet *ethlink_ifp_get(if_ctx_t ctx);
@@ -282,7 +282,7 @@ enum vpc_obj_type {
 	VPC_OBJ_ETHLINK = 8,
 	VPC_OBJ_META = 9,
 	VPC_OBJ_TYPE_ANY = 10,
-	VPC_OBJ_HOSTLINK = 11,
+	VPC_OBJ_HOSTIF = 11,
 	VPC_OBJ_TYPE_MAX = 11,
 };
 
@@ -390,9 +390,9 @@ enum vpc_ethlink_op_type {
 };
 
 
-enum vpc_hostlink_op_type {
-	VPC_HOSTLINK_INVALID = 0,
-	VPC_HOSTLINK_MAX = 0,
+enum vpc_hostif_op_type {
+	VPC_HOSTIF_INVALID = 0,
+	VPC_HOSTIF_MAX = 0,
 };
 
 
