@@ -203,11 +203,8 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				return (ENXIO);
 			}
 			sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
-			if (sdl->sdl_type != IFT_ETHER) {
-				if_rele(ifp);
-				return (EINVAL);
-			}
-			iflib_set_mac(ifctx, LLADDR(sdl));
+			if (sdl->sdl_type == IFT_ETHER)
+				iflib_set_mac(ifctx, LLADDR(sdl));
 			ls->ls_ifp = ifp;
 			break;
 		}
