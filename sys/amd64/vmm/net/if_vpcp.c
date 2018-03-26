@@ -303,44 +303,14 @@ phys_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unuse
 static struct mbuf *
 phys_bridge_input(if_t ifp, struct mbuf *m)
 {
-	struct ether_header *eh;
-	struct mbuf *mret, *mh, *mt, *mnext, *mp;
 	struct vpcp_softc *vs;
 	struct ifnet *ifswitch;
 
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
 
-	eh = (void*)m->m_data;
-	mh = mt = mret = NULL;
-	mp = m;
-	do {
-		mnext = mp->m_nextpkt;
-		mp->m_nextpkt = NULL;
-		if (__predict_false(mp->m_flags & M_TRUNK)) {
-			mp->m_flags &= ~M_TRUNK;
-			goto next;
-		}
-		if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost) &&
-							!(m->m_flags & (M_VXLANTAG|M_VLANTAG)))) {
-			/* Order doesn't matter for broadcast packets */
-			mp->m_nextpkt = mret;
-			mret = mp;
-		} else if (mh == NULL) {
-			mh = mt = mp;
-		} else {
-			mt->m_nextpkt = mp;
-			mt = mp;
-		}
-	next:
-		mp = mnext;
-	} while (mp);
-
 	ifswitch = vs->vs_ifswitch;
-	if (__predict_true(mh != NULL))
-		vpcsw_transmit_ext(ifswitch, mh, vs->vs_pcpu_cache);
-	if (__predict_false(mret != NULL))
-		vpcsw_transmit_ext(ifswitch, mret, vs->vs_pcpu_cache);
+	vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache);
 	return (NULL);
 }
 
