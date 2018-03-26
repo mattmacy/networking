@@ -344,7 +344,7 @@ hostlink_input(if_t ifp, struct mbuf *m)
 		mp = mnext;
 	} while (mp);
 
-	devifp->if_input(devifp, m);
+	devifp->if_input(devifp, mh);
 }
 
 static int
