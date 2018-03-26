@@ -274,32 +274,13 @@ phys_input(struct ifnet *ifport, struct mbuf *m)
 	if_ctx_t ctx = ifport->if_softc;
 	struct vpcp_softc *vs = iflib_get_softc(ctx);
 	struct ifnet *ifdev = vs->vs_ifdev;
-	struct mbuf *mp, *mnext;
-	int qid;
-	bool batch;
-
-	mp = m->m_nextpkt;
-	qid = ifdev->if_mbuf_to_qid(ifdev, m);
-	batch = true;
-	m->m_flags &= ~M_VPCMASK;
-	while (mp) {
+	struct mbuf *mp = m;
+	do {
 		mp->m_flags &= ~M_VPCMASK;
 		mp->m_pkthdr.rcvif = NULL;
-		if (batch && ifdev->if_mbuf_to_qid(ifdev, m) != qid)
-			batch = false;
 		mp = mp->m_nextpkt;
-	}
-	if (__predict_true(batch)) {
-		ifdev->if_transmit_txq(ifdev, m);
-	} else {
-		mp = m;
-		do {
-			mnext = mp->m_nextpkt;
-			mp->m_nextpkt = NULL;
-			ifdev->if_transmit_txq(ifdev, mp);
-			mp = mnext;
-		} while (mp);
-	}
+	} while (mp);
+	ifdev->if_transmit_txq(ifdev, m);
 }
 
 static int
