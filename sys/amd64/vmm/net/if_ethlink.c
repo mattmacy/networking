@@ -240,10 +240,13 @@ ethlink_bridge_input(if_t ifp, struct mbuf *m)
 		ETHER_BPF_MTAP(es->es_ifp, mp);
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
-		if ((mp->m_flags & M_VLANTAG) &&
-			mp->m_pkthdr.ether_vtag != es->es_vtag) {
-			m_freem(mp);
-			goto next;
+		if (mp->m_flags & M_VLANTAG) {
+			if (__predict_false(mp->m_pkthdr.ether_vtag != es->es_vtag)) {
+				m_freem(mp);
+				goto next;
+			}
+			mp->m_flags &= ~M_VLANTAG;
+			mp->m_pkthdr.ether_vtag = 0;
 		}
 		mp->m_flags |= M_TRUNK;
 		if (mh != NULL) {
