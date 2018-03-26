@@ -1857,6 +1857,7 @@ uma_startup(void *mem, int npages)
 #endif
 
 	rw_init(&uma_rwlock, "UMA lock");
+	MPASS(CACHE_LINE_SIZE != 0);
 
 	/* Use bootpages memory for the zone of zones and zone of kegs. */
 	m = (uintptr_t)mem;
