@@ -94,6 +94,7 @@ mvec_sanity(const struct mbuf *m)
 	mh = &mext->me_mh;
 	me = &mext->me_ents[mh->mh_start];
 
+	MPASS(me_data(me) == m->m_data);
 	MPASS((const char *)me != m->m_data);
 	me_count = &((const m_refcnt_t *)(mext->me_ents + mh->mh_count))[mh->mh_start];
 	MPASS(me_count == &MBUF2REF((uintptr_t)m)[mh->mh_start]);
