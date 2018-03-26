@@ -136,12 +136,14 @@ hostif_attach_post(if_ctx_t ctx)
 	if_settransmitfn(ifp, hostif_transmit);
 	if_settransmittxqfn(ifp, hostif_transmit);
 	if_setmbuftoqidfn(ifp, hostif_mbuf_to_qid);
+	iflib_link_state_change(ctx, LINK_STATE_UP, IF_Gbps(50));
 	return (0);
 }
 
 static int
 hostif_detach(if_ctx_t ctx)
 {
+	iflib_link_state_change(ctx, LINK_STATE_DOWN, IF_Gbps(50));
 	atomic_add_int(&clone_count, -1);
 	return (0);
 }
