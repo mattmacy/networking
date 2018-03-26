@@ -75,17 +75,15 @@ static MALLOC_DEFINE(M_ETHLINK, "ethlink", "virtual private cloud interface");
 #define DPRINTF(...)
 #endif
 
-
-/*
- * ifconfig ethlink0 create
- * ifconfig ethlink0 192.168.0.100
- * ifconfig ethlink0 attach vpc0
- */
+static int ethlink_transmit(if_t ifp, struct mbuf *m);
 
 struct ethlink_softc {
 	if_softc_ctx_t shared;
-	if_ctx_t vs_ctx;
-	struct ifnet *ls_ifp;
+	if_ctx_t es_ctx;
+	struct ifnet *es_ifp;
+	struct ifnet *es_underlay_ifp;
+	uint32_t es_mflags;
+	uint16_t es_vtag;
 };
 
 static int clone_count;
@@ -96,22 +94,19 @@ ethlink_mbuf_to_qid(if_t ifp __unused, struct mbuf *m __unused)
 	return (0);
 }
 
-static int
-ethlink_transmit(if_t ifp, struct mbuf *m)
-{
-	panic("%s should not be called\n", __func__);
-	return (0);
-}
-
 static void
-ethlink_disconnect(struct ethlink_softc *ls)
+ethlink_disconnect(struct ethlink_softc *es)
 {
-	if (ls->ls_ifp == NULL)
-		return;
-	if (ls->ls_ifp->if_bridge)
-		vpcp_port_disconnect_ifp(ls->ls_ifp);
-	if_rele(ls->ls_ifp);
-	ls->ls_ifp = NULL;
+	struct ifnet *oifp = es->es_underlay_ifp;
+
+	if (oifp) {
+		oifp->if_bridge = NULL;
+		oifp->if_bridge_input = NULL;
+		oifp->if_bridge_output = NULL;
+		oifp->if_bridge_linkstate = NULL;
+		if_rele(oifp);
+		es->es_underlay_ifp = NULL;
+	}
 }
 
 #define ETHLINK_CAPS														\
@@ -122,13 +117,13 @@ ethlink_disconnect(struct ethlink_softc *ls)
 static int
 ethlink_cloneattach(if_ctx_t ctx, struct if_clone *ifc, const char *name, caddr_t params)
 {
-	struct ethlink_softc *vs = iflib_get_softc(ctx);
+	struct ethlink_softc *es = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx;
 
 	atomic_add_int(&clone_count, 1);
-	vs->vs_ctx = ctx;
-
-	scctx = vs->shared = iflib_get_softc_ctx(ctx);
+	es->es_ctx = ctx;
+	es->es_ifp = iflib_get_ifp(ctx);
+	scctx = es->shared = iflib_get_softc_ctx(ctx);
 	scctx->isc_capenable = ETHLINK_CAPS;
 	scctx->isc_tx_csum_flags = CSUM_TCP | CSUM_UDP | CSUM_TSO | CSUM_IP6_TCP \
 		| CSUM_IP6_UDP | CSUM_IP6_TCP;
@@ -150,9 +145,11 @@ ethlink_attach_post(if_ctx_t ctx)
 static int
 ethlink_detach(if_ctx_t ctx)
 {
-	struct ethlink_softc *ls = iflib_get_softc(ctx);
+	struct ethlink_softc *es = iflib_get_softc(ctx);
 
-	ethlink_disconnect(ls);
+	if (es->es_ifp->if_bridge)
+		vpcp_port_disconnect_ifp(es->es_ifp);
+	ethlink_disconnect(es);
 	atomic_add_int(&clone_count, -1);
 
 	return (0);
@@ -168,13 +165,111 @@ ethlink_stop(if_ctx_t ctx)
 {
 }
 
-
 struct ifnet *
 ethlink_ifp_get(if_ctx_t ctx)
 {
-	struct ethlink_softc *ls = iflib_get_softc(ctx);
+	struct ethlink_softc *es = iflib_get_softc(ctx);
 
-	return (ls->ls_ifp);
+	return (es->es_underlay_ifp);
+}
+
+static int
+ethlink_transmit(if_t ifp, struct mbuf *m)
+{
+	struct ifnet *oifp;
+	if_ctx_t ctx;
+	struct ethlink_softc *es;
+	struct mbuf *mp, *mnext;
+	bool can_batch;
+	int lasterr, rc, qid;
+
+	ctx = ifp->if_softc;
+	es = iflib_get_softc(ctx);
+	oifp = es->es_underlay_ifp;
+	can_batch = true;
+	if (oifp == NULL) {
+		m_freechain(m);
+		return (ENOBUFS);
+	}
+	if (es->es_vtag) {
+		m->m_flags |= M_VLANTAG;
+		m->m_pkthdr.ether_vtag = es->es_vtag;
+	}
+	ETHER_BPF_MTAP(es->es_ifp, m);
+	m->m_pkthdr.rcvif = NULL;
+	qid = oifp->if_mbuf_to_qid(oifp, m);
+	mp = m->m_nextpkt;
+	while (mp) {
+		ETHER_BPF_MTAP(es->es_ifp, mp);
+		if (es->es_vtag) {
+			mp->m_flags |= M_VLANTAG;
+			mp->m_pkthdr.ether_vtag = es->es_vtag;
+		}
+		if (can_batch && (qid != oifp->if_mbuf_to_qid(oifp, m)))
+			can_batch = false;
+		mp->m_pkthdr.rcvif = NULL;
+		mp = mp->m_nextpkt;
+	}
+	if (can_batch)
+		return (oifp->if_transmit_txq(ifp, m));
+
+	do {
+		mnext = mp->m_nextpkt;
+		mp->m_nextpkt = NULL;
+		rc = oifp->if_transmit_txq(ifp, mp);
+		if (rc)
+			lasterr = rc;
+		mp = mnext;
+	} while (mp != NULL);
+	return (lasterr);
+}
+
+static struct mbuf *
+ethlink_bridge_input(if_t ifp, struct mbuf *m)
+{
+	struct ethlink_softc *es;
+	struct mbuf *mp, *mh, *mt, *mnext;
+
+	es = ifp->if_bridge;
+	ETHER_BPF_MTAP(es->es_ifp, m);
+	if (es->es_ifp->if_bridge == NULL)
+		return (m);
+	mh = mt = NULL;
+	mp = m;
+	do {
+		ETHER_BPF_MTAP(es->es_ifp, mp);
+		mnext = mp->m_nextpkt;
+		mp->m_nextpkt = NULL;
+		if ((mp->m_flags & M_VLANTAG) &&
+			mp->m_pkthdr.ether_vtag != es->es_vtag) {
+			m_freem(mp);
+			goto next;
+		}
+		mp->m_flags |= M_TRUNK;
+		if (mh != NULL) {
+			mt->m_nextpkt = mp;
+			mt = mp;
+		} else
+			mh = mt = mp;
+	next:
+		mp = mnext;
+	} while (mp != NULL);
+
+	return (*(es->es_ifp)->if_bridge_input)(es->es_ifp, m);
+}
+
+static int
+ethlink_bridge_output(struct ifnet *ifp, struct mbuf *m,
+					  struct sockaddr *s __unused, struct rtentry *r__unused)
+{
+	panic("%s should not be called", __func__);
+	m_freechain(m);
+	return (0);
+}
+
+static void
+ethlink_bridge_linkstate(struct ifnet *ifp __unused)
+{
 }
 
 int
@@ -182,18 +277,18 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				 size_t *outlen, void **outdata)
 {
 	if_ctx_t ifctx = ctx->v_ifp->if_softc;
-	struct ethlink_softc *ls;
+	struct ethlink_softc *es;
 	struct sockaddr_dl *sdl;
 	char buf[IFNAMSIZ];
 	int rc;
 
 	rc = 0;
-	ls = iflib_get_softc(ifctx);
+	es = iflib_get_softc(ifctx);
 	switch (op) {
 		case VPC_ETHLINK_OP_CONNECT: {
 			struct ifnet *ifp;
 
-			ethlink_disconnect(ls);
+			ethlink_disconnect(es);
 			bzero(buf, IFNAMSIZ);
 			strncpy(buf, in, min(inlen, IFNAMSIZ-1));
 			if ((ifp = ifunit_ref(buf)) == NULL)
@@ -205,23 +300,49 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			sdl = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 			if (sdl->sdl_type == IFT_ETHER)
 				iflib_set_mac(ifctx, LLADDR(sdl));
-			ls->ls_ifp = ifp;
+			es->es_ifp->if_capabilities = ifp->if_capabilities;
+			es->es_underlay_ifp = ifp;
+			ifp->if_bridge_input = ethlink_bridge_input;
+			ifp->if_bridge_output = ethlink_bridge_output;
+			ifp->if_bridge_linkstate = ethlink_bridge_linkstate;
+			wmb();
+			ifp->if_bridge = es;
 			break;
 		}
 		case VPC_ETHLINK_OP_DISCONNECT:
-			ethlink_disconnect(ls);
+			ethlink_disconnect(es);
 			break;
 		case VPC_ETHLINK_OP_CONNECTED_NAME_GET: {
 			char *ifname;
 
 			if (*outlen < IFNAMSIZ)
 				return (EOVERFLOW);
-			if (ls->ls_ifp == NULL)
+			if (es->es_underlay_ifp == NULL)
 				return (EAGAIN);
 			ifname = malloc(IFNAMSIZ, M_TEMP, M_WAITOK|M_ZERO);
-			strncpy(ifname, ls->ls_ifp->if_xname, IFNAMSIZ);
+			strncpy(ifname, es->es_underlay_ifp->if_xname, IFNAMSIZ);
 			*outdata = ifname;
 			*outlen = IFNAMSIZ;
+			break;
+		}
+		case VPC_ETHLINK_OP_VTAG_GET: {
+			uint16_t *out;
+
+			out = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
+			*outlen = sizeof(uint16_t);
+			*out = es->es_vtag;
+			*outdata = out;
+			break;
+		}
+		case VPC_ETHLINK_OP_VTAG_SET: {
+			uint16_t vtag;
+
+			if (inlen != sizeof(uint16_t))
+				return (EBADRPC);
+			vtag = *(const uint16_t *)in;
+			if (vtag > ((1<<12)-1))
+				return (EOVERFLOW);
+			es->es_vtag = vtag;
 			break;
 		}
 		default:

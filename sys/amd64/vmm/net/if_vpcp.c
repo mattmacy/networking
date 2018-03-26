@@ -340,7 +340,6 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 			mp->m_flags &= ~M_TRUNK;
 			goto next;
 		}
-		mp->m_flags |= M_TRUNK;
 		if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost) &&
 							!(m->m_flags & (M_VXLANTAG|M_VLANTAG)))) {
 			/* Order doesn't matter for broadcast packets */
@@ -438,11 +437,6 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 
 		ifdev = vctx->v_ifp;
 		vs->vs_ifdev = ifdev;
-		if (type == VPC_OBJ_ETHLINK) {
-			if_ctx_t ifctx = ifdev->if_softc;
-
-			ifdev = ethlink_ifp_get(ifctx);
-		}
 		if (ifdev->if_bridge != NULL) {
 			printf("%s in use\n", ifdev->if_xname);
 			return (EINVAL);
@@ -461,11 +455,6 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
 			ifp->if_bridge_linkstate = vpcp_stub_linkstate;
 			if (vs->vs_ifdev) {
 				ifdev = vs->vs_ifdev;
-				if (vs->vs_type == VPC_OBJ_ETHLINK) {
-					if_ctx_t ifctx = ifdev->if_softc;
-
-					ifdev = ethlink_ifp_get(ifctx);
-				}
 				ifdev->if_bridge = NULL;
 				wmb();
 				vpcsw_port_disconnect(switchctx, ifp);

@@ -749,7 +749,6 @@ vpcmux_underlay_disconnect(struct vpcmux_softc *vs)
 		ifp = vs->vs_underlay_ifp;
 		(void)ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
 		ifp->if_bridge = NULL;
-		wmb();
 		ifp->if_bridge_input = NULL;
 		ifp->if_bridge_output = NULL;
 		ifp->if_bridge_linkstate = NULL;
