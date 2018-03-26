@@ -320,10 +320,28 @@ hostlink_input(if_t ifp, struct mbuf *m)
 	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
 	struct ifnet *devifp = vs->vs_ifdev;
 	struct mbuf *mp = m;
+	struct mbuf *mh, *mt, *mnew, *mnext;
 
+	mh = mt = NULL;
 	do {
+		mnext = mp->m_nextpkt;
+		mp->m_nextpkt = NULL;
+		if (m_ismvec(mp)) {
+			mnew = mvec_to_mchain(mp, M_NOWAIT);
+			m_freem(mp);
+			if (mnew == NULL)
+				goto next;
+			mp = mnew;
+		}
+		if (mh != NULL) {
+			mt->m_nextpkt = mp;
+			mt = mp;
+		} else
+			mh = mt = mp;
+		ETHER_BPF_MTAP(ifp, mp);
 		mp->m_pkthdr.rcvif = devifp;
-		mp = mp->m_nextpkt;
+	next:
+		mp = mnext;
 	} while (mp);
 
 	devifp->if_input(devifp, m);
