@@ -211,12 +211,12 @@ ethlink_transmit(if_t ifp, struct mbuf *m)
 		mp = mp->m_nextpkt;
 	}
 	if (can_batch)
-		return (oifp->if_transmit_txq(ifp, m));
+		return (oifp->if_transmit_txq(oifp, m));
 
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
-		rc = oifp->if_transmit_txq(ifp, mp);
+		rc = oifp->if_transmit_txq(oifp, mp);
 		if (rc)
 			lasterr = rc;
 		mp = mnext;
