@@ -347,7 +347,7 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 			if (inlen != sizeof(uint16_t))
 				return (EBADRPC);
 			vtag = *(const uint16_t *)in;
-			if (vtag > ((1<<12)-1))
+			if (ntohs(vtag) > ((1<<12)-1))
 				return (EOVERFLOW);
 			es->es_vtag = vtag;
 			break;
