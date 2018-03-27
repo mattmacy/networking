@@ -362,7 +362,6 @@ hostif_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unu
 		mp->m_pkthdr.rcvif = vs->vs_ifport;
 		mp = m->m_nextpkt;
 	} while (mp);
-	mp = (void*)pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
 	if (__predict_false(mp == NULL))
 		return (0);
 	return (vpcsw_transmit_ext(ifswitch, mp, vs->vs_pcpu_cache));
