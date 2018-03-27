@@ -583,7 +583,7 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	if ((m->m_flags & M_VXLANTAG) == 0)
 		return (oifp->if_transmit_txq(ifp, m));
 
-	mp = (void*)pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
+	mp = (void*)pktchain_to_mvec(m, 0, M_NOWAIT);
 	if (__predict_false(mp == NULL))
 		return (ENOBUFS);
 	vpc_epoch_begin();
