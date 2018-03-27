@@ -258,8 +258,10 @@ ethlink_bridge_input(if_t ifp, struct mbuf *m)
 	next:
 		mp = mnext;
 	} while (mp != NULL);
+	if (__predict_false(mh == NULL))
+		return (NULL);
 
-	return (*(es->es_ifp)->if_bridge_input)(es->es_ifp, m);
+	return (*(es->es_ifp)->if_bridge_input)(es->es_ifp, mh);
 }
 
 static int
