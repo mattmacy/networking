@@ -885,7 +885,7 @@ pktchain_to_mvec(struct mbuf *m, int mtu, int how)
 	mh = mt = NULL;
 	while (mp) {
 		mnext = mp->m_nextpkt;
-		if (m_ismvec(mp) || (mp->m_pkthdr.csum_flags & CSUM_TSO) == 0)
+		if (m_ismvec(mp) || mp->m_pkthdr.len <= mtu)
 			mnew = (void*)mp;
 		else
 			mnew = mchain_to_mvec(mp, how);
