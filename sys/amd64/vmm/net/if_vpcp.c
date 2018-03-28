@@ -305,10 +305,15 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 {
 	struct vpcp_softc *vs;
 	struct ifnet *ifswitch;
+	struct mbuf *mp;
 
 	MPASS(ifp->if_bridge != NULL);
 	vs = ifp->if_bridge;
-
+	mp = m;
+	do {
+		mp->m_pkthdr.rcvif = vs->vs_ifport;
+		mp = m->m_nextpkt;
+	} while (mp);
 	ifswitch = vs->vs_ifswitch;
 	vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache);
 	return (NULL);
@@ -362,9 +367,7 @@ hostif_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unu
 		mp->m_pkthdr.rcvif = vs->vs_ifport;
 		mp = m->m_nextpkt;
 	} while (mp);
-	if (__predict_false(mp == NULL))
-		return (0);
-	return (vpcsw_transmit_ext(ifswitch, mp, vs->vs_pcpu_cache));
+	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
 static struct mbuf *
