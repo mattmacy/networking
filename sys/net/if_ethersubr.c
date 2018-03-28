@@ -530,11 +530,11 @@ ether_input_internal(struct ifnet *ifp, struct mbuf *m)
 		m->m_flags &= ~M_HASFCS;
 	}
 
-	if (!(ifp->if_capenable & IFCAP_HWSTATS))
+	if (__predict_false(!(ifp->if_capenable & IFCAP_HWSTATS)))
 		if_inc_counter(ifp, IFCOUNTER_IBYTES, m->m_pkthdr.len);
 
 	/* Allow monitor mode to claim this frame, after stats are updated. */
-	if (ifp->if_flags & IFF_MONITOR) {
+	if (__predict_false(ifp->if_flags & IFF_MONITOR)) {
 		m_freem(m);
 		CURVNET_RESTORE();
 		return;
@@ -737,13 +737,135 @@ VNET_SYSUNINIT(vnet_ether_uninit, SI_SUB_PROTO_IF, SI_ORDER_ANY,
     vnet_ether_destroy, NULL);
 #endif
 
+static __noinline struct mbuf *
+ether_input_vtag_strip(struct ifnet *ifp, struct mbuf *m)
+{
+	/*
+	 * If the hardware did not process an 802.1Q tag, do this now,
+	 * to allow 802.1P priority frames to be passed to the main input
+	 * path correctly.
+	 * TODO: Deal with Q-in-Q frames, but not arbitrary nesting levels.
+	 */
+	struct ether_vlan_header *evl;
 
+	if (__predict_false(m->m_len < sizeof(*evl)) &&
+		(m = m_pullup(m, sizeof(*evl))) == NULL) {
+#ifdef DIAGNOSTIC
+		if_printf(ifp, "cannot pullup VLAN header\n");
+#endif
+		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			return (NULL);
+	}
+
+	evl = mtod(m, struct ether_vlan_header *);
+	m->m_pkthdr.ether_vtag = ntohs(evl->evl_tag);
+	m->m_flags |= M_VLANTAG;
+
+	bcopy((char *)evl, (char *)evl + ETHER_VLAN_ENCAP_LEN,
+		  ETHER_HDR_LEN - ETHER_TYPE_LEN);
+	m_adj(m, ETHER_VLAN_ENCAP_LEN);
+	return (m);
+}
+static struct mbuf *
+ether_input_bridge_each(struct ifnet *ifp, struct mbuf *m)
+{
+	struct ether_header *eh;
+	u_short etype;
+
+	if (__predict_false(m->m_len < ETHER_HDR_LEN)) {
+		/* XXX maybe should pullup? */
+		if_printf(ifp, "discard frame w/o leading ethernet "
+				"header (len %u pkt len %u)\n",
+				m->m_len, m->m_pkthdr.len);
+		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+		m_freem(m);
+		return (NULL);
+	}
+	eh = mtod(m, struct ether_header *);
+	etype = ntohs(eh->ether_type);
+	if (__predict_false(ETHER_IS_MULTICAST(eh->ether_dhost))) {
+		if (ETHER_IS_BROADCAST(eh->ether_dhost))
+			m->m_flags |= M_BCAST;
+		else
+			m->m_flags |= M_MCAST;
+		if_inc_counter(ifp, IFCOUNTER_IMCASTS, 1);
+	}
+	if (!(m->m_flags & M_VXLANTAG))
+		ETHER_BPF_MTAP(ifp, m);
+	if (__predict_false(!(ifp->if_capenable & IFCAP_HWSTATS)))
+		if_inc_counter(ifp, IFCOUNTER_IBYTES, m->m_pkthdr.len);
+	/* Handle input from a lagg(4) port */
+	if (ifp->if_type == IFT_IEEE8023ADLAG) {
+		KASSERT(lagg_input_p != NULL,
+		    ("%s: if_lagg not loaded!", __func__));
+		m = (*lagg_input_p)(ifp, m);
+		if (m != NULL)
+			ifp = m->m_pkthdr.rcvif;
+		else {
+			return (NULL);
+		}
+	}
+	if (__predict_false((m->m_flags & M_VLANTAG) == 0 && etype == ETHERTYPE_VLAN)) {
+		m = ether_input_vtag_strip(ifp, m);
+		if (m == NULL)
+			return (NULL);
+	}
+	M_SETFIB(m, ifp->if_fib);
+	m->m_flags &= ~M_PROMISC;
+	return (m);
+}
+static void
+ether_input_bridge_batch(struct ifnet *ifp, struct mbuf *m)
+{
+	struct mbuf *mh, *mt, *mnext, *mp;
+
+	if (__predict_false((ifp->if_flags & IFF_UP) == 0)) {
+		m_freechain(m);
+		return;
+	}
+#ifdef DIAGNOSTIC
+	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)) {
+		if_printf(ifp, "discard frame at !IFF_DRV_RUNNING\n");
+		m_freechain(m);
+		return;
+	}
+#endif
+	/* Allow monitor mode to claim this frame, after stats are updated. */
+	if (ifp->if_flags & IFF_MONITOR) {
+		m_freechain(m);
+		return;
+	}
+	mp = m;
+	mh = mt = NULL;
+	CURVNET_SET_QUIET(ifp->if_vnet);
+	do {
+		mnext = mp->m_nextpkt;
+		mp = ether_input_bridge_each(ifp, mp);
+		if (__predict_false(mp == NULL))
+			goto next;
+		if (mh != NULL) {
+			mt->m_nextpkt = mp;
+			mt = mp;
+		} else
+			mh = mt = NULL;
+	next:
+		mp = mnext;
+	} while (mp != NULL);
+	CURVNET_RESTORE();
+	if (__predict_true(mh != NULL))
+		BRIDGE_INPUT(ifp, mh);
+}
 
 static void
 ether_input(struct ifnet *ifp, struct mbuf *m)
 {
 
 	struct mbuf *mn;
+
+	if (ifp->if_bridge && (ifp->if_capabilities & IFCAP_BRIDGE_BATCH)) {
+		ether_input_bridge_batch(ifp, m);
+		return;
+	}
 
 	/*
 	 * The drivers are allowed to pass in a chain of packets linked with
