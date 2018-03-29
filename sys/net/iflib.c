@@ -7284,12 +7284,12 @@ iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, bool s
 		}
 #endif
 		default:
-			printf("invalid etype %x len: %d \n", etype, m->m_pkthdr.len);
 			return;
 	}
 
-	if (uh->uh_dport != vxlan_port)
+	if (uh->uh_dport != vxlan_port) {
 		return;
+	}
 	BPF_MTAP(ifp, m);
 	len += sizeof(*uh) + sizeof(*vh);
 	vh = (struct vxlan_header *)(uh + 1);
@@ -7297,9 +7297,6 @@ iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, bool s
 	eh = (struct ether_vlan_header *)(vh + 1);
 	m->m_flags |= M_VXLANTAG;
 	m->m_pkthdr.vxlanid = ntohl(vxlanid);
-	/* XXX --- only once validated --- check if the NIC has in fact validated these */
-	m->m_pkthdr.csum_flags |= CSUM_DATA_VALID|CSUM_PSEUDO_HDR|CSUM_IP_CHECKED|CSUM_IP_VALID;
-	m->m_pkthdr.csum_data = 0xffff;
 	if (__predict_true(m->m_len < len)) {
 		m->m_len -= len;
 		m->m_pkthdr.len -= len;
