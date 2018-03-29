@@ -2627,7 +2627,7 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 		MPASS(txq->pkt_offs[i] + txq->pkt_cnts[i] < txq->gl->sg_maxseg);
 #endif
 	MPASS((!needs_tso(m0) && (m0->m_flags & M_VXLANTAG)) || needs_tso(m0));
-
+	m0->m_pkthdr.csum_flags &= ~CSUM_TSO;
 	for (total_desc = i = 0; i < count; i++)
 		total_desc += howmany(txpkt_len16(txq->pkt_cnts[i], false), EQ_ESIZE / 16);
 	if (__predict_false(total_desc > *available)) {
@@ -4607,7 +4607,7 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 		len16 = txpkt_vx_len16(nsegs);
 	} else if (needs_tso(m0)) {
 		ctrl += sizeof(struct cpl_tx_pkt_lso_core);
-	} else if (pktlen <= imm_payload(2) && available >= 2) {
+	} else if (pktlen <= imm_payload(2) && available >= 2 && !m_ismvec(m0)) {
 		/* Immediate data.  Recalculate len16 and set nsegs to 0. */
 		ctrl += pktlen;
 		len16 = howmany(sizeof(struct fw_eth_tx_pkt_wr) +
