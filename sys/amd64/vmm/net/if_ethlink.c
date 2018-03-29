@@ -197,12 +197,10 @@ ethlink_transmit(if_t ifp, struct mbuf *m)
 		m->m_flags |= M_VLANTAG;
 		m->m_pkthdr.ether_vtag = es->es_vtag;
 	}
-	ETHER_BPF_MTAP(ifp, m);
 	m->m_pkthdr.rcvif = NULL;
 	qid = oifp->if_mbuf_to_qid(oifp, m);
 	mp = m->m_nextpkt;
 	while (mp) {
-		ETHER_BPF_MTAP(ifp, mp);
 		if (es->es_vtag) {
 			mp->m_flags |= M_VLANTAG;
 			mp->m_pkthdr.ether_vtag = es->es_vtag;
@@ -233,13 +231,11 @@ ethlink_bridge_input(if_t ifp, struct mbuf *m)
 	struct mbuf *mp, *mh, *mt, *mnext;
 
 	es = ifp->if_bridge;
-	ETHER_BPF_MTAP(es->es_ifp, m);
 	if (es->es_ifp->if_bridge == NULL)
 		return (m);
 	mh = mt = NULL;
 	mp = m;
 	do {
-		ETHER_BPF_MTAP(es->es_ifp, mp);
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
 		if (mp->m_flags & M_VLANTAG) {
