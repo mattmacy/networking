@@ -696,7 +696,10 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 		device_printf(dev, "%s vxlan port not set", __func__);
 		return (EAGAIN);
 	}
-	vctx = vmmnet_lookup(id);
+	if ((vctx = vmmnet_lookup(id)) == NULL)
+		return (ENOENT);
+	if (bootverbose)
+		printf("vctx: %32D\n", vctx, ":");
 	htype = (void *)&vctx->v_obj_type;
 	objtype = htype->vht_obj_type;
 	if (objtype != VPC_OBJ_ETHLINK) {
