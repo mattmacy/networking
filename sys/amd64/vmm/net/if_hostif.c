@@ -75,6 +75,15 @@ static MALLOC_DEFINE(M_HOSTIF, "hostif", "virtual private cloud interface");
 #define DPRINTF(...)
 #endif
 
+
+static int soft_tso;
+static SYSCTL_NODE(_net, OID_AUTO, hostif, CTLFLAG_RD, 0,
+                   "hostif parameters");
+
+SYSCTL_INT(_net_hostif, OID_AUTO, soft_tso, CTLFLAG_RW,
+		   &soft_tso, 0, "enable soft tso");
+
+
 struct hostif_softc {
 	if_softc_ctx_t shared;
 	if_ctx_t vs_ctx;
@@ -92,6 +101,7 @@ static int
 hostif_transmit(if_t ifp, struct mbuf *m)
 {
 	struct mbuf *mp = m;
+	struct mbuf_ext *mext;
 
 	do {
 		ETHER_BPF_MTAP(ifp, mp);
@@ -102,7 +112,17 @@ hostif_transmit(if_t ifp, struct mbuf *m)
 		m_freechain(m);
 		return (ENOBUFS);
 	}
-
+	if (soft_tso) {
+		mext = pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
+		if (__predict_false(mext == NULL))
+			return (ENOMEM);
+		if (m->m_pkthdr.csum_flags & CSUM_TSO) {
+			m = (void*)mvec_tso(mext, 0, true);
+			if (__predict_false(m == NULL))
+				return (ENOMEM);
+		} else
+			m = (void *)mext;
+	}
 	return ((*(ifp)->if_bridge_output)(ifp, m, NULL, NULL));
 }
 
