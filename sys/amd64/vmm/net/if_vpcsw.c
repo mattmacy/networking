@@ -363,7 +363,7 @@ vpcsw_process_mcast(struct vpcsw_softc *vs, struct mbuf **msrc)
 			return (ENOMEM);
 		}
 		vpcp_get_id(m->m_pkthdr.rcvif, &vrp->vrp_id);
-
+		vrp->vrp_m = m;
 		mtx_lock(&vs->vs_lock);
 		TAILQ_INSERT_HEAD(&vmq->vmq_head, vrp, vrp_entry);
 		if (vmq->vmq_mcount >= 128) {
