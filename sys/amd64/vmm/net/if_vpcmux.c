@@ -520,14 +520,14 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 }
 
 static int
-vpcmux_vxlan_encap_chain(struct vpcmux_softc *vs, struct mbuf **mp, bool *can_batch)
+vpcmux_vxlan_encap_chain(struct vpcmux_softc *vs, struct mbuf **mp)
 {
 	struct mbuf *mh, *mt, *mnext, *m;
 	struct ifnet *ifp;
 	int rc;
+	vpc_epoch_begin();
 
 	mh = mt = NULL;
-	*can_batch = true;
 	m = *mp;
 	*mp = NULL;
 	ifp = NULL;
@@ -539,12 +539,9 @@ vpcmux_vxlan_encap_chain(struct vpcmux_softc *vs, struct mbuf **mp, bool *can_ba
 			break;
 		if (mh == NULL) {
 			mh = mt = m;
-			ifp = m->m_pkthdr.rcvif;
 		} else {
 			mt->m_nextpkt = m;
 			mt = m;
-			if (__predict_false(ifp != m->m_pkthdr.rcvif))
-				*can_batch = false;
 		}
 		MPASS(m != mnext);
 		m = mnext;
@@ -554,6 +551,7 @@ vpcmux_vxlan_encap_chain(struct vpcmux_softc *vs, struct mbuf **mp, bool *can_ba
 		m_freechain(mnext);
 	}
 	*mp = mh;
+	vpc_epoch_end();
 	return (rc);
 }
 
@@ -570,7 +568,6 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	if_ctx_t ctx;
 	struct vpcmux_softc *vs;
 	struct mbuf *mp, *mnext;
-	bool can_batch;
 	int lasterr, rc;
 
 	ctx = ifp->if_softc;
@@ -586,32 +583,10 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	mp = (void*)pktchain_to_mvec(m, 0, M_NOWAIT);
 	if (__predict_false(mp == NULL))
 		return (ENOBUFS);
-	vpc_epoch_begin();
-	can_batch = true;
-	lasterr = vpcmux_vxlan_encap_chain(vs, &m, &can_batch);
-	if (__predict_false(lasterr))
-		goto done;
-	if (can_batch) {
-		lasterr = oifp->if_transmit_txq(ifp, m);
-		goto done;
-	}
-
-	mp = m;
-	lasterr = 0;
-	do {
-		mnext = mp->m_nextpkt;
-		MPASS(mnext != (void *)0xdeadc0dedeadc0de);
-		mp->m_nextpkt = NULL;
-		ifp = mp->m_pkthdr.rcvif;
-		mp->m_pkthdr.rcvif = NULL;
-		rc = oifp->if_transmit_txq(ifp, mp);
-		if (rc)
-			lasterr = rc;
-		mp = mnext;
-	} while (mp != NULL);
- done:
-	vpc_epoch_end();
-	return (lasterr);
+	lasterr = vpcmux_vxlan_encap_chain(vs, &m);
+	if (__predict_false(lasterr || m == NULL))
+		return (lasterr);
+	return (oifp->if_transmit_txq(oifp, m));
 }
 
 static struct mbuf *
@@ -664,7 +639,8 @@ vpcmux_set_listen(struct vpcmux_softc *vs, const struct sockaddr *addr)
 
 	/* v4 only XXX */
 	sin = (const struct sockaddr_in *)addr;
-	vs->vs_vxlan_port = sin->sin_port;
+	//vs->vs_vxlan_port = sin->sin_port;
+	vs->vs_vxlan_port = htons(4789);
 	bcopy(sin, &vs->vs_addr, sizeof(*sin));
 	return (0);
 }
