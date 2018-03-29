@@ -127,7 +127,7 @@ static void vpcp_vxlanid_set(if_ctx_t ctx, uint32_t vxlanid);
 static uint32_t vpcp_vxlanid_get(if_ctx_t ctx);
 static void vpcp_vlanid_set(if_ctx_t ctx, uint16_t vlanid);
 static uint16_t vpcp_vlanid_get(if_ctx_t ctx);
-static int vpcp_port_type_set(if_ctx_t ctx, vpc_ctx_t vctx, enum vpc_obj_type type);
+static int vpcp_port_type_set(if_ctx_t ctx, vpc_ctx_t vctx, vpc_obj_type_t type);
 static int clone_count;
 
 static void
@@ -401,7 +401,7 @@ hostif_bridge_input(if_t ifp, struct mbuf *m)
 }
 
 static int
-vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, enum vpc_obj_type type)
+vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, vpc_obj_type_t type)
 {
 	struct ifnet *ifp, *ifdev;
 	struct vpcp_softc *vs;
@@ -519,7 +519,7 @@ vpcp_port_connect(if_ctx_t ctx, const vpc_id_t *id)
 
 		return (ENXIO);
 	}
-	return (vpcp_port_type_set(ctx, vctx, vctx->v_obj_type));
+	return (vpcp_port_type_set(ctx, vctx, vctx->v_handle_type.vht_obj_type));
 }
 
 static int

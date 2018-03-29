@@ -698,10 +698,12 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 	}
 	if ((vctx = vmmnet_lookup(id)) == NULL)
 		return (ENOENT);
-	if (bootverbose)
-		printf("vctx: %32D\n", vctx, ":");
-	htype = (void *)&vctx->v_obj_type;
+	htype = (vpc_handle_type_t*)&vctx->v_handle_type;
 	objtype = htype->vht_obj_type;
+	if (bootverbose) {
+		printf("vctx: %32D\n", vctx, ":");
+		printf("htype: %8D\n", htype, ":");
+	}
 	if (objtype != VPC_OBJ_ETHLINK) {
 		if (bootverbose)
 			device_printf(dev,"bad type passed to %s id: %16D type: %d expected type: %d\n",

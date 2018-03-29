@@ -106,6 +106,24 @@ typedef struct {
 	vpc_id_t voh_id;
 } vpc_obj_header_t;
 
+enum vpc_obj_type {
+	VPC_OBJ_INVALID = 0,
+	VPC_OBJ_SWITCH = 1,
+	VPC_OBJ_PORT = 2,
+	VPC_OBJ_ROUTER = 3,
+	VPC_OBJ_NAT = 4,
+	VPC_OBJ_VPCMUX = 5,
+	VPC_OBJ_VMNIC = 6,
+	VPC_OBJ_MGMT = 7,
+	VPC_OBJ_ETHLINK = 8,
+	VPC_OBJ_META = 9,
+	VPC_OBJ_TYPE_ANY = 10,
+	VPC_OBJ_HOSTIF = 11,
+	VPC_OBJ_TYPE_MAX = 11,
+};
+
+typedef enum vpc_obj_type vpc_obj_type_t;
+
 typedef struct {
 	vpc_obj_header_t voi_hdr;
     union {
@@ -113,7 +131,7 @@ typedef struct {
 			uint32_t vni;
 		} vswitch;
 		struct {
-			uint8_t type;
+			vpc_obj_type_t type;
 		} port;
 		struct {
 		} vmnic;
@@ -126,11 +144,12 @@ typedef struct {
 
 
 typedef struct {
-	uint64_t vht_version:4;
-	uint64_t vht_pad1:4;
-	uint64_t vht_obj_type:8;
+	uint8_t vht_version:4;
+	uint8_t vht_pad1:4;
+	vpc_obj_type_t vht_obj_type:8;
 	uint64_t vht_pad2:48;
 } vpc_handle_type_t;
+CTASSERT(sizeof(vpc_handle_type_t) == sizeof(uint64_t));
 
 #ifdef _KERNEL
 #include <sys/proc.h>
@@ -199,7 +218,7 @@ typedef struct rtr_ctx *rtr_ctx_t;
 
 typedef struct vpcctx_public {
 	struct ifnet *v_ifp;
-	vpc_type_t v_obj_type;
+	vpc_handle_type_t v_handle_type;
 	vpc_id_t v_id;
 } *vpc_ctx_t;
 
@@ -269,22 +288,6 @@ int vpc_rtr_lookupv4(rtr_ctx_t rc, void *key, uint32_t *val);
 int vpc_rtr_lookupv6(rtr_ctx_t rc, void *key, uint32_t *val);
 
 #endif
-
-enum vpc_obj_type {
-	VPC_OBJ_INVALID = 0,
-	VPC_OBJ_SWITCH = 1,
-	VPC_OBJ_PORT = 2,
-	VPC_OBJ_ROUTER = 3,
-	VPC_OBJ_NAT = 4,
-	VPC_OBJ_VPCMUX = 5,
-	VPC_OBJ_VMNIC = 6,
-	VPC_OBJ_MGMT = 7,
-	VPC_OBJ_ETHLINK = 8,
-	VPC_OBJ_META = 9,
-	VPC_OBJ_TYPE_ANY = 10,
-	VPC_OBJ_HOSTIF = 11,
-	VPC_OBJ_TYPE_MAX = 11,
-};
 
 enum vpc_vpcsw_op_type {
 	VPC_VPCSW_INVALID = 0,
@@ -474,7 +477,7 @@ enum vpc_hostif_op_type {
 #define VPC_VPCMUX_OP_UNDERLAY_CONNECT VPC_OP_IMP(VPC_OBJ_VPCMUX, VPC_VPCMUX_UNDERLAY_CONNECT)
 #define VPC_VPCMUX_OP_UNDERLAY_DISCONNECT VPC_OP_MP(VPC_OBJ_VPCMUX, VPC_VPCMUX_UNDERLAY_DISCONNECT)
 #define VPC_VPCMUX_OP_CONNECTED_ID_GET VPC_OP_O(VPC_OBJ_VPCMUX, VPC_VPCMUX_CONNECTED_ID_GET)
-#define VPC_VPCMUX_OP_LISTEN_ADDR_GET VPC_OP_O(VPC_OBJ_VPCMUX, VPC_VPCMUX_LISTEN_ADDR_GET)	
+#define VPC_VPCMUX_OP_LISTEN_ADDR_GET VPC_OP_O(VPC_OBJ_VPCMUX, VPC_VPCMUX_LISTEN_ADDR_GET)
 #define VPC_VPCMUX_OP_FTE_LIST VPC_OP_O(VPC_OBJ_VPCMUX, VPC_VPCMUX_FTE_LIST)
 
 

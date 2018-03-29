@@ -94,7 +94,7 @@ SX_SYSINIT(vmmnet, &vmmnet_lock, "vmmnet global");
 
 struct vpcctx {
 	struct ifnet *v_ifp;
-	vpc_type_t v_obj_type;
+	vpc_handle_type_t v_handle_type;
 	vpc_id_t v_id;
 
 	volatile u_int v_refcnt;
@@ -126,8 +126,8 @@ vpcd_print_uuid_callback(void *data, const unsigned char *key, uint32_t key_len,
 }
 
 struct typecount_info {
-	uint32_t type;
 	uint32_t count;
+	vpc_obj_type_t type;
 };
 
 static int
@@ -136,7 +136,7 @@ vpcd_typecount_callback(void *data, const unsigned char *key, uint32_t key_len, 
 	struct typecount_info  *ti = data;
 	struct vpcctx *ctx = value;
 
-	if (ti->type == ctx->v_obj_type || ti->type == VPC_OBJ_TYPE_ANY)
+	if (ti->type == ctx->v_handle_type.vht_obj_type || ti->type == VPC_OBJ_TYPE_ANY)
 		ti->count++;
 	return (0);
 }
@@ -146,7 +146,7 @@ struct objget_info {
 	caddr_t ptr;
 	uint32_t max_count;
 	uint32_t count;
-	uint16_t type;
+	vpc_obj_type_t type;
 	/* pad ?*/
 };
 
@@ -158,7 +158,7 @@ vpcd_objget_callback(void *data, const unsigned char *key, uint32_t key_len, voi
 	struct vpcctx *ctx = value;
 	vpc_obj_info_t *voi;
 
-	if (oi->type != ctx->v_obj_type && oi->type != VPC_OBJ_TYPE_ANY)
+	if (oi->type != ctx->v_handle_type && oi->type != VPC_OBJ_TYPE_ANY)
 		return (0);
 	if (oi->count == oi->max_count)
 		return (ENOSPC);
@@ -173,12 +173,12 @@ vpcd_hdrget_callback(void *data, const unsigned char *key, uint32_t key_len, voi
 	vpc_obj_header_t *voh;
 
 
-	if (oi->type != ctx->v_obj_type && oi->type != VPC_OBJ_MGMT)
+	if (oi->type != ctx->v_handle_type.vht_obj_type && oi->type != VPC_OBJ_MGMT)
 		return (0);
 	if (oi->count == oi->max_count)
 		return (ENOSPC);
 	voh = (void *)oi->ptr;
-	voh->voh_type = ctx->v_obj_type;
+	voh->voh_type = ctx->v_handle_type.vht_obj_type;
 	if (ctx->v_ifp)
 		voh->voh_unit = ctx->v_ifp->if_dunit;
 	memcpy(&voh->voh_id, key, sizeof(vpc_id_t));
@@ -203,14 +203,14 @@ vpcd_close(struct file *fp, struct thread *td)
 	if ((ctx = fp->f_data) == NULL)
 		return (0);
 	fp->f_data = NULL;
-	if (ctx->v_obj_type == VPC_OBJ_PORT)
+	if (ctx->v_handle_type.vht_obj_type == VPC_OBJ_PORT)
 		return (0);
 	VMMNET_LOCK();
 	if (refcount_release(&ctx->v_refcnt)) {
 		value = art_delete(&vpc_uuid_table, (const char *)&ctx->v_id);
 
 #ifdef INVARIANTS
-		if (ctx->v_obj_type != VPC_OBJ_MGMT && value != ctx) {
+		if (ctx->v_handle_type.vht_obj_type != VPC_OBJ_MGMT && value != ctx) {
 			printf("%16D  --- vpc_id not found\n", &ctx->v_id, ":");
 			vpcd_print_uuids();
 		}
@@ -284,7 +284,7 @@ vmmnet_insert(const vpc_id_t *id, if_t ifp, vpc_type_t type)
 	if_ref(ifp);
 	ctx->v_ifp = ifp;
 	memcpy(&ctx->v_id, id, sizeof(*id));
-	ctx->v_obj_type = type;
+	ctx->v_handle_type.vht_obj_type = type;
 	refcount_init(&ctx->v_refcnt, 1);
 	art_insert(&vpc_uuid_table, (const char *)id, ctx);
 	return (0);
@@ -379,7 +379,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 			rc = ENOENT;
 			goto unlock;
 		}
-		if (ctx->v_obj_type != obj_type) {
+		if (ctx->v_handle_type.vht_obj_type != obj_type) {
 			rc = ENODEV;
 			goto unlock;
 		}
@@ -409,7 +409,7 @@ kern_vpc_open(struct thread *td, const vpc_id_t *vpc_id,
 		 */
 		refcount_init(&ctx->v_refcnt, 1);
 		ctx->v_ifp = ifp;
-		ctx->v_obj_type = obj_type;
+		ctx->v_handle_type.vht_obj_type = obj_type;
 		memcpy(&ctx->v_id, vpc_id, sizeof(*vpc_id));
 		if (priv_check(td, PRIV_DRIVER) == 0) {
 			art_insert(&vpc_uuid_table, (const char *)vpc_id, ctx);
@@ -496,7 +496,7 @@ vpcmgmt_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t innbyte, const void *in,
 			if (*outnbyte < sizeof(uint32_t))
 				return (EOVERFLOW);
 
-			ti.type = *qtype;
+			ti.type = (vpc_obj_type_t)*qtype;
 			*outnbyte = sizeof(uint16_t);
 			typecount = malloc(sizeof(uint16_t), M_TEMP, M_WAITOK);
 			ti.count = 0;
@@ -581,7 +581,7 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 		goto done;
 	}
 	ctx = fp->f_data;
-	if ((objtype != VPC_OBJ_META) && (ctx->v_obj_type != objtype)) {
+	if ((objtype != VPC_OBJ_META) && (ctx->v_handle_type.vht_obj_type != objtype)) {
 		rc = ENODEV;
 		goto done;
 	}
@@ -621,18 +621,18 @@ kern_vpc_ctl(struct thread *td, int vpcd, vpc_op_t op, size_t innbyte,
 			refcount_acquire(&ctx->v_refcnt);
 			break;
 		case VPC_OBJ_OP_TYPE_GET: {
-			uint8_t *typep;
+			vpc_obj_type_t *typep;
 
 			*outnbyte = 1;
-			typep = malloc(sizeof(uint8_t), M_TEMP, M_WAITOK);
-			*typep = ctx->v_obj_type;
+			typep = malloc(sizeof(vpc_obj_type_t), M_TEMP, M_WAITOK);
+			*typep = ctx->v_handle_type.vht_obj_type;
 			break;
 		}
 		case VPC_OBJ_OP_MAC_SET: {
 			if_ctx_t ifctx;
 			const uint8_t *mac = in;
 
-			if ((ctx->v_obj_type == VPC_OBJ_ETHLINK) ||
+			if ((ctx->v_handle_type.vht_obj_type == VPC_OBJ_ETHLINK) ||
 				(innbyte != ETHER_ADDR_LEN)) {
 				rc = EBADRPC;
 				goto done;
@@ -834,8 +834,8 @@ filt_vpcattach(struct knote *kn)
 		return (EBADF);
 
 	vctx = kn->kn_fp->f_data;
-	if (vctx->v_obj_type == VPC_OBJ_MGMT ||
-		vctx->v_obj_type == VPC_OBJ_ETHLINK)
+	if (vctx->v_handle_type.vht_obj_type == VPC_OBJ_MGMT ||
+		vctx->v_handle_type.vht_obj_type == VPC_OBJ_ETHLINK)
 		return (EBADF);
 	ctx = vctx->v_ifp->if_softc;
 	return (iflib_knlist_add(ctx, kn));
@@ -849,8 +849,8 @@ filt_vpcdetach(struct knote *kn)
 
 	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
 	vctx = kn->kn_fp->f_data;
-	MPASS(vctx->v_obj_type != VPC_OBJ_SWITCH &&
-		  vctx->v_obj_type != VPC_OBJ_ETHLINK);
+	MPASS(vctx->v_handle_type.vht_obj_type != VPC_OBJ_SWITCH &&
+		  vctx->v_handle_type.vht_obj_type != VPC_OBJ_ETHLINK);
 	ctx = vctx->v_ifp->if_softc;
 	iflib_knlist_remove(ctx, kn);
 }
@@ -863,7 +863,7 @@ filt_vpcevent(struct knote *kn, long hint)
 
 	MPASS(kn->kn_fp->f_type == DTYPE_VPCFD);
 	vctx = kn->kn_fp->f_data;
-	MPASS(vctx->v_obj_type == VPC_OBJ_SWITCH);
+	MPASS(vctx->v_handle_type.vht_obj_type == VPC_OBJ_SWITCH);
 	ctx = vctx->v_ifp->if_softc;
 
 	return (iflib_knote_event(ctx, kn, hint));
@@ -874,7 +874,7 @@ static struct syscall_helper_data vmmnet_syscalls[] = {
 	SYSCALL_INIT_HELPER_F(vpc_ctl, SYF_CAPENABLED),
 	SYSCALL_INIT_LAST
 };
-	
+
 static int
 vmmnet_module_init(void)
 {
