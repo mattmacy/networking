@@ -104,7 +104,7 @@ ethlink_disconnect(struct ethlink_softc *es)
 		oifp->if_bridge_input = NULL;
 		oifp->if_bridge_output = NULL;
 		oifp->if_bridge_linkstate = NULL;
-		oifp->if_flags &= ~IFCAP_BRIDGE_BATCH;
+		oifp->if_capabilities &= ~IFCAP_BRIDGE_BATCH;
 		if_rele(oifp);
 		es->es_underlay_ifp = NULL;
 	}
@@ -310,7 +310,7 @@ ethlink_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 				iflib_set_mac(ifctx, LLADDR(sdl));
 			es->es_ifp->if_capabilities = ifp->if_capabilities;
 			es->es_underlay_ifp = ifp;
-			ifp->if_flags |= IFCAP_BRIDGE_BATCH;
+			ifp->if_capabilities |= IFCAP_BRIDGE_BATCH;
 			ifp->if_bridge_input = ethlink_bridge_input;
 			ifp->if_bridge_output = ethlink_bridge_output;
 			ifp->if_bridge_linkstate = ethlink_bridge_linkstate;
