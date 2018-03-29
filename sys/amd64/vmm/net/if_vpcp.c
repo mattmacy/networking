@@ -161,8 +161,8 @@ vmi_txflags(struct mbuf *m, struct vpc_pkt_info *vpi, bool egress)
 	if (egress) {
 		m->m_pkthdr.tso_segsz = m->m_pkthdr.flowid;
 		m->m_pkthdr.fibnum = 0;
+		m->m_pkthdr.flowid = vpi->vpi_hash;
 	}
-	m->m_pkthdr.flowid = vpi->vpi_hash;
 	m->m_pkthdr.l2hlen = vpi->vpi_l2_len;
 	m->m_pkthdr.l3hlen = vpi->vpi_l3_len;
 	m->m_pkthdr.l4hlen = vpi->vpi_l4_len;
