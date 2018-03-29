@@ -581,7 +581,7 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 		return (ENOBUFS);
 	}
 	if ((m->m_flags & M_VXLANTAG) == 0)
-		return (oifp->if_transmit_txq(ifp, m));
+		return (oifp->if_transmit_txq(oifp, m));
 
 	mp = (void*)pktchain_to_mvec(m, 0, M_NOWAIT);
 	if (__predict_false(mp == NULL))
@@ -733,7 +733,7 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 	if (rc == 0) {
 		vmmnet_ref(vctx);
 		vs->vs_underlay_vctx = vctx;
-		vs->vs_underlay_ifp = ifp;
+		vs->vs_underlay_ifp = vctx->v_ifp;
 		ifp->if_bridge_input = vpcmux_bridge_input;
 		ifp->if_bridge_output = vpcmux_bridge_output;
 		ifp->if_bridge_linkstate = vpcmux_bridge_linkstate;
