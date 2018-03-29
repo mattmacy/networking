@@ -567,26 +567,56 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	struct ifnet *oifp;
 	if_ctx_t ctx;
 	struct vpcmux_softc *vs;
-	struct mbuf *mp;
-	int lasterr;
+	struct mbuf *mp, *mh, *mt, *mhv, *mtv, *mnext;
+	int rc;
 
 	ctx = ifp->if_softc;
 	vs = iflib_get_softc(ctx);
 	oifp = vs->vs_underlay_ifp;
+	mp = m;
+	mh = mt = mhv = mtv = NULL;
+	do {
+		mnext = mp->m_nextpkt;
+		mp->m_nextpkt = NULL;
+		if (bpf_peers_present(ifp->if_bpf))
+			ETHER_BPF_MTAP(ifp, mp);
+		if (mp->m_flags & M_VXLANTAG) {
+			if (mhv != NULL) {
+				mtv->m_nextpkt = mp;
+				mtv = mp;
+			} else
+				mhv = mtv = mp;
+		} else {
+			if (mh != NULL) {
+				mt->m_nextpkt = mp;
+				mt = mp;
+			} else
+				mh = mt = mp;
+		}
+		mp = mnext;
+	} while (mp);
 	if (__predict_false(oifp == NULL)) {
-		m_freechain(m);
+		m_freechain(mhv);
+		m_freechain(mh);
 		return (ENOBUFS);
 	}
-	if ((m->m_flags & M_VXLANTAG) == 0)
-		return (oifp->if_transmit_txq(oifp, m));
-
-	mp = (void*)pktchain_to_mvec(m, 0, M_NOWAIT);
-	if (__predict_false(mp == NULL))
+	if (mh) {
+		rc = oifp->if_transmit_txq(oifp, mh);
+		if (__predict_false(rc)) {
+			m_freechain(mhv);
+			return (rc);
+		}
+	}
+	mhv = (void*)pktchain_to_mvec(mhv, 0, M_NOWAIT);
+	if (__predict_false(mhv == NULL)) {
 		return (ENOBUFS);
-	lasterr = vpcmux_vxlan_encap_chain(vs, &m);
-	if (__predict_false(lasterr || m == NULL))
-		return (lasterr);
-	return (oifp->if_transmit_txq(oifp, m));
+	}
+	rc = vpcmux_vxlan_encap_chain(vs, &mhv);
+	if (__predict_false(rc || mhv == NULL)) {
+		DPRINTF("encap fail in %s\n", __func__);
+		return (rc);
+	}
+	return (oifp->if_transmit_txq(oifp, mhv));
 }
 
 static struct mbuf *
@@ -658,7 +688,7 @@ vpcmux_get_listen(struct vpcmux_softc *vs, struct sockaddr *addr)
 static int
 vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 {
-	struct ifnet *ifp;
+	struct ifnet *ifp, *vifp;
 	struct ifreq ifr;
 	vpc_ctx_t vctx;
 	if_ctx_t ethctx;
@@ -694,6 +724,7 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 
 	}
 	ethctx = vctx->v_ifp->if_softc;
+	vifp = vctx->v_ifp;
 	ifp = ethlink_ifp_get(ethctx);
 	if (!(ifp->if_capabilities & IFCAP_VXLANDECAP)) {
 		if (bootverbose)
@@ -709,12 +740,12 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 	if (rc == 0) {
 		vmmnet_ref(vctx);
 		vs->vs_underlay_vctx = vctx;
-		vs->vs_underlay_ifp = vctx->v_ifp;
-		ifp->if_bridge_input = vpcmux_bridge_input;
-		ifp->if_bridge_output = vpcmux_bridge_output;
-		ifp->if_bridge_linkstate = vpcmux_bridge_linkstate;
+		vs->vs_underlay_ifp = vifp;
+		vifp->if_bridge_input = vpcmux_bridge_input;
+		vifp->if_bridge_output = vpcmux_bridge_output;
+		vifp->if_bridge_linkstate = vpcmux_bridge_linkstate;
 		wmb();
-		ifp->if_bridge = vs;
+		vifp->if_bridge = vs;
 	}
 	return (rc);
 }
