@@ -109,6 +109,7 @@ mvec_sanity(const struct mbuf *m)
 				MPASS(me_count->ext_cnt == NULL);
 			continue;
 		}
+		MPASS(me->me_type);
 		if (mh->mh_multiref) {
 			if (me->me_type == MVEC_MANAGED)
 				MPASS(me_count->ext_cnt != NULL);
@@ -810,12 +811,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	mh = &mnew->me_mh;
 	mh->mh_used = count-1;
 	MPASS(mh->mh_start == 1);
-#ifdef INVARIANTS
-	if (size)
-		MPASS(mh->mh_count == mh->mh_used+1);
-	else
-		MPASS(mh->mh_count >= mh->mh_used);
-#endif
+	MPASS(mh->mh_count >= mh->mh_used);
 	mh->mh_multiref = dupref;
 	/* leave first entry open for encap */
 	bcopy(&m->m_pkthdr, &mnew->me_mbuf.m_pkthdr, sizeof(struct pkthdr));
@@ -1215,13 +1211,13 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 {
 	struct mvec_header *mh, *newmh;
 	struct mvec_cursor mc;
-	struct mvec_ent *me, *mesrc, *medst, *newme;
+	struct mvec_ent *mesrc, *medst, *newme;
 	struct mbuf_ext *mnew;
 	struct mbuf *m;
 	struct if_pkt_info pi;
 	struct tso_state state;
 	m_refcnt_t *newme_count, *medst_count, *mesrc_count;
-	int segcount, soff, segrem, srem;
+	int segcount, soff, segrem;
 	int i, segsz, nheaders, hdrsize;
 	int refsize, count, pktrem, srci, dsti;
 	volatile uint32_t *refcnt;
@@ -1240,7 +1236,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 		dofree = true;
 
 	mh = &mprev->me_mh;
-	me = mprev->me_ents;
+
 	dupref = mh->mh_multiref;
 	if (mvec_parse_header(mprev, prehdrlen, &pi))
 		return (NULL);
@@ -1249,6 +1245,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	else
 		segsz = m->m_pkthdr.rcvif->if_mtu - pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
 	hdrsize = prehdrlen + pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
+	MPASS(hdrsize >= ETHER_HDR_LEN + sizeof(struct ip) + sizeof(struct tcphdr));
 	pktrem = m->m_pkthdr.len - hdrsize;
 	nheaders = pktrem / segsz;
 	if (nheaders*segsz != pktrem)
@@ -1258,18 +1255,13 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	mvec_seek(m, &mc, hdrsize);
 	soff = mc.mc_off;
 	srci = mc.mc_idx;
-	while (pktrem > 0) {
-		MPASS(pktrem >= segrem);
-		MPASS(srci < mprev->me_mh.mh_count);
-		if (__predict_false(me[srci].me_len == 0)) {
-			srci++;
-			continue;
-		}
-		segrem = min(pktrem, segsz);
-		do {
-			int used;
+	mesrc = &mprev->me_ents[mh->mh_start];
+	for (i = 0; i < nheaders; i++) {
+		for (segrem = min(segsz, pktrem); segrem; segcount++) {
+			int used, srem;
 
-			srem = me[srci].me_len - soff;
+			srem = mesrc[srci].me_len - soff;
+			MPASS(srem > 0);
 			used = min(segrem, srem);
 			srem -= used;
 			if (srem) {
@@ -1280,10 +1272,10 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			}
 			segrem -= used;
 			pktrem -= used;
-			segcount++;
-		} while (segrem);
+		}
 	}
 
+	MPASS(pktrem == 0);
 	count = segcount + nheaders;
 	if (mh->mh_multiref)
 		refsize = count*sizeof(void*);
@@ -1298,7 +1290,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	newmh->mh_multiref = mh->mh_multiref;
 	newmh->mh_multipkt = true;
 	newme = mnew->me_ents;
-	newme_count = MBUF2REF(mnew);
+	newme_count = (void *)(newme + newmh->mh_count);
 	__builtin_prefetch(newme_count);
 	medst_count = newme_count;
 	medst = newme;
@@ -1307,24 +1299,26 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	 * skip past header info
 	 */
 	mvec_seek(m, &mc, hdrsize);
-	mesrc = mprev->me_ents;
-	mesrc_count = MBUF2REF(m);
+	mesrc_count = (void *)(mprev->me_ents + mh->mh_count);
 	if (dupref)
-		bzero(medst_count, count*sizeof(void *));
+		bzero(medst_count, refsize);
 	/*
 	 * Packet segmentation loop
 	 */
 	srci = mc.mc_idx;
 	soff = mc.mc_off;
+	if (srci != 0)
+		mesrc_count++;
 	pktrem = m->m_pkthdr.len - hdrsize;
 	sop = true;
-	hdrbuf = ((caddr_t)(newme + count)) + refsize;
+	hdrbuf = (caddr_t)(medst_count + count);
 	/*
 	 * Replicate input header nheaders times
 	 * and update along the way
 	 */
 	bcopy(me_data(mesrc), hdrbuf, hdrsize);
 	tso_init(&state, hdrbuf, &pi, prehdrlen, hdrsize, segsz);
+	pktrem -= segsz;
 	for (i = 1; i < nheaders; i++) {
 		MPASS(pktrem > 0);
 		bcopy(hdrbuf, hdrbuf + (i*hdrsize), hdrsize);
@@ -1334,7 +1328,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	}
 	pktrem = m->m_pkthdr.len - hdrsize;
 	for (dsti = i = 0; i < nheaders; i++) {
-		int used;
+		int used, srem;
 
 		medst[dsti].me_cl = hdrbuf;
 		medst[dsti].me_len = hdrsize;
@@ -1352,6 +1346,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			 */
 			while (mesrc[srci].me_len == 0)
 				srci++;
+
 			/*
 			 * At the start of a source descriptor:
 			 * copy its attributes and, if dupref,
@@ -1394,11 +1389,8 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 			medst[dsti].me_len = used;
 		}
 	}
-	MPASS(dsti == mnew->me_mh.mh_count);
-	if (mprev->me_mh.mh_multiref)
-		MPASS(srci == mprev->me_mh.mh_count);
-	else
-		MPASS(srci <= mprev->me_mh.mh_count);
+	MPASS(dsti == count);
+	MPASS(srci == mprev->me_mh.mh_used);
 	mnew->me_mbuf.m_len = mnew->me_ents->me_len;
 	mnew->me_mbuf.m_data = (mnew->me_ents->me_cl + mnew->me_ents->me_off);
 	mnew->me_mbuf.m_pkthdr.len = m->m_pkthdr.len + (nheaders - 1)*hdrsize;
