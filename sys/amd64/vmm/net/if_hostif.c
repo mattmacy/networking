@@ -77,11 +77,14 @@ static MALLOC_DEFINE(M_HOSTIF, "hostif", "virtual private cloud interface");
 
 
 static int soft_tso;
+static uint64_t soft_tso_calls;
 static SYSCTL_NODE(_net, OID_AUTO, hostif, CTLFLAG_RD, 0,
                    "hostif parameters");
 
 SYSCTL_INT(_net_hostif, OID_AUTO, soft_tso, CTLFLAG_RW,
 		   &soft_tso, 0, "enable soft tso");
+SYSCTL_QUAD(_net_hostif, OID_AUTO, soft_tso_calls, CTLFLAG_RD,
+		   &soft_tso_calls, 0, "soft tso conversions");
 
 
 struct hostif_softc {
@@ -117,6 +120,7 @@ hostif_transmit(if_t ifp, struct mbuf *m)
 		if (__predict_false(mext == NULL))
 			return (ENOMEM);
 		if (m->m_pkthdr.csum_flags & CSUM_TSO) {
+			soft_tso_calls++;
 			m = (void*)mvec_tso(mext, 0, true);
 			if (__predict_false(m == NULL))
 				return (ENOMEM);
