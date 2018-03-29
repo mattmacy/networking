@@ -567,8 +567,8 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	struct ifnet *oifp;
 	if_ctx_t ctx;
 	struct vpcmux_softc *vs;
-	struct mbuf *mp, *mnext;
-	int lasterr, rc;
+	struct mbuf *mp;
+	int lasterr;
 
 	ctx = ifp->if_softc;
 	vs = iflib_get_softc(ctx);
