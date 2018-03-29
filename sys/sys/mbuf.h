@@ -286,9 +286,9 @@ struct mbuf {
 	};
 };
 
-#define	MVEC_MANAGED	0x0		/* cluster should be freed when refcnt goes to 0 */
-#define	MVEC_UNMANAGED	0x1		/* memory managed elsewhere */
-#define	MVEC_MBUF	0x2		/* free to mbuf zone */
+#define	MVEC_MANAGED	0x1		/* cluster should be freed when refcnt goes to 0 */
+#define	MVEC_UNMANAGED	0x2		/* memory managed elsewhere */
+#define	MVEC_MBUF	0x3		/* free to mbuf zone */
 
 #define MVALLOC_MALLOC	0x0		/* mvec was malloced with type M_MVEC */
 #define MVALLOC_MBUF	0x1		/* mvec was allocated from zone_mbuf */
