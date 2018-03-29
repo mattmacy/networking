@@ -78,6 +78,17 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_VPCP, "vpcp", "virtual machine interface port");
 
+
+static int soft_tso;
+static uint64_t soft_tso_calls;
+static SYSCTL_NODE(_net, OID_AUTO, vpcp, CTLFLAG_RD, 0,
+                   "vpcp parameters");
+
+SYSCTL_INT(_net_vpcp, OID_AUTO, soft_tso, CTLFLAG_RW,
+		   &soft_tso, 0, "enable soft tso");
+SYSCTL_QUAD(_net_vpcp, OID_AUTO, soft_tso_calls, CTLFLAG_RD,
+		   &soft_tso_calls, 0, "soft tso conversions");
+
 #define VPCI_DEBUG
 #ifdef VPCI_DEBUG
 #define  DPRINTF printf
@@ -356,6 +367,7 @@ static int
 hostif_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
 {
 	struct mbuf *mp;
+	struct mbuf_ext *mext;
 	struct vpcp_softc *vs;
 	struct ifnet *ifswitch;
 
@@ -367,6 +379,18 @@ hostif_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unu
 		mp->m_pkthdr.rcvif = vs->vs_ifport;
 		mp = m->m_nextpkt;
 	} while (mp);
+	if (soft_tso) {
+		mext = pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
+		if (__predict_false(mext == NULL))
+			return (ENOMEM);
+		if (m->m_pkthdr.csum_flags & CSUM_TSO) {
+			soft_tso_calls++;
+			m = (void*)mvec_tso(mext, 0, true);
+			if (__predict_false(m == NULL))
+				return (ENOMEM);
+		} else
+			m = (void *)mext;
+	}
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
