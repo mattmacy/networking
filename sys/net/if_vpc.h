@@ -149,9 +149,9 @@ typedef struct {
 	vpc_obj_type_t vht_obj_type:8;
 	uint64_t vht_pad2:48;
 } vpc_handle_type_t;
+#ifdef _KERNEL
 CTASSERT(sizeof(vpc_handle_type_t) == sizeof(uint64_t));
 
-#ifdef _KERNEL
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <net/art.h>
