@@ -43,7 +43,7 @@ usage(char *name)
 		   "\tlist forwarding table:\n"
 		   "\t\t%s -i <uuid> -l\n"
 		   "\tadd forwarding table entry:\n"
-		   "\t\t%s -i <uuid> -s -f <forward mac> -i <forward ip>\n"
+		   "\t\t%s -i <uuid> -s -f <forward mac> -p <forward ip>\n"
 		   "\tdelete forwarding table entry:\n"
 		   "\t\t%s -i <uuid> -d -f <forward mac>\n"
 		   "\tdelete all forwarding table entries:\n"
@@ -92,7 +92,8 @@ main(int argc, char **argv)
 	uuid = NULL;
 	fmac = default_fmac;
 	forward_ip = 0;
-	while ((ch = getopt(argc, argv, "dfil:p:s")) != -1) {
+	del = set = list = false;
+	while ((ch = getopt(argc, argv, "dfi:l:p:s")) != -1) {
 		switch (ch) {
 			case 'd':
 				del = true;
@@ -103,6 +104,7 @@ main(int argc, char **argv)
 				break;
 			case 'i':
 				uuid = optarg;
+				break;
 			case 'l':
 				list = true;
 				command = VPC_VPCMUX_OP_FTE_LIST;
