@@ -188,7 +188,14 @@ ethlink_transmit(if_t ifp, struct mbuf *m)
 	es = iflib_get_softc(ctx);
 	oifp = es->es_underlay_ifp;
 	can_batch = true;
-	if (oifp == NULL) {
+	if (bpf_peers_present(ifp->if_bpf)) {
+		mp = m;
+		do {
+			ETHER_BPF_MTAP(ifp, mp);
+			mp = mp->m_nextpkt;
+		} while (mp);
+	}
+	if (__predict_false(oifp == NULL)) {
 		m_freechain(m);
 		return (ENOBUFS);
 	}
