@@ -370,7 +370,7 @@ vpcmux_nd_lookup(struct vpcmux_softc *vs, const struct sockaddr *dst, uint8_t *e
 	int rc;
 	if_t ifp;
 
-	ifp = vs->vs_underlay_ifp;
+	ifp = ethlink_ifp_get(vs->vs_underlay_ifp->if_softc);
 	/* get dmac */
 	switch(dst->sa_family) {
 		case AF_INET:
@@ -617,6 +617,7 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	mp = mhv;
 	do {
 		MPASS(mp->m_flags & M_VXLANTAG);
+		mp = mp->m_nextpkt;
 	} while (mp != NULL);
 #endif
 	rc = vpcmux_vxlan_encap_chain(vs, &mhv);
