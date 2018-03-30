@@ -420,10 +420,7 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	m = *mp;
 	ETHER_BPF_MTAP(iflib_get_ifp(vs->vs_ctx), m);
 	*mp = NULL;
-	if (!(m->m_flags & M_VXLANTAG)) {
-		m_freem(m);
-		return (EINVAL);
-	}
+	MPASS(m->m_flags & M_VXLANTAG);
 	vpc_parse_pkt(m, &tpi);
 
 	MPASS(m->m_pkthdr.vxlanid);
@@ -453,8 +450,10 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	}
 	mh->m_pkthdr.encaplen = hdrsize;
 	if ((oldflags & CSUM_TSO) &&
-		(mh = vpcmux_header_pullup(mh, &tpi)) == NULL)
-			return (ENOMEM);
+		(mh = vpcmux_header_pullup(mh, &tpi)) == NULL) {
+		DPRINTF("vpcmux_header_pullup failed\n");
+		return (ENOMEM);
+	}
 	mh->m_pkthdr.csum_flags = CSUM_UDP;
 	mh->m_pkthdr.csum_flags |= ((oldflags & CSUM_TSO) << 2);
 	mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
@@ -525,18 +524,21 @@ vpcmux_vxlan_encap_chain(struct vpcmux_softc *vs, struct mbuf **mp)
 	struct mbuf *mh, *mt, *mnext, *m;
 	struct ifnet *ifp;
 	int rc;
+
 	vpc_epoch_begin();
 
-	mh = mt = NULL;
 	m = *mp;
-	*mp = NULL;
+	*mp = mh = mt = NULL;
 	ifp = NULL;
+	rc = 0;
 	do {
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
 		rc = vpcmux_vxlan_encap(vs, &m);
-		if (__predict_false(rc))
+		if (__predict_false(rc)) {
+			DPRINTF("encap fail in %s with %d\n", __func__, rc);
 			break;
+		}
 		if (mh == NULL) {
 			mh = mt = m;
 		} else {
@@ -611,9 +613,14 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	if (__predict_false(mhv == NULL)) {
 		return (ENOBUFS);
 	}
+#ifdef INVARIANTS
+	mp = mhv;
+	do {
+		MPASS(mp->m_flags & M_VXLANTAG);
+	} while (mp != NULL);
+#endif
 	rc = vpcmux_vxlan_encap_chain(vs, &mhv);
 	if (__predict_false(rc || mhv == NULL)) {
-		DPRINTF("encap fail in %s\n", __func__);
 		return (rc);
 	}
 	return (oifp->if_transmit_txq(oifp, mhv));
