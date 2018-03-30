@@ -184,7 +184,7 @@ safe_mvec_sanity(const struct mbuf *m __unused) {}
 #endif
 
 static void
-vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
+vpcp_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress, vpc_obj_type_t type)
 {
 	struct vpcp_softc *vs;
 	struct vpc_pkt_info vpi;
@@ -192,7 +192,7 @@ vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
 	caddr_t hdr;
 	bool filter;
 	int dir = egress ? PFIL_OUT : PFIL_IN;
-	int action;
+	int action, flags;
 	//vni = (vs->vs_flags & VS_VXLANTAG) ? vs->vs_vni : 0;
 
 	m = *m0;
@@ -200,14 +200,18 @@ vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
 	vs = iflib_get_softc(ifp->if_softc);
 	filter = (egress && (vs->vs_flags & VS_IPFW_EGRESS)) ||
 		(!egress && (vs->vs_flags & VS_IPFW_INGRESS));
+	flags = 0;
 	do {
 		mnext = m->m_nextpkt;
 		/* set mbuf flags for transmit */
 		ETHER_BPF_MTAP(ifp, m);
 		m->m_pkthdr.rcvif = ifp;
 		hdr = mtod(m, caddr_t);
-		vpc_parse_pkt(m, &vpi);
-		vmi_txflags(m, &vpi, egress);
+		if (type == VPC_OBJ_VMNIC) {
+			vpc_parse_pkt(m, &vpi);
+			vmi_txflags(m, &vpi, egress);
+			flags = egress ? M_HOLBLOCKING : 0;
+		}
 		if (filter) {
 			action = ipfw_check_frame(&m, m->m_pkthdr.rcvif, dir, vs->vs_chain);
 			if (__predict_false(action != IP_FW_PASS)) {
@@ -217,12 +221,18 @@ vmi_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress)
 		}
 		if (egress) {
 			m->m_flags |= vs->vs_mflags;
-			m->m_flags |= M_HOLBLOCKING;
+			m->m_flags |= flags;
 			m->m_pkthdr.vxlanid = vs->vs_vxlanid;
 			m->m_pkthdr.ether_vtag = vs->vs_vlanid;
 		} else {
 			if ((m->m_pkthdr.vxlanid != vs->vs_vxlanid)||
 				(m->m_pkthdr.ether_vtag != vs->vs_vlanid)) {
+				if (bootverbose) {
+					printf("source vxlanid: %d vtag: %d dest vxlanid: %d vtag: %d\n",
+						   m->m_pkthdr.vxlanid, m->m_pkthdr.ether_vtag,
+						   vs->vs_vxlanid, vs->vs_vlanid);
+
+				}
 				m_freem(m);
 				goto next;
 			}
@@ -248,7 +258,7 @@ vmi_input(if_t ifp, struct mbuf *m)
 	struct vpcp_softc *vs = iflib_get_softc(ifp->if_softc);
 	struct ifnet *devifp = vs->vs_ifdev;
 
-	vmi_input_process(vs->vs_ifport, &m, false);
+	vpcp_input_process(vs->vs_ifport, &m, false, VPC_OBJ_VMNIC);
 	if (__predict_true(m != NULL))
 		devifp->if_transmit_txq(devifp, m);
 }
@@ -261,7 +271,7 @@ vmi_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused
 
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
-	vmi_input_process(vs->vs_ifport, &m, true);
+	vpcp_input_process(vs->vs_ifport, &m, true, VPC_OBJ_VMNIC);
 	if (__predict_false(m == NULL))
 		return (0);
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
@@ -290,7 +300,7 @@ phys_input(struct ifnet *ifport, struct mbuf *m)
 		mp->m_flags &= ~M_VPCMASK;
 		mp->m_pkthdr.rcvif = NULL;
 		mp = mp->m_nextpkt;
-		ETHER_BPF_MTAP(ifdev, mp);
+		ETHER_BPF_MTAP(ifport, mp);
 	} while (mp);
 	ifdev->if_transmit_txq(ifdev, m);
 }
@@ -324,7 +334,7 @@ phys_bridge_input(if_t ifp, struct mbuf *m)
 	mp = m;
 	do {
 		mp->m_pkthdr.rcvif = vs->vs_ifport;
-		ETHER_BPF_MTAP(ifp, mp);
+		ETHER_BPF_MTAP(vs->vs_ifport, mp);
 		mp = m->m_nextpkt;
 	} while (mp);
 	ifswitch = vs->vs_ifswitch;
@@ -340,8 +350,9 @@ hostif_input(if_t ifp, struct mbuf *m)
 	struct mbuf *mp = m;
 	struct mbuf *mh, *mt, *mnew, *mnext;
 
+	vpcp_input_process(vs->vs_ifport, &mp, false, VPC_OBJ_HOSTIF);
 	mh = mt = NULL;
-	do {
+	while (mp != NULL) {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
 		if (m_ismvec(mp)) {
@@ -356,43 +367,25 @@ hostif_input(if_t ifp, struct mbuf *m)
 			mt = mp;
 		} else
 			mh = mt = mp;
-		ETHER_BPF_MTAP(ifp, mp);
 		mp->m_pkthdr.rcvif = devifp;
 	next:
 		mp = mnext;
 	} while (mp);
-
-	devifp->if_input(devifp, mh);
+	if (__predict_true(mh != NULL))
+		devifp->if_input(devifp, mh);
 }
 
 static int
 hostif_bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *s __unused, struct rtentry *r __unused)
 {
-	struct mbuf *mp;
-	struct mbuf_ext *mext;
 	struct vpcp_softc *vs;
 	struct ifnet *ifswitch;
 
 	vs = ifp->if_bridge;
 	ifswitch = vs->vs_ifswitch;
-	mp = m;
-
-	do {
-		mp->m_pkthdr.rcvif = vs->vs_ifport;
-		mp = m->m_nextpkt;
-	} while (mp);
-	if (soft_tso) {
-		mext = pktchain_to_mvec(m, ifp->if_mtu, M_NOWAIT);
-		if (__predict_false(mext == NULL))
-			return (ENOMEM);
-		if (m->m_pkthdr.csum_flags & CSUM_TSO) {
-			soft_tso_calls++;
-			m = (void*)mvec_tso(mext, 0, true);
-			if (__predict_false(m == NULL))
-				return (ENOMEM);
-		} else
-			m = (void *)mext;
-	}
+	vpcp_input_process(vs->vs_ifport, &m, true, VPC_OBJ_HOSTIF);
+	if (__predict_false(m == NULL))
+		return (0);
 	return (vpcsw_transmit_ext(ifswitch, m, vs->vs_pcpu_cache));
 }
 
