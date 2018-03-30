@@ -91,7 +91,7 @@ main(int argc, char **argv)
 	set = del = false;
 	uuid = NULL;
 	fmac = default_fmac;
-	forward_ip = 0;
+	command = forward_ip = 0;
 	del = set = list = false;
 	while ((ch = getopt(argc, argv, "df:i:lp:s")) != -1) {
 		switch (ch) {
@@ -124,6 +124,10 @@ main(int argc, char **argv)
 	}
 	if (uuid == NULL) {
 		warnx("uuid required");	
+		usage(argv[0]);
+	}
+	if ((del | set | list) == 0)  {
+		warnx("an operation must be passed");
 		usage(argv[0]);
 	}
 	if (fmac && (ea = ether_aton(fmac)) == NULL) {
