@@ -93,7 +93,7 @@ main(int argc, char **argv)
 	fmac = default_fmac;
 	forward_ip = 0;
 	del = set = list = false;
-	while ((ch = getopt(argc, argv, "dfi:l:p:s")) != -1) {
+	while ((ch = getopt(argc, argv, "df:i:lp:s")) != -1) {
 		switch (ch) {
 			case 'd':
 				del = true;
