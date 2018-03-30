@@ -815,6 +815,7 @@ mchain_to_mvec(struct mbuf *m, int how)
 	mh->mh_multiref = dupref;
 	/* leave first entry open for encap */
 	bcopy(&m->m_pkthdr, &mnew->me_mbuf.m_pkthdr, sizeof(struct pkthdr));
+	mnew->me_mbuf.m_flags |= m->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
 
 	me = mnew->me_ents;
 	me->me_cl = NULL;
