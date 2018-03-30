@@ -474,7 +474,8 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, vpc_obj_type_t type)
 			break;
 		default:
 			vs->vs_type = prevtype;
-			device_printf(iflib_get_dev(portctx), "unknown port type %d\n", type);
+			if (bootverbose)
+				device_printf(iflib_get_dev(portctx), "unknown port type %d\n", type);
 			rc = EINVAL;
 	}
 	if (rc == 0) {
@@ -577,8 +578,8 @@ vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 			if (inlen != sizeof(uint32_t))
 				goto fail;
 			vni = *(const uint32_t *)in;
-			if (vni > ((1<<24)-1))
-				goto fail;
+			if (bootverbose)
+				printf("set %s vni to %d\n", vctx->v_ifp->if_xname, ntohl(vni) >> 8);
 			vpcp_vxlanid_set(ctx, vni);
 			break;
 		}
