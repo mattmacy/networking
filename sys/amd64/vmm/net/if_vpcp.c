@@ -579,8 +579,8 @@ vpcp_ctl(vpc_ctx_t vctx, vpc_op_t op, size_t inlen, const void *in,
 				goto fail;
 			vni = *(const uint32_t *)in;
 			if (bootverbose)
-				printf("set %s vni to %d\n", vctx->v_ifp->if_xname, ntohl(vni) >> 8);
-			vpcp_vxlanid_set(ctx, vni);
+				printf("set %s vni to %d\n", vctx->v_ifp->if_xname, ntohl(vni));
+			vpcp_vxlanid_set(ctx, vni>>8);
 			break;
 		}
 		case VPC_VPCP_OP_VTAG_GET: {
