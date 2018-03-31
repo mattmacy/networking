@@ -68,7 +68,7 @@ fte_list_display(struct vpcmux_fte_list *list)
 		sin = (void *)&e->vf_protoaddr;
 		printf("\thwaddr: %s protoaddr: %s vtag: %d vni: %d\n",
 		       ether_ntoa((const struct ether_addr*)e->vf_hwaddr), inet_ntoa(sin->sin_addr),
-		       e->vf_vlanid, e->vf_vni);
+		       ntohs(e->vf_vlanid), ntohl(e->vf_vni<<8));
 	}
 }
 
@@ -202,6 +202,7 @@ main(int argc, char **argv)
 		size = sizeof(struct vpcmux_fte_list) +
 			ftelist.vfl_count*sizeof(struct vpcmux_fte);
 		ftelistp = malloc(size);
+		bzero(ftelistp, size);
 		if (ftelistp == NULL) {
 			warnx("out of memory");
 			exit(1);
