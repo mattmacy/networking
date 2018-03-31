@@ -1262,18 +1262,16 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 		for (segrem = min(segsz, pktrem); segrem; segcount++) {
 			int used, srem;
 
+			MPASS(soff <= mesrc[srci].me_len);
 			srem = mesrc[srci].me_len - soff;
-			MPASS(srem > 0);
 			used = min(segrem, srem);
-			srem -= used;
-			if (srem) {
-				soff += segrem;
-			} else {
+			soff += used;
+			segrem -= used;
+			pktrem -= used;
+			if (srem == used) {
 				srci++;
 				soff = 0;
 			}
-			segrem -= used;
-			pktrem -= used;
 		}
 	}
 
