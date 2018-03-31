@@ -716,7 +716,7 @@ mvec_pullup(struct mbuf *m, int idx, int count)
 	do {
 		menxt = &mext->me_ents[i];
 		len = min(copylen, menxt->me_len);
-		bcopy(me_data(menxt), me_data(mecur), len);
+		bcopy(me_data(menxt), me_data(mecur) + doff, len);
 		doff += len;
 		mecur->me_len += len;
 		menxt->me_off += len;
@@ -1116,6 +1116,7 @@ mvec_parse_header(struct mbuf_ext *mp, int prehdrlen, if_pkt_info_t pi)
 			break;
 		}
 		default:
+			panic("bad ethertype\n");
 			/* XXX unsupported -- error */
 			break;
 	}
@@ -1357,7 +1358,7 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 					DPRINTF("dsti: %d srci: %d sop: %d soff: %d --- setting %p to %p\n",
 						   dsti, srci, sop, soff, &medst_count[dsti], mesrc_count[srci].ext_cnt);
 					medst_count[dsti].ext_cnt = mesrc_count[srci].ext_cnt;
-					if (!dofree && (mesrc_count[srci].ext_cnt != NULL))
+					if (mesrc_count[srci].ext_cnt != NULL)
 						atomic_add_int(mesrc_count[srci].ext_cnt, 1);
 				}
 				medst[dsti].me_type = mesrc[srci].me_type;
@@ -1394,17 +1395,14 @@ mvec_tso(struct mbuf_ext *mprev, int prehdrlen, bool freesrc)
 	mnew->me_mbuf.m_len = mnew->me_ents->me_len;
 	mnew->me_mbuf.m_data = (mnew->me_ents->me_cl + mnew->me_ents->me_off);
 	mnew->me_mbuf.m_pkthdr.len = m->m_pkthdr.len + (nheaders - 1)*hdrsize;
+	mnew->me_mbuf.m_flags |= m->m_flags & (M_BCAST|M_MCAST|M_PROMISC|M_VLANTAG|M_VXLANTAG);
+	mnew->me_mbuf.m_ext.ext_buf = (void*)mnew;
 	mvec_sanity((struct mbuf *)mnew);
-	m->m_flags |= M_PROTO1;
 
 	if (dofree) {
-		if (mesrc->me_cl && (mesrc->me_type == MVEC_MBUF) && mesrc->me_len == hdrsize)
-			uma_zfree_arg(zone_mbuf, mesrc->me_cl, (void *)MB_DTOR_SKIP);
 		mnew->me_mbuf.m_ext.ext_count = 1;
-		if (!(m->m_ext.ext_flags & EXT_FLAG_EMBREF))
-			mvec_buffer_free(__containerof(refcnt, struct mbuf, m_ext.ext_count));
-		/* XXX we're leaking here */
-		mvec_buffer_free(m);
+		mnew->me_mbuf.m_ext.ext_flags |= EXT_FLAG_EMBREF;
+		mvec_free((struct mbuf_ext *)m);
 	} else {
 		if (m->m_ext.ext_flags & EXT_FLAG_EMBREF)
 			mnew->me_mbuf.m_ext.ext_cnt = m->m_ext.ext_cnt;
