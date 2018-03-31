@@ -540,7 +540,7 @@ mvec_prepend(struct mbuf *m, int size)
 	if (__predict_true(mh->mh_start)) {
 		mh->mh_start--;
 		mh->mh_used++;
-		me = MHMEI(m, mh, 0);
+		me = &mext->me_ents[mh->mh_start];
 		me->me_len = size;
 		me->me_cl = (caddr_t)data;
 		me->me_off = 0;
@@ -688,8 +688,8 @@ mvec_pullup(struct mbuf *m, int idx, int count)
 	mvec_sanity(m);
 	mext = (void *)m;
 	MPASS(count <= m->m_pkthdr.len);
-	mh = mext->me_mh;
-	mecur = &mext->me_ents[0]
+	mh = &mext->me_mh;
+	mecur = &mext->me_ents[0];
 	size = mvec_ent_size(mecur);
 	tailroom = size - mecur->me_off - mecur->me_len;
 	MPASS(tailroom >= 0);
@@ -724,8 +724,8 @@ mvec_pullup(struct mbuf *m, int idx, int count)
 		copylen -= len;
 		i++;
 	} while (copylen);
-	m->m_data = me_data(&mext->me_ents[mh->mh_first]);
-	m->m_len = mext->me_ents[mh->mh_first].me_len;
+	m->m_data = me_data(&mext->me_ents[mh->mh_start]);
+	m->m_len = mext->me_ents[mh->mh_start].me_len;
 	mvec_sanity(m);
 	return (m);
 }
