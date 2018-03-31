@@ -485,13 +485,10 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
-	if ((mh->m_pkthdr.csum_flags & CSUM_VX_TSO)
-		&& !(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
-		if (__predict_false(!m_ismvec(mh))) {
-			DPRINTF("%s failed - TSO but not MVEC\n", __func__); 
-			m_freem(mh);
-			return (EINVAL);
-		}
+	if ((mh->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
+		(mh->m_pkthdr.len > ifp->if_mtu + ETHER_HDR_LEN) &&
+		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
+		MPASS(m_ismvec(mh));
 		mh->m_pkthdr.csum_flags &= ~CSUM_VX_TSO;
 		mtmp = mvec_tso((struct mbuf_ext*)mh, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
@@ -500,9 +497,12 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 			return (ENOMEM);
 		}
 		mh = (void*)mtmp;
-	} else {
-		if (!(mh->m_pkthdr.csum_flags & CSUM_VX_TSO))
-			MPASS(mh->m_pkthdr.len - ETHER_HDR_LEN <= ifp->if_mtu);
+	} else if (!(mh->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
+			   (mh->m_pkthdr.len - ETHER_HDR_LEN > ifp->if_mtu)) {
+		DPRINTF("error: pktlen=%d > mtu + ETHER_HDR_LEN =%d\n",
+				mh->m_pkthdr.len, ifp->if_mtu + ETHER_HDR_LEN);
+		m_freem(mh);
+		mh = NULL;
 	}
 	*mp = mh;
 	return (0);
@@ -560,13 +560,14 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	if_ctx_t ctx;
 	struct vpcmux_softc *vs;
 	struct mbuf *mp, *mh, *mt, *mhv, *mtv, *mnext;
-	int rc;
+	int rc, needsconvert;
 
 	ctx = ifp->if_softc;
 	vs = iflib_get_softc(ctx);
 	oifp = vs->vs_underlay_ifp;
 	mp = m;
 	mh = mt = mhv = mtv = NULL;
+	needsconvert = false;
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
@@ -578,6 +579,8 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 				mtv = mp;
 			} else
 				mhv = mtv = mp;
+			if (!m_ismvec(mp))
+				needsconvert = true;
 		} else {
 			if (mh != NULL) {
 				mt->m_nextpkt = mp;
@@ -599,9 +602,11 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 			return (rc);
 		}
 	}
-	mhv = (void*)pktchain_to_mvec(mhv, 0, M_NOWAIT);
-	if (__predict_false(mhv == NULL)) {
-		return (ENOBUFS);
+	if (needsconvert) {
+		mhv = (void*)pktchain_to_mvec(mhv, 0, M_NOWAIT);
+		if (__predict_false(mhv == NULL)) {
+			return (ENOBUFS);
+		}
 	}
 #ifdef INVARIANTS
 	mp = mhv;
@@ -614,6 +619,14 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	if (__predict_false(rc || mhv == NULL)) {
 		return (rc);
 	}
+#ifdef INVARIANTS
+	mp = mhv;
+	do {
+		mvec_sanity(mp);
+		mp = mp->m_nextpkt;
+	} while (mp != NULL);
+#endif
+
 	return (oifp->if_transmit_txq(oifp, mhv));
 }
 
