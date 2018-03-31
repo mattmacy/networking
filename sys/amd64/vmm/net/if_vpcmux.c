@@ -208,11 +208,13 @@ vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint16_t seed)
 }
 
 static void
-vpcmux_ip_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh, struct sockaddr *dstip, int len, int mtu)
+vpcmux_ip_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh, struct sockaddr *dstip, struct mbuf *m)
 {
 	struct ip *ip;
 	struct sockaddr_in *sin;
+	int len;
 
+	len = m->m_pkthdr.len;
 	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
 	ip->ip_hl = sizeof(*ip) >> 2;
 	ip->ip_v = 4; /* v4 only now */
@@ -227,7 +229,7 @@ vpcmux_ip_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh, struct sock
 	ip->ip_src.s_addr = sin->sin_addr.s_addr;
 	sin = (struct sockaddr_in *)dstip;
 	ip->ip_dst.s_addr = sin->sin_addr.s_addr;
-	if (len <= mtu)
+	if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) == 0)
 		ip->ip_sum = in_cksum_hdr(ip);
 }
 
@@ -282,7 +284,7 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh,
 	/* arp resolve fills in dest */
 	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
 
-	vpcmux_ip_init(vf, vh, dstip, m->m_pkthdr.len, ifp->if_mtu);
+	vpcmux_ip_init(vf, vh, dstip, m);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
 	uh->uh_sport = htons(vpcmux_sport_hash(vf->vf_vs, hdr, seed));
