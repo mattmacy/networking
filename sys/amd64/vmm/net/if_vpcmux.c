@@ -336,7 +336,7 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 	/*
 	 * Is still in caching window
 	 */
-	if (__predict_false(ticks - ecp->ec_ticks < hz/4)) {
+	if (__predict_false(ticks - ecp->ec_ticks > hz/4)) {
 		ecp->ec_ticks = 0;
 		goto skip;
 	}
@@ -378,14 +378,30 @@ vpcmux_cache_update(struct mbuf *m, struct ether_vlan_header *evh)
 static int
 vpcmux_nd_lookup(struct vpcmux_softc *vs, const struct vpcmux_fte *vfte, uint8_t *ether_addr)
 {
-	int rc;
-	if_t ifp;
 	const struct sockaddr *dst;
+	struct rtentry *rt;
+	if_t ifp;
+	int rc;
 
 	if (__predict_false(vs->vs_ethlink_ifp == NULL))
 		return (EAGAIN);
 	ifp = vs->vs_ethlink_ifp;
 	dst = &vfte->vf_protoaddr;
+
+	rt = rtalloc1_fib((struct sockaddr*)(uintptr_t)dst, 0, 0, vs->vs_fibnum);
+	if (__predict_false(rt == NULL))
+		return (ENETUNREACH);
+	if (__predict_false(!(rt->rt_flags & RTF_UP) ||
+						(rt->rt_ifp == NULL) ||
+						!RT_LINK_IS_UP(rt->rt_ifp))) {
+		RTFREE_LOCKED(rt);
+		return (ENETUNREACH);
+	}
+	if (rt->rt_flags & RTF_GATEWAY)
+		dst = rt->rt_gateway;
+	else
+		RTFREE_LOCKED(rt);
+
 	/* get dmac */
 	switch(dst->sa_family) {
 		case AF_INET:
@@ -399,6 +415,8 @@ vpcmux_nd_lookup(struct vpcmux_softc *vs, const struct vpcmux_fte *vfte, uint8_t
 		default:
 			rc = EOPNOTSUPP;
 	}
+	if (dst != &vfte->vf_protoaddr)
+		RTFREE_LOCKED(rt);
 	return (rc);
 }
 
