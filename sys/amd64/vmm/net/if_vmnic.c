@@ -2008,6 +2008,12 @@ vmnic_watchdog_reset_queue(if_ctx_t ctx, uint16_t qid)
 	vb_intr_msix(vs, qid);
 }
 
+static int
+vmnic_promisc_set(if_ctx_t ctx __unused, int flags __unused)
+{
+	return (0);
+}
+
 static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_rx_queue_intr_enable, vb_if_rxq_intr_enable),
 	DEVMETHOD(ifdi_tx_queue_intr_enable, vb_if_txq_intr_enable),
@@ -2020,6 +2026,7 @@ static device_method_t vb_if_methods[] = {
 	DEVMETHOD(ifdi_init, vb_init),
 	DEVMETHOD(ifdi_stop, vb_stop),
 	DEVMETHOD(ifdi_rx_clset, vb_rx_clset),
+	DEVMETHOD(ifdi_promisc_set, vmnic_promisc_set),
 	DEVMETHOD(ifdi_update_admin_status, vb_update_admin_status),
 	DEVMETHOD_END
 };
