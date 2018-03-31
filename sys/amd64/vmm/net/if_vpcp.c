@@ -299,8 +299,8 @@ phys_input(struct ifnet *ifport, struct mbuf *m)
 	do {
 		mp->m_flags &= ~M_VPCMASK;
 		mp->m_pkthdr.rcvif = NULL;
-		mp = mp->m_nextpkt;
 		ETHER_BPF_MTAP(ifport, mp);
+		mp = mp->m_nextpkt;
 	} while (mp);
 	ifdev->if_transmit_txq(ifdev, m);
 }
