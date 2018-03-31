@@ -147,6 +147,7 @@ struct vpcmux_softc {
 	art_tree vs_vxftable; /* vxlanid -> ftable */
 	ck_epoch_record_t vs_record;
 	struct ifnet *vs_underlay_ifp;
+	struct ifnet *vs_ethlink_ifp;
 	vpc_ctx_t vs_underlay_vctx;
 };
 
@@ -208,27 +209,31 @@ vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint16_t seed)
 }
 
 static void
-vpcmux_ip_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh, struct sockaddr *dstip, struct mbuf *m)
+vpcmux_ip_init(struct vpcmux_ftable *vf, struct sockaddr *dstip, struct mbuf *m)
 {
 	struct ip *ip;
 	struct sockaddr_in *sin;
+	struct vxlan_header_l3 *vh;
 	int len;
 
 	len = m->m_pkthdr.len;
+	vh = (void *)m->m_data;
 	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
-	ip->ip_hl = sizeof(*ip) >> 2;
-	ip->ip_v = 4; /* v4 only now */
-	ip->ip_tos = 0;
 	ip->ip_len = htons(len - sizeof(struct ether_header));
-	ip->ip_id = 0;
-	ip->ip_off = htons(IP_DF);
-	ip->ip_ttl = 255;
-	ip->ip_p = IPPROTO_UDP;
 	ip->ip_sum = 0;
-	sin = (struct sockaddr_in *)&vf->vf_vs->vs_addr;
-	ip->ip_src.s_addr = sin->sin_addr.s_addr;
-	sin = (struct sockaddr_in *)dstip;
-	ip->ip_dst.s_addr = sin->sin_addr.s_addr;
+	if (vf) {
+		ip->ip_hl = sizeof(*ip) >> 2;
+		ip->ip_v = 4; /* v4 only now */
+		ip->ip_tos = 0;
+		ip->ip_id = 0;
+		ip->ip_off = htons(IP_DF);
+		ip->ip_ttl = 255;
+		ip->ip_p = IPPROTO_UDP;
+		sin = (struct sockaddr_in *)&vf->vf_vs->vs_addr;
+		ip->ip_src.s_addr = sin->sin_addr.s_addr;
+		sin = (struct sockaddr_in *)dstip;
+		ip->ip_dst.s_addr = sin->sin_addr.s_addr;
+	}
 	if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) == 0)
 		ip->ip_sum = in_cksum_hdr(ip);
 }
@@ -248,15 +253,32 @@ vpc_cksum_skip(struct mbuf *m, int len, int skip)
 		csum = 0xffff;
 	return (csum);
 }
+static void
+vpcmux_udphdr_init(struct mbuf *m)
+{
+	struct vxlan_header_l3 *vh;
+	struct udphdr *uh;
+	struct ip *ip;
+	int len;
+
+	vh = (void*)m->m_data;
+	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
+	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
+	len = m->m_pkthdr.len - sizeof(*ip) - sizeof(struct ether_header);
+	uh->uh_ulen = htons(len);
+	uh->uh_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr,
+						   htons(ip->ip_p + len));
+}
 
 static void
-vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh, 
+vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf, 
 				  struct vpcmux_fte *vfte, struct mbuf *m,
 				  caddr_t hdr, struct vpc_pkt_info *tpi)
 {
 	struct ether_header *eh;
 	struct ip *ip;
 	struct udphdr *uh;
+	struct vxlan_header_l3 *vh;
 	struct vxlan_header *vhdr;
 	struct sockaddr *dstip;
 	struct ifnet *ifp;
@@ -265,6 +287,7 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh,
 	uint16_t seed;
 	struct mvec_cursor mc;
 
+	vh = (void *)m->m_data;
 	ifp = m->m_pkthdr.rcvif;
 	MPASS(!(m->m_flags & M_EXT) || m_ismvec(m));
 	seed = 0;
@@ -284,22 +307,19 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf, struct vxlan_header_l3 *vh,
 	/* arp resolve fills in dest */
 	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
 
-	vpcmux_ip_init(vf, vh, dstip, m);
+	vpcmux_ip_init(vf, dstip, m);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
 	uh->uh_sport = htons(vpcmux_sport_hash(vf->vf_vs, hdr, seed));
 	//m->m_pkthdr.rsstype = M_HASHTYPE_OPAQUE;
 	//m->m_pkthdr.flowid = uh->uh_sport;
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
-	uh->uh_ulen = htons(len - sizeof(*ip) - sizeof(*eh));
-	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
-	uh->uh_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr,
-						   htons(ip->ip_p + len - sizeof(*eh) - sizeof(*ip)));
-
+	vpcmux_udphdr_init(m);
 	vhdr = (struct vxlan_header *)(uintptr_t)&vh->vh_vxlanhdr;
 	vhdr->vxlh_flags = htonl(VXLAN_HDR_FLAGS_VALID_VNI);
 	vhdr->vxlh_vni = vf->vf_vni;
 	if (!(ifp->if_capenable & IFCAP_TXCSUM)) {
+		ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
 		uh->uh_sum = vpc_cksum_skip(m, ntohs(ip->ip_len) + sizeof(*eh), sizeof(*ip) + sizeof(*eh));
 	}
 }
@@ -320,7 +340,6 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 		ecp->ec_ticks = 0;
 		goto skip;
 	}
-
 	/*
 	 * dmac & vxlanid match
 	 */
@@ -329,6 +348,8 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 		/* re-use last header */
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header_l3));
 		_critical_exit();
+		vpcmux_ip_init(NULL, NULL, m);
+		vpcmux_udphdr_init(m);
 		return (1);
 	}
 	skip:
@@ -361,9 +382,9 @@ vpcmux_nd_lookup(struct vpcmux_softc *vs, const struct vpcmux_fte *vfte, uint8_t
 	if_t ifp;
 	const struct sockaddr *dst;
 
-	if (vs->vs_underlay_ifp == NULL)
+	if (__predict_false(vs->vs_ethlink_ifp == NULL))
 		return (EAGAIN);
-	ifp = ethlink_ifp_get(vs->vs_underlay_ifp->if_softc);
+	ifp = vs->vs_ethlink_ifp;
 	dst = &vfte->vf_protoaddr;
 	/* get dmac */
 	switch(dst->sa_family) {
@@ -402,13 +423,13 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	struct ether_vlan_header *evh, *evhvx;
 	struct vxlan_header_l3 *vh;
 	struct mbuf_ext *mtmp;
-	struct mbuf *mh, *m;
+	struct mbuf *m;
 	struct vpcmux_ftable *vf;
 	struct vpcmux_fte *vfte;
 	struct ifnet *ifp;
 	struct vpc_pkt_info tpi;
 	uint32_t oldflags;
-	int rc, hdrsize;
+	int rc, hdrsize, pktlen;
 
 	m = *mp;
 	ETHER_BPF_MTAP(iflib_get_ifp(vs->vs_ctx), m);
@@ -420,11 +441,13 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header_l3);
 	oldflags = m->m_pkthdr.csum_flags;
+	pktlen = m->m_pkthdr.len;
 	m->m_nextpkt = NULL;
 	/* temporary */
 	if (m_ismvec(m)) {
-		mh = mvec_prepend(m, hdrsize);
+		m = mvec_prepend(m, hdrsize);
 	} else {
+		struct mbuf *mh;
 		mh = m_gethdr(M_NOWAIT, MT_NOINIT);
 		if (__predict_false(mh == NULL)) {
 			m_freem(m);
@@ -440,29 +463,33 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 		mh->m_len = hdrsize;
 		mh->m_next = m;
 		m->m_flags &= ~(M_PKTHDR|M_VXLANTAG);
+		m = mh;
 	}
-	mh->m_pkthdr.encaplen = hdrsize;
+	MPASS(m->m_pkthdr.len == pktlen + hdrsize);
+	pktlen = m->m_pkthdr.len;
+	m->m_pkthdr.encaplen = hdrsize;
 	if ((oldflags & CSUM_TSO) &&
-		(mh = vpcmux_header_pullup(mh, &tpi)) == NULL) {
+		(m = vpcmux_header_pullup(m, &tpi)) == NULL) {
 		DPRINTF("vpcmux_header_pullup failed\n");
 		return (ENOMEM);
 	}
-	mh->m_pkthdr.csum_flags = CSUM_UDP;
-	mh->m_pkthdr.csum_flags |= ((oldflags & CSUM_TSO) << 2);
-	mh->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
-	mh->m_pkthdr.rcvif = vs->vs_underlay_ifp;
+	MPASS(m->m_pkthdr.len == pktlen);
+	m->m_pkthdr.csum_flags = CSUM_UDP;
+	m->m_pkthdr.csum_flags |= ((oldflags & CSUM_TSO) << 2);
+	m->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+	m->m_pkthdr.rcvif = vs->vs_underlay_ifp;
 
-	vh = (struct vxlan_header_l3 *)mh->m_data;
+	vh = (struct vxlan_header_l3 *)m->m_data;
 	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
-	if (__predict_true(vpcmux_cache_lookup(vs, mh, evhvx))) {
-		*mp = mh;
+	if (__predict_true(vpcmux_cache_lookup(vs, m, evhvx))) {
+		*mp = m;
 		return (0);
 	}
 	/* lookup MAC->IP forwarding table */
-	vf = vpcmux_vxlanid_lookup(vs, mh->m_pkthdr.vxlanid);
+	vf = vpcmux_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
-		DPRINTF("vxlanid %d not found\n", mh->m_pkthdr.vxlanid);
-		m_freem(mh);
+		DPRINTF("vxlanid %d not found\n", m->m_pkthdr.vxlanid);
+		m_freem(m);
 		return (ENOENT);
 	}
 	/*   lookup IP using encapsulated dmac */
@@ -471,42 +498,42 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 		DPRINTF("no forwarding entry for dmac: %*D\n",
 			   ETHER_ADDR_LEN, (caddr_t)evhvx, ":");
 		vpcmux_fte_print(vs);
-		m_freem(mh);
+		m_freem(m);
 		return (rc);
 	}
 	if ((rc = vpcmux_nd_lookup(vs, vfte, evh->evl_dhost))) {
 		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
 	}
-	ifp = vs->vs_underlay_ifp;
-	mh->m_pkthdr.rcvif = ifp;
-	vpcmux_vxlanhdr_init(vf, vh, vfte, mh, (caddr_t)evhvx, &tpi);
-	vpcmux_cache_update(mh, evhvx);
+	ifp = vs->vs_ethlink_ifp;
+	m->m_pkthdr.rcvif = ifp;
+	vpcmux_vxlanhdr_init(vf, vfte, m, (caddr_t)evhvx, &tpi);
+	vpcmux_cache_update(m, evhvx);
 
-	MPASS(mh->m_pkthdr.len == m_length(mh, NULL));
+	MPASS(m->m_pkthdr.len == m_length(m, NULL));
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
-	if ((mh->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
-		(mh->m_pkthdr.len > ifp->if_mtu + ETHER_HDR_LEN) &&
+	if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
+		(m->m_pkthdr.len > ifp->if_mtu + ETHER_HDR_LEN) &&
 		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
-		MPASS(m_ismvec(mh));
-		mh->m_pkthdr.csum_flags &= ~CSUM_VX_TSO;
-		mtmp = mvec_tso((struct mbuf_ext*)mh, hdrsize, true);
+		MPASS(m_ismvec(m));
+		m->m_pkthdr.csum_flags &= ~CSUM_VX_TSO;
+		mtmp = mvec_tso((struct mbuf_ext*)m, hdrsize, true);
 		if (__predict_false(mtmp == NULL)) {
 			DPRINTF("%s mvec_tso failed\n", __func__);
-			m_freem(mh);
+			m_freem(m);
 			return (ENOMEM);
 		}
-		mh = (void*)mtmp;
-	} else if (!(mh->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
-			   (mh->m_pkthdr.len - ETHER_HDR_LEN > ifp->if_mtu)) {
+		m = (void*)mtmp;
+	} else if (!(m->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
+			   (m->m_pkthdr.len - ETHER_HDR_LEN > ifp->if_mtu)) {
 		DPRINTF("error: pktlen=%d > mtu + ETHER_HDR_LEN =%d\n",
-				mh->m_pkthdr.len, ifp->if_mtu + ETHER_HDR_LEN);
-		m_freem(mh);
-		mh = NULL;
+				m->m_pkthdr.len, ifp->if_mtu + ETHER_HDR_LEN);
+		m_freem(m);
+		m = NULL;
 	}
-	*mp = mh;
+	*mp = m;
 	return (0);
 }
 
@@ -567,9 +594,17 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	ctx = ifp->if_softc;
 	vs = iflib_get_softc(ctx);
 	oifp = vs->vs_underlay_ifp;
-	mp = m;
 	mh = mt = mhv = mtv = NULL;
 	needsconvert = false;
+	rc = 0;
+	if (__predict_false(vs->vs_ethlink_ifp == NULL)) {
+		if (oifp == NULL)
+			return (ENOBUFS);
+		vs->vs_ethlink_ifp = ethlink_ifp_get(oifp->if_softc);
+		if (vs->vs_ethlink_ifp == NULL)
+			return (ENOBUFS);
+	}
+	mp = m;
 	do {
 		mnext = mp->m_nextpkt;
 		mp->m_nextpkt = NULL;
@@ -604,6 +639,8 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 			return (rc);
 		}
 	}
+	if (__predict_false(mhv == NULL))
+		return (rc);
 	if (needsconvert) {
 		mhv = (void*)pktchain_to_mvec(mhv, 0, M_NOWAIT);
 		if (__predict_false(mhv == NULL)) {
@@ -614,6 +651,7 @@ vpcmux_transmit(if_t ifp, struct mbuf *m)
 	mp = mhv;
 	do {
 		MPASS(mp->m_flags & M_VXLANTAG);
+		MPASS(m_ismvec(mp));
 		mp = mp->m_nextpkt;
 	} while (mp != NULL);
 #endif
@@ -754,6 +792,7 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 		vmmnet_ref(vctx);
 		vs->vs_underlay_vctx = vctx;
 		vs->vs_underlay_ifp = vifp;
+		vs->vs_ethlink_ifp = ifp;
 		vifp->if_bridge_input = vpcmux_bridge_input;
 		vifp->if_bridge_output = vpcmux_bridge_output;
 		vifp->if_bridge_linkstate = vpcmux_bridge_linkstate;
