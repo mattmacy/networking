@@ -680,20 +680,22 @@ mvec_pullup(struct mbuf *m, int idx, int count)
 {
 	struct mvec_header *mh;
 	struct mvec_ent *mecur, *menxt;
+	struct mbuf_ext *mext;
 	int tailroom, size, copylen, doff, i, len;
 
 	/* XXX --- fix */
 	MPASS(idx == 0);
 	mvec_sanity(m);
+	mext = (void *)m;
 	MPASS(count <= m->m_pkthdr.len);
-	mh = MBUF2MH(m);
-	mecur = MHMEI(m, mh, 0);
+	mh = mext->me_mh;
+	mecur = &mext->me_ents[0]
 	size = mvec_ent_size(mecur);
 	tailroom = size - mecur->me_off - mecur->me_len;
 	MPASS(tailroom >= 0);
 	copylen = count - mecur->me_len;
 
-	if (__predict_false(count <= mecur->me_len))
+	if (count <= mecur->me_len)
 		return (m);
 	/*
 	 * XXX - If we're not the exclusive owner we need to allocate a new
@@ -709,12 +711,12 @@ mvec_pullup(struct mbuf *m, int idx, int count)
 		 */
 		panic("relocate data copylen=%d size=%d tailroom=%d", copylen, size, tailroom);
 	}
-	doff = mecur->me_off + mecur->me_len;
+	doff = mecur->me_len;
 	i = 1;
 	do {
-		menxt = MHMEI(m, mh, i);
+		menxt = &mext->me_ents[i];
 		len = min(copylen, menxt->me_len);
-		bcopy(ME_SEG(m, mh, i), mecur->me_cl + doff, len);
+		bcopy(me_data(menxt), me_data(mecur), len);
 		doff += len;
 		mecur->me_len += len;
 		menxt->me_off += len;
@@ -722,8 +724,8 @@ mvec_pullup(struct mbuf *m, int idx, int count)
 		copylen -= len;
 		i++;
 	} while (copylen);
-	m->m_data = ME_SEG(m, mh, 0);
-	m->m_len = ME_LEN(m, mh, 0);
+	m->m_data = me_data(&mext->me_ents[mh->mh_first]);
+	m->m_len = mext->me_ents[mh->mh_first].me_len;
 	mvec_sanity(m);
 	return (m);
 }
