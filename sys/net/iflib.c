@@ -1241,13 +1241,8 @@ prefetch2cachelines(void *x)
 int
 iflib_set_mac(if_ctx_t ctx, const uint8_t mac[ETHER_ADDR_LEN])
 {
-	uint8_t i, bits;
 	int rc;
 
-	for (bits = i = 0; i < ETHER_ADDR_LEN; i++)
-		bits |= mac[i];
-	if (bits == 0)
-		return (EINVAL);
 	if (ETHER_IS_MULTICAST(mac))
 		return (EINVAL);
 
@@ -1311,8 +1306,9 @@ iflib_set_mtu(if_ctx_t ctx, uint32_t mtu)
 	bits = if_getdrvflags(ifp);
 	/* stop the driver and free any clusters before proceeding */
 	iflib_stop(ctx);
-
-	if ((err = IFDI_MTU_SET(ctx, mtu)) == 0) {
+	if (ctx->ifc_sctx->isc_flags & IFLIB_PSEUDO) {
+		err = if_setmtu(ifp, mtu);
+	} else if ((err = IFDI_MTU_SET(ctx, mtu)) == 0) {
 		if (mtu > ctx->ifc_max_fl_buf_size)
 			ctx->ifc_flags |= IFC_MULTISEG;
 		else
@@ -4574,6 +4570,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 #endif
 	bool		avoid_reset = FALSE;
 	int		err = 0, reinit = 0, bits;
+	uint8_t mac[ETHER_ADDR_LEN];
 
 	switch (command) {
 	case SIOCSIFADDR:
@@ -4600,8 +4597,13 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		} else
 			err = ether_ioctl(ifp, command, data);
 		break;
-		case SIOCSIFMTU:
-			err = iflib_set_mtu(ctx, ifr->ifr_mtu);
+	case SIOCSIFMAC:
+		err = copyin(ifr->ifr_ifru.ifru_data, &mac, sizeof(mac));
+		if (err)
+			break;
+		err = iflib_set_mac(ctx, mac);
+	case SIOCSIFMTU:
+		err = iflib_set_mtu(ctx, ifr->ifr_mtu);
 		break;
 	case SIOCSIFFLAGS:
 		CTX_LOCK(ctx);
@@ -4609,7 +4611,8 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 			if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
 				if ((if_getflags(ifp) ^ ctx->ifc_if_flags) &
 				    (IFF_PROMISC | IFF_ALLMULTI)) {
-					err = IFDI_PROMISC_SET(ctx, if_getflags(ifp));
+					if ((ctx->ifc_sctx->isc_flags & IFLIB_PSEUDO) == 0)
+						err = IFDI_PROMISC_SET(ctx, if_getflags(ifp));
 				}
 			} else
 				reinit = 1;
