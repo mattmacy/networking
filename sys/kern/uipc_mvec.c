@@ -150,10 +150,9 @@ static void
 mvec_clfree(struct mvec_ent *me, m_refcnt_t *refcntp, bool dupref)
 {
 	bool free = true;
-	struct mbuf *mref;
-	volatile uint32_t *refcnt;
+	struct mbuf *mref = NULL;
+	volatile uint32_t *refcnt = NULL;
 
-	mref = NULL;
 	if (dupref) {
 		if (me->me_ext_flags & EXT_FLAG_EMBREF) {
 			refcnt = &refcntp->ext_count;
@@ -164,7 +163,7 @@ mvec_clfree(struct mvec_ent *me, m_refcnt_t *refcntp, bool dupref)
 	}
 	if (!free)
 		return;
-	if (!(me->me_ext_flags & EXT_FLAG_NOFREE))
+	if (refcnt && !(me->me_ext_flags & EXT_FLAG_NOFREE))
 		mref =  __containerof(refcnt, struct mbuf, m_ext.ext_count);
 
 	switch (me->me_ext_type) {
