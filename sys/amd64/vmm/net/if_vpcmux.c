@@ -132,10 +132,6 @@ struct egress_cache {
 	struct vxlan_header ec_vh;
 };
 
-struct vf_entry {
-	struct sockaddr ve_addr;
-};
-
 static struct sx vpcmux_lock;
 SX_SYSINIT(vpcmux, &vpcmux_lock, "VPC global");
 
@@ -183,26 +179,26 @@ vpcmux_vxlanid_lookup(struct vpcmux_softc *vs, uint32_t vxlanid)
 
 static int
 vpcmux_ftable_lookup(struct vpcmux_ftable *vf, struct ether_vlan_header *evh,
-				  struct sockaddr *dst)
+				  struct vpcmux_fte **pvfte)
 {
-	struct vf_entry *vfe;
+	struct vpcmux_fte *vfte;
 
-	vfe = art_search(&vf->vf_ftable, evh->evl_dhost);
-	if (__predict_false(vfe == NULL))
+	vfte = art_search(&vf->vf_ftable, evh->evl_dhost);
+	if (__predict_false(vfte == NULL))
 		return (ENOENT);
-	bcopy(&vfe->ve_addr, dst, sizeof(struct sockaddr));
+	*pvfte = vfte;
 	return (0);
 }
 
 static void
-vpcmux_ftable_insert(struct vpcmux_ftable *vf, const char *evh,
-					  const struct sockaddr *dst)
+vpcmux_ftable_insert(struct vpcmux_ftable *vf, const struct vpcmux_fte *vftenew)
 {
-	struct vf_entry *vfe;
+	struct vpcmux_fte *vfte;
 
-	vfe = malloc(sizeof(*vfe), M_VPCMUX, M_WAITOK);
-	bcopy(dst, &vfe->ve_addr, sizeof(struct sockaddr));
-	art_insert(&vf->vf_ftable, (const unsigned char *)evh, vfe);
+	vfte = malloc(sizeof(*vfte), M_VPCMUX, M_WAITOK);
+
+	bcopy(vftenew, vfte, sizeof(*vfte));
+	art_insert(&vf->vf_ftable, (const unsigned char *)vfte->vf_hwaddr, vfte);
 }
 
 static uint16_t
@@ -218,7 +214,6 @@ vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint16_t seed)
 	hash = (src ^ dst ^ seed) % range;
 	return (vs->vs_min_port + hash);
 }
-
 
 static void
 vpcmux_ip_init(struct vpcmux_ftable *vf, struct vxlan_header *vh, struct sockaddr *dstip, int len, int mtu)
@@ -370,6 +365,8 @@ vpcmux_nd_lookup(struct vpcmux_softc *vs, const struct sockaddr *dst, uint8_t *e
 	int rc;
 	if_t ifp;
 
+	if (vs->vs_underlay_ifp == NULL)
+		return (EAGAIN);
 	ifp = ethlink_ifp_get(vs->vs_underlay_ifp->if_softc);
 	/* get dmac */
 	switch(dst->sa_family) {
@@ -410,6 +407,7 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	struct mbuf_ext *mtmp;
 	struct mbuf *mh, *m;
 	struct vpcmux_ftable *vf;
+	struct vpcmux_fte *vfte;
 	struct sockaddr *dst;
 	struct route ro;
 	struct ifnet *ifp;
@@ -474,7 +472,7 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	}
 	dst = &ro.ro_dst;
 	/*   lookup IP using encapsulated dmac */
-	rc = vpcmux_ftable_lookup(vf, evhvx, dst);
+	rc = vpcmux_ftable_lookup(vf, evhvx, &vfte);
 	if (__predict_false(rc)) {
 		DPRINTF("no forwarding entry for dmac: %*D\n",
 			   ETHER_ADDR_LEN, (caddr_t)evhvx, ":");
@@ -809,8 +807,7 @@ vpcmux_fte_update(struct vpcmux_softc *vs, const struct vpcmux_fte *vfte, bool a
 	} else {
 		/* do an arp resolve on proto addr so that it's in cache */
 		(void)vpcmux_nd_lookup(vs, &vfte->vf_protoaddr, buf);
-		vpcmux_ftable_insert(ftable, (const char *)vfte->vf_hwaddr,
-							  &vfte->vf_protoaddr);
+		vpcmux_ftable_insert(ftable, vfte);
 	}
 	return (0);
 }
@@ -874,7 +871,16 @@ static int
 vpcmux_ftable_copy_callback(void *data, const unsigned char *key, uint32_t key_len, void *value)
 {
 	caddr_t *dst = data;
+#ifdef VPCMUX_DEBUG
+	struct vpcmux_fte *e = value;
+	struct sockaddr_in *sin = (void *)&e->vf_protoaddr;
+	char l3s[INET_ADDRSTRLEN];
+	printf("hwaddr: %6D protoaddr: %s vtag: %d vni: %d\n",
+		   e->vf_hwaddr, ":", inet_ntoa_r(sin->sin_addr, l3s),
+		   ntohs(e->vf_vlanid), ntohl(e->vf_vni<<8));
+#endif
 	memcpy(*dst, value, sizeof(struct vpcmux_fte));
+
 	*dst += sizeof(struct vpcmux_fte);
 	return (0);
 }
@@ -891,7 +897,7 @@ vpcmux_vxftable_copy_callback(void *data, const unsigned char *key, uint32_t key
 static int
 vpc_fte_copy(struct vpcmux_softc *vs, caddr_t *dst)
 {
-	return (art_iter(&vs->vs_vxftable, vpcmux_vxftable_copy_callback, dst));
+	return (art_iter(&vs->vs_vxftable, vpcmux_vxftable_copy_callback, &dst));
 }
 
 static int
@@ -915,7 +921,7 @@ vpcmux_fte_list(struct vpcmux_softc *vs, struct vpcmux_fte_list **vflp, size_t *
 			   count*sizeof(struct vpcmux_fte));
 	vfl = malloc(*length, M_TEMP, M_WAITOK|M_ZERO);
 	vfl->vfl_count = count;
-	vpc_fte_copy(vs, (caddr_t *)&vfl->vfl_vftes);
+	vpc_fte_copy(vs, (caddr_t *)vfl->vfl_vftes);
 	*vflp = vfl;
 	return (0);
 }
@@ -976,7 +982,7 @@ vpcmux_ctl(vpc_ctx_t ctx, vpc_op_t op, size_t inlen, const void *in,
 
 			if (inlen != sizeof(*vfte))
 				return (EBADRPC);
-			return (vpcmux_fte_update(vs, vfte, op == VPC_VPCMUX_FTE_SET));
+			return (vpcmux_fte_update(vs, vfte, op == VPC_VPCMUX_OP_FTE_SET));
 			break;
 		}
 		case VPC_VPCMUX_OP_FTE_LIST: {
