@@ -438,7 +438,7 @@ vpcmux_header_pullup(struct mbuf *mp, struct vpc_pkt_info *tpi)
 static int
 vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 {
-	struct ether_vlan_header *evh, *evhvx;
+	struct ether_vlan_header *evho, *evhi;
 	struct vxlan_header_l3 *vh;
 	struct mbuf_ext *mtmp;
 	struct mbuf *m;
@@ -455,8 +455,8 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	MPASS(m->m_flags & M_VXLANTAG);
 	vpc_parse_pkt(m, &tpi);
 
+	evhi = (struct ether_vlan_header *)m->m_data;
 	MPASS(m->m_pkthdr.vxlanid);
-	evhvx = (struct ether_vlan_header *)m->m_data;
 	hdrsize = sizeof(struct vxlan_header_l3);
 	oldflags = m->m_pkthdr.csum_flags;
 	pktlen = m->m_pkthdr.len;
@@ -486,10 +486,13 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	MPASS(m->m_pkthdr.len == pktlen + hdrsize);
 	pktlen = m->m_pkthdr.len;
 	m->m_pkthdr.encaplen = hdrsize;
-	if ((oldflags & CSUM_TSO) &&
-		(m = vpcmux_header_pullup(m, &tpi)) == NULL) {
-		DPRINTF("vpcmux_header_pullup failed\n");
-		return (ENOMEM);
+	if (oldflags & CSUM_TSO) {
+		m = vpcmux_header_pullup(m, &tpi);
+		if (__predict_false(m == NULL)) {
+			DPRINTF("vpcmux_header_pullup failed\n");
+			return (ENOMEM);
+		}
+		evhi = (void *)(m->m_data + hdrsize);
 	}
 	MPASS(m->m_pkthdr.len == pktlen);
 	m->m_pkthdr.csum_flags = CSUM_UDP;
@@ -498,8 +501,8 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	m->m_pkthdr.rcvif = vs->vs_underlay_ifp;
 
 	vh = (struct vxlan_header_l3 *)m->m_data;
-	evh = (struct ether_vlan_header *)&vh->vh_ehdr;
-	if (__predict_true(vpcmux_cache_lookup(vs, m, evhvx))) {
+	evho = (struct ether_vlan_header *)&vh->vh_ehdr;
+	if (__predict_true(vpcmux_cache_lookup(vs, m, evhi))) {
 		*mp = m;
 		return (0);
 	}
@@ -511,22 +514,22 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 		return (ENOENT);
 	}
 	/*   lookup IP using encapsulated dmac */
-	rc = vpcmux_ftable_lookup(vf, evhvx, &vfte);
+	rc = vpcmux_ftable_lookup(vf, evhi, &vfte);
 	if (__predict_false(rc)) {
 		DPRINTF("no forwarding entry for dmac: %*D\n",
-			   ETHER_ADDR_LEN, (caddr_t)evhvx, ":");
+			   ETHER_ADDR_LEN, (caddr_t)evhi, ":");
 		vpcmux_fte_print(vs);
 		m_freem(m);
 		return (rc);
 	}
-	if ((rc = vpcmux_nd_lookup(vs, vfte, evh->evl_dhost))) {
+	if ((rc = vpcmux_nd_lookup(vs, vfte, evho->evl_dhost))) {
 		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
 	}
 	ifp = vs->vs_ethlink_ifp;
 	m->m_pkthdr.rcvif = ifp;
-	vpcmux_vxlanhdr_init(vf, vfte, m, (caddr_t)evhvx, &tpi);
-	vpcmux_cache_update(m, evhvx);
+	vpcmux_vxlanhdr_init(vf, vfte, m, (caddr_t)evhi, &tpi);
+	vpcmux_cache_update(m, evhi);
 
 	MPASS(m->m_pkthdr.len == m_length(m, NULL));
 	/*
