@@ -195,16 +195,15 @@ vpcmux_ftable_insert(struct vpcmux_ftable *vf, const struct vpcmux_fte *vftenew)
 }
 
 static uint16_t
-vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint16_t seed)
+vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint32_t crcbuf[4])
 {
-	uint16_t *hdr;
-	uint16_t src, dst, hash, range;
+	uint16_t range;
+	uint32_t hash;
 
 	range = vs->vs_max_port - vs->vs_min_port;
-	hdr = (uint16_t*)data;
-	src = hdr[0] ^ hdr[1] ^ hdr[2];
-	dst = hdr[3] ^ hdr[4] ^ hdr[5];
-	hash = (src ^ dst ^ seed) % range;
+	bcopy(data, &crcbuf[1], 12);
+	hash = sse42_crc32c(0, (const unsigned char *)crcbuf, 16);
+	hash %= range;
 	return (vs->vs_min_port + hash);
 }
 
@@ -283,13 +282,13 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf,
 	struct ifnet *ifp;
 	caddr_t smac;
 	int len;
-	uint16_t seed;
+	uint32_t crcbuf[4];
 	struct mvec_cursor mc;
 
 	vh = (void *)m->m_data;
 	ifp = m->m_pkthdr.rcvif;
 	MPASS(!(m->m_flags & M_EXT) || m_ismvec(m));
-	seed = 0;
+	crcbuf[0] = 0;
 	len = m->m_pkthdr.len;
 	smac = ifp->if_hw_addr;
 	eh = &vh->vh_ehdr;
@@ -299,7 +298,7 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf,
 
 		mc.mc_idx = mc.mc_off = 0;
 		th = mvec_advance(m, &mc, m->m_pkthdr.encaplen + tpi->vpi_l2_len + tpi->vpi_l3_len);
-		seed = th->th_sport ^ th->th_dport;
+		crcbuf[0] = *(uint32_t *)&th->th_sport;
 	}
 
 	eh->ether_type = htons(ETHERTYPE_IP); /* v4 only to start */
@@ -309,7 +308,7 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf,
 	vpcmux_ip_init(vf, dstip, m);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
-	uh->uh_sport = htons(vpcmux_sport_hash(vf->vf_vs, hdr, seed));
+	uh->uh_sport = htons(vpcmux_sport_hash(vf->vf_vs, hdr, crcbuf));
 	//m->m_pkthdr.rsstype = M_HASHTYPE_OPAQUE;
 	//m->m_pkthdr.flowid = uh->uh_sport;
 	uh->uh_dport = vf->vf_vs->vs_vxlan_port;
