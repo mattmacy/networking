@@ -4656,26 +4656,47 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 	} else if (tnl_type) {
 		struct cpl_tx_tnl_lso *tnl_lso = (void *)(wr + 1);
 		int eh_type;
+		int elen;
 		struct ether_vlan_header *evh;
 
 		ctrl0 = htobe32(V_TXPKT_OPCODE(CPL_TX_PKT_XT) |
 						V_TXPKT_INTF(pi->tx_chan) |
 						V_TXPKT_PF(sc->pf));
-
-		MPASS(m0->m_pkthdr.l2hlen && m0->m_pkthdr.l3hlen);
-		evh = mtod(m0, struct ether_vlan_header *);
-		eh_type = ntohs(evh->evl_encap_proto);
-		if (eh_type == ETHERTYPE_VLAN)
-			eh_type = ntohs(evh->evl_proto);
-
 		MPASS(m0->m_pkthdr.tso_segsz);
 		cpl = (void *)(tnl_lso + 1);
 
-		/* Driver is expected to compute partial checksum that
-		 * does not include the IP Total Length.
+		MPASS(m0->m_pkthdr.l2hlen && m0->m_pkthdr.l3hlen);
+		/*
+		 * Driver is expected to compute partial checksum
+		 * that does not include the IP Total Length.
 		 */
+		evh = mtod(m0, struct ether_vlan_header *);
+		eh_type = ntohs(evh->evl_encap_proto);
+		elen = ETHER_HDR_LEN;
+		if (eh_type == ETHERTYPE_VLAN) {
+			eh_type = ntohs(evh->evl_proto);
+			elen += 4;
+		}
 		if (eh_type == ETHERTYPE_IP) {
-			struct ip *ip = (struct ip *)(m0->m_data + m0->m_pkthdr.l2hlen);
+			struct ip *ip = (struct ip *)(m0->m_data + elen);
+			ip->ip_sum = 0;
+			ip->ip_len = 0;
+			ip->ip_sum = in_cksum_hdr(ip);
+		} else {
+			MPASS(eh_type == ETHERTYPE_IPV6);
+		}
+		/*
+		 * Update underlay IP csum
+		 */
+		evh = (struct ether_vlan_header*)(m0->m_data + m0->m_pkthdr.encaplen);
+		eh_type = ntohs(evh->evl_encap_proto);
+		elen = ETHER_HDR_LEN;
+		if (eh_type == ETHERTYPE_VLAN) {
+			eh_type = ntohs(evh->evl_proto);
+			elen += 4;
+		}
+		if (eh_type == ETHERTYPE_IP) {
+			struct ip *ip = (struct ip *)(m0->m_data + elen);
 			ip->ip_sum = 0;
 			ip->ip_len = 0;
 			ip->ip_sum = in_cksum_hdr(ip);
