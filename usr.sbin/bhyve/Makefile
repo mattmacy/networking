@@ -13,7 +13,6 @@ MAN=	bhyve.8
 
 BHYVE_SYSDIR?=${SRCTOP}
 
-#	pci_nvme.c		\
 
 SRCS=	\
 	atkbdc.c		\
