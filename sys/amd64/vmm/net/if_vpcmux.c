@@ -234,8 +234,7 @@ vpcmux_ip_init(struct vpcmux_ftable *vf, struct sockaddr *dstip, struct mbuf *m)
 		sin = (struct sockaddr_in *)dstip;
 		ip->ip_dst.s_addr = sin->sin_addr.s_addr;
 	}
-	if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) == 0)
-		ip->ip_sum = in_cksum_hdr(ip);
+	ip->ip_sum = in_cksum_hdr(ip);
 }
 
 
@@ -348,8 +347,10 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 		/* re-use last header */
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header_l3));
 		_critical_exit();
-		vpcmux_ip_init(NULL, NULL, m);
-		vpcmux_udphdr_init(m);
+		if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) == 0) {
+			vpcmux_ip_init(NULL, NULL, m);
+			vpcmux_udphdr_init(m);
+		}
 		return (1);
 	}
 	skip:
@@ -440,7 +441,6 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 {
 	struct ether_vlan_header *evho, *evhi;
 	struct vxlan_header_l3 *vh;
-	struct mbuf_ext *mtmp;
 	struct mbuf *m;
 	struct vpcmux_ftable *vf;
 	struct vpcmux_fte *vfte;
@@ -450,10 +450,11 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	int rc, hdrsize, pktlen;
 
 	m = *mp;
-	ETHER_BPF_MTAP(iflib_get_ifp(vs->vs_ctx), m);
 	*mp = NULL;
+	ETHER_BPF_MTAP(iflib_get_ifp(vs->vs_ctx), m);
 	MPASS(m->m_flags & M_VXLANTAG);
 	vpc_parse_pkt(m, &tpi);
+	ifp = vs->vs_ethlink_ifp;
 
 	evhi = (struct ether_vlan_header *)m->m_data;
 	MPASS(m->m_pkthdr.vxlanid);
@@ -502,10 +503,8 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 
 	vh = (struct vxlan_header_l3 *)m->m_data;
 	evho = (struct ether_vlan_header *)&vh->vh_ehdr;
-	if (__predict_true(vpcmux_cache_lookup(vs, m, evhi))) {
-		*mp = m;
-		return (0);
-	}
+	if (__predict_true(vpcmux_cache_lookup(vs, m, evhi)))
+		goto tso_check;
 	/* lookup MAC->IP forwarding table */
 	vf = vpcmux_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
 	if (__predict_false(vf == NULL)) {
@@ -526,7 +525,6 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 		DPRINTF("%s failed in nd_lookup\n", __func__); 
 		return (rc);
 	}
-	ifp = vs->vs_ethlink_ifp;
 	m->m_pkthdr.rcvif = ifp;
 	vpcmux_vxlanhdr_init(vf, vfte, m, (caddr_t)evhi, &tpi);
 	vpcmux_cache_update(m, evhi);
@@ -535,26 +533,24 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	/*
 	 * do soft TSO if hardware doesn't support VXLAN offload
 	 */
+ tso_check:
 	if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
-		(m->m_pkthdr.len > ifp->if_mtu + ETHER_HDR_LEN) &&
-		!(ifp->if_capabilities & IFCAP_VXLANOFLD)) {
+		!(ifp->if_capabilities & IFCAP_VXTSO)) {
 		MPASS(m_ismvec(m));
-		m->m_pkthdr.csum_flags &= ~CSUM_VX_TSO;
-		mtmp = mvec_tso((struct mbuf_ext*)m, hdrsize, true);
-		if (__predict_false(mtmp == NULL)) {
+		*mp = (void *)mvec_tso((struct mbuf_ext*)m, hdrsize, true);
+		if (__predict_false(*mp == NULL)) {
 			DPRINTF("%s mvec_tso failed\n", __func__);
 			m_freem(m);
 			return (ENOMEM);
 		}
-		m = (void*)mtmp;
+		(*mp)->m_pkthdr.csum_flags &= ~(CSUM_TSO|CSUM_VX_TSO);
 	} else if (!(m->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
 			   (m->m_pkthdr.len - ETHER_HDR_LEN > ifp->if_mtu)) {
 		DPRINTF("error: pktlen=%d > mtu + ETHER_HDR_LEN =%d\n",
 				m->m_pkthdr.len, ifp->if_mtu + ETHER_HDR_LEN);
 		m_freem(m);
-		m = NULL;
-	}
-	*mp = m;
+	} else
+		*mp = m;
 	return (0);
 }
 
@@ -562,14 +558,12 @@ static int
 vpcmux_vxlan_encap_chain(struct vpcmux_softc *vs, struct mbuf **mp)
 {
 	struct mbuf *mh, *mt, *mnext, *m;
-	struct ifnet *ifp;
 	int rc;
 
 	vpc_epoch_begin();
 
 	m = *mp;
 	*mp = mh = mt = NULL;
-	ifp = NULL;
 	rc = 0;
 	do {
 		mnext = m->m_nextpkt;
