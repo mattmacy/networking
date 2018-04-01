@@ -247,9 +247,9 @@ struct if_data {
 #define	IFCAP_HWRXTSTMP		0x2000000 /* hardware rx timestamping */
 #define	IFCAP_RXMVEC		0x4000000 /* interface can produce mbuf vectors in rx */
 #define	IFCAP_VXLANDECAP	0x8000000 /* interface can do VXLAN decap */
-#define	IFCAP_VXLANOFLD		0x10000000 /* interface can do TSO/cksum w/ VXLAN encap */
-#define	IFCAP_BRIDGE_BATCH		0x20000000 /* attached bridge can batch */
 
+#define	IFCAP_BRIDGE_BATCH	0x20000000 /* attached bridge can batch */
+#define	IFCAP_VXTSO			0x40000000 /* interface can do TSO/cksum w/ VXLAN encap */
 #define IFCAP_HWCSUM_IPV6	(IFCAP_RXCSUM_IPV6 | IFCAP_TXCSUM_IPV6)
 
 #define IFCAP_HWCSUM	(IFCAP_RXCSUM | IFCAP_TXCSUM)
