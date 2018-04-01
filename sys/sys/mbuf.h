@@ -390,6 +390,8 @@ mvec_advance(const struct mbuf *m, struct mvec_cursor *mc, int offset)
 		mc->mc_idx++;
 		me++;
 	}
+	while (me->me_len == 0)
+		me++;
 	return (void *)(me_data(me) + mc->mc_off);
 }
 
