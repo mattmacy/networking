@@ -4696,7 +4696,7 @@ write_txpkt_wr(struct sge_txq *txq, struct fw_eth_tx_pkt_wr *wr,
 			elen += 4;
 		}
 		if (eh_type == ETHERTYPE_IP) {
-			struct ip *ip = (struct ip *)(m0->m_data + elen);
+			struct ip *ip = (struct ip *)(m0->m_data + m0->m_pkthdr.encaplen + elen);
 			ip->ip_sum = 0;
 			ip->ip_len = 0;
 			ip->ip_sum = in_cksum_hdr(ip);
