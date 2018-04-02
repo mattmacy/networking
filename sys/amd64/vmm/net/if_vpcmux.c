@@ -91,6 +91,13 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/in_cksum.h>
 
+static int do_hw_vxtso = 0;
+static SYSCTL_NODE(_net, OID_AUTO, vpcmux, CTLFLAG_RD, 0,
+                   "vpcmux parameters");
+SYSCTL_INT(_net_vpcmux, OID_AUTO, hw_vxtso, CTLFLAG_RW,
+		   &do_hw_vxtso, 0, "enable hw vxlan tso");
+
+
 #define	DPRINTF(...) do {								\
 	if (__predict_false(bootverbose))					\
 		printf(__VA_ARGS__);							\
@@ -537,7 +544,7 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 	 */
  tso_check:
 	if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) &&
-		!(ifp->if_capabilities & IFCAP_VXTSO)) {
+		(!(ifp->if_capabilities & IFCAP_VXTSO) || !do_hw_vxtso)) {
 		MPASS(m_ismvec(m));
 		*mp = (void *)mvec_tso((struct mbuf_ext*)m, hdrsize, true);
 		if (__predict_false(*mp == NULL)) {
