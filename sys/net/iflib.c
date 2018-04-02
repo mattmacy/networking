@@ -7265,9 +7265,11 @@ iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, bool s
 	struct udphdr *uh;
 	struct vxlan_header *vh;
 	int etype, len, vxlanid;
+	uint8_t tos;
 
 	MPASS(vxlan_port);
 	eh = mtod(m, struct ether_vlan_header *);
+	tos = 0;
 	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
 		etype = ntohs(eh->evl_proto);
 		len = ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN;
@@ -7281,6 +7283,7 @@ iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, bool s
 			struct ip *ip = (struct ip *)(((caddr_t)eh) + len);
 			if (ip->ip_p != IPPROTO_UDP)
 				return;
+			tos = ip->ip_tos;
 			uh = (struct udphdr *)((caddr_t)ip + (ip->ip_hl << 2));
 			len += ip->ip_hl << 2;
 			break;
@@ -7319,6 +7322,27 @@ iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, bool s
 		m->m_data += len;
 	} else  {
 		m_adj(m, len);
+	}
+	if (tos == 0)
+		return;
+	eh = mtod(m, struct ether_vlan_header *);
+	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
+		etype = ntohs(eh->evl_proto);
+		len = ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN;
+	} else {
+		etype = ntohs(eh->evl_encap_proto);
+		len = ETHER_HDR_LEN;
+	}
+	switch (etype) {
+#if defined(INET)
+		case ETHERTYPE_IP: {
+			struct ip *ip = (struct ip *)(((caddr_t)eh) + len);
+			ip->ip_tos = tos;
+			break;
+		}
+#endif
+		default:
+			;
 	}
 }
 #endif
