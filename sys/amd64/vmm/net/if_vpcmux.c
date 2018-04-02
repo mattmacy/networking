@@ -208,7 +208,8 @@ vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint32_t crcbuf[4])
 }
 
 static void
-vpcmux_ip_init(struct vpcmux_ftable *vf, struct sockaddr *dstip, struct mbuf *m)
+vpcmux_ip_init(struct vpcmux_ftable *vf, struct sockaddr *dstip, struct mbuf *m,
+			   struct vpc_pkt_info *vpi)
 {
 	struct ip *ip;
 	struct sockaddr_in *sin;
@@ -220,6 +221,7 @@ vpcmux_ip_init(struct vpcmux_ftable *vf, struct sockaddr *dstip, struct mbuf *m)
 	ip = (struct ip *)(uintptr_t)&vh->vh_iphdr;
 	ip->ip_len = htons(len - sizeof(struct ether_header));
 	ip->ip_sum = 0;
+	ip->ip_tos = vpi->vpi_tos;
 	if (vf) {
 		ip->ip_hl = sizeof(*ip) >> 2;
 		ip->ip_v = 4; /* v4 only now */
@@ -305,7 +307,7 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf,
 	/* arp resolve fills in dest */
 	bcopy(smac, eh->ether_shost, ETHER_ADDR_LEN);
 
-	vpcmux_ip_init(vf, dstip, m);
+	vpcmux_ip_init(vf, dstip, m, tpi);
 
 	uh = (struct udphdr*)(uintptr_t)&vh->vh_udphdr;
 	uh->uh_sport = htons(vpcmux_sport_hash(vf->vf_vs, hdr, crcbuf));
@@ -323,7 +325,8 @@ vpcmux_vxlanhdr_init(struct vpcmux_ftable *vf,
 }
 
 static int
-vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_header *evh)
+vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_header *evh,
+					struct vpc_pkt_info *vpi)
 {
 	struct egress_cache *ecp;
 
@@ -347,7 +350,7 @@ vpcmux_cache_lookup(struct vpcmux_softc *vs, struct mbuf *m, struct ether_vlan_h
 		bcopy(&ecp->ec_vh, m->m_data, sizeof(struct vxlan_header_l3));
 		_critical_exit();
 		if ((m->m_pkthdr.csum_flags & CSUM_VX_TSO) == 0) {
-			vpcmux_ip_init(NULL, NULL, m);
+			vpcmux_ip_init(NULL, NULL, m, vpi);
 			vpcmux_udphdr_init(m);
 		}
 		return (1);
@@ -502,7 +505,7 @@ vpcmux_vxlan_encap(struct vpcmux_softc *vs, struct mbuf **mp)
 
 	vh = (struct vxlan_header_l3 *)m->m_data;
 	evho = (struct ether_vlan_header *)&vh->vh_ehdr;
-	if (__predict_true(vpcmux_cache_lookup(vs, m, evhi)))
+	if (__predict_true(vpcmux_cache_lookup(vs, m, evhi, &tpi)))
 		goto tso_check;
 	/* lookup MAC->IP forwarding table */
 	vf = vpcmux_vxlanid_lookup(vs, m->m_pkthdr.vxlanid);
