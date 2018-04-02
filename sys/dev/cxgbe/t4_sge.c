@@ -173,6 +173,8 @@ TUNABLE_INT("hw.cxgbe.lro_entries", &lro_entries);
 static int lro_mbufs = 0;
 TUNABLE_INT("hw.cxgbe.lro_mbufs", &lro_mbufs);
 
+static int peak_utilization = 0;
+
 struct txpkts {
 	u_int wr_type;		/* type 0 or type 1 */
 	u_int npkt;		/* # of packets in this work request */
@@ -892,6 +894,9 @@ t4_sge_sysctls(struct adapter *sc, struct sysctl_ctx_list *ctx,
 
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "fl_pack", CTLFLAG_RD,
 	    NULL, sp->pack_boundary, "payload pack boundary (bytes)");
+
+	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "peak_utilization", CTLFLAG_RWTUN,
+	    NULL, peak_utilization, "optimize for peak throughput (with subsequent burstiness)");
 }
 
 int
@@ -2634,7 +2639,8 @@ eth_tx_mvec_multi(struct sge_txq *txq, struct mbuf *m0, int remaining, u_int *av
 		*available += reclaim_tx_descs(txq, 2*total_desc);
 		if (__predict_false(total_desc > *available)) {
 			/* give the hardware a chance to drain 12kB */
-			DELAY(1);
+			if (peak_utilization)
+				DELAY(1);
 			*available += reclaim_tx_descs(txq, 2*total_desc);
 			if (__predict_false(total_desc > *available))
 				return (1);
