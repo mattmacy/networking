@@ -127,7 +127,7 @@ const char * pci_cmds[] = {
 #define VB_RXQ_IDX 0
 #define VB_TXQ_IDX 1
 #define VMNIC_RX_BYTES_MAX (256*1024)
-
+#define VMNIC_RX_QDEPTH 256
 #define VB_TSO_SIZE		(65535 + sizeof(struct ether_vlan_header))
 #define VB_TSO_SEG_SIZE		USHRT_MAX
 #define VB_MAX_SCATTER VB_MAX_TX_SEGS
@@ -1607,6 +1607,7 @@ vb_attach_post(if_ctx_t ctx)
 	scctx->isc_min_tx_latency = 1;
 	scctx->isc_rx_mvec_enable = 1;
 	scctx->isc_txrx_budget_bytes_max = VMNIC_RX_BYTES_MAX;
+	scctx->isc_tx_qdepth = VMNIC_RX_QDEPTH;
 	/*
 	 * If interface was created by bhyve
 	 * plug everything together here
