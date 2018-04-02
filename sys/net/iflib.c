@@ -313,6 +313,7 @@ typedef struct iflib_sw_tx_desc_array {
 #define IFLIB_MAX_TX_QUEUES		128
 #define IFLIB_MAX_TX_BATCH		64
 #define IFLIB_MAX_TX_BYTES		(2*1024*1024)
+#define IFLIB_MIN_TX_BYTES		(8*1024)
 /* XXX --- make this an attach time value so we don't lose that space for !PSEUDO */
 #define IFLIB_RX_COPY_THRESH		128
 #define IFLIB_MAX_RX_REFRESH		32
@@ -2823,7 +2824,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		DBG_COUNTER_INC(rx_unavail);
 		return (false);
 	}
-	bytesmax = scctx->isc_txrx_budget_bytes_max;
+	bytesmax = scctx->isc_txrx_budget_bytes_max + IFLIB_MIN_TX_BYTES;
 	vxlan_enabled = (if_getcapenable(ifp) & IFCAP_VXLANDECAP);
 	soft_csum = (if_getcapenable(ifp) & IFCAP_RXCSUM);
 	for (budget_left = budget; (budget_left > 0) && (avail > 0) && (rx_bytes < bytesmax); budget_left--, avail--) {
@@ -4153,6 +4154,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx, uint32_t *cur
 #endif
 	do_prefetch = (ctx->ifc_flags & IFC_PREFETCH);
 	avail = TXQ_AVAIL(txq);
+	maxbytes += IFLIB_MIN_TX_BYTES;
 	for (desc_used = i = 0; i < count && avail > MAX_TX_DESC(ctx) + 2 &&
 			 *curbytes < maxbytes; i++) {
 		int pidx_prev, rem = do_prefetch ? count - i : 0;
