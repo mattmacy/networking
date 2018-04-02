@@ -265,6 +265,7 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	struct mbuf *m;
 	int eh_type, ipproto;
 	int l2len, l3len, offset, hashtmp, rc;
+	uint8_t tos;
 	const uint16_t *macp;
 	const void *l3hdr;
 	const void *l4hdr;
@@ -275,7 +276,7 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	if (m0->m_len < ETHER_HDR_LEN)
 		return (0);
 
-	offset = 0;
+	tos = offset = 0;
 	ismvec = m_ismvec(m);
 	evh = (const void*)m0->m_data;
 	macp = (const void*)m0->m_data;
@@ -312,6 +313,7 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 		hashtmp ^= ip->ip_src.s_addr ^ ip->ip_dst.s_addr;
 		l3len = ip->ip_hl << 2;
 		ipproto = ip->ip_p;
+		tos = ip->ip_tos;
 		tpi->vpi_v6 = 0;
 		break;
 	}
@@ -325,6 +327,7 @@ vpc_parse_pkt(struct mbuf *m0, struct vpc_pkt_info *tpi)
 	}
 	tpi->vpi_etype = eh_type;
 	tpi->vpi_proto = ipproto;
+	tpi->vpi_tos = tos;
 	m->m_pkthdr.l2hlen = tpi->vpi_l2_len = l2len;
 	m->m_pkthdr.l3hlen = tpi->vpi_l3_len = l3len;
 	if (l3len == 0)

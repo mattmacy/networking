@@ -177,6 +177,7 @@ struct vpc_pkt_info {
 	uint8_t vpi_l4_len;
 	uint8_t vpi_v6:1;
 	uint8_t vpi_proto:7;
+	uint8_t vpi_tos;
 };
 
 struct ck_epoch_record;
