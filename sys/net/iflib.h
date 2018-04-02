@@ -228,6 +228,7 @@ typedef struct if_softc_ctx {
 	int isc_rss_table_mask;
 	int isc_nrxqsets_max;
 	int isc_ntxqsets_max;
+	uint32_t isc_tx_qdepth;
 
 	iflib_intr_mode_t isc_intr;
 	uint16_t isc_max_frame_size; /* set at init time by driver */

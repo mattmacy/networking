@@ -314,6 +314,7 @@ typedef struct iflib_sw_tx_desc_array {
 #define IFLIB_MAX_TX_BATCH		64
 #define IFLIB_MAX_TX_BYTES		(2*1024*1024)
 #define IFLIB_MIN_TX_BYTES		(8*1024)
+#define IFLIB_DEFAULT_TX_QDEPTH	2048
 /* XXX --- make this an attach time value so we don't lose that space for !PSEUDO */
 #define IFLIB_RX_COPY_THRESH		128
 #define IFLIB_MAX_RX_REFRESH		32
@@ -4846,6 +4847,7 @@ iflib_reset_qvalues(if_ctx_t ctx)
 	main_rxq = (sctx->isc_flags & IFLIB_HAS_RXCQ) ? 1 : 0;
 
 	scctx->isc_txrx_budget_bytes_max = IFLIB_MAX_TX_BYTES;
+	scctx->isc_tx_qdepth = IFLIB_DEFAULT_TX_QDEPTH;
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */
@@ -5767,6 +5769,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 	iflib_dma_info_t ifdip;
 	uint32_t *rxqsizes = scctx->isc_rxqsizes;
 	uint32_t *txqsizes = scctx->isc_txqsizes;
+	uint32_t qdepth = scctx->isc_tx_qdepth;
 	uint8_t nrxqs = sctx->isc_nrxqs;
 	uint8_t ntxqs = sctx->isc_ntxqs;
 	int nfree_lists = sctx->isc_nfl ? sctx->isc_nfl : 1;
@@ -5774,8 +5777,8 @@ iflib_queues_alloc(if_ctx_t ctx)
 	uint64_t *paddrs;
 	struct ifmp_ring **brscp;
 
-	KASSERT(ntxqs > 0, ("number of queues per qset must be at least 1"));
-	KASSERT(nrxqs > 0, ("number of queues per qset must be at least 1"));
+	KASSERT(ntxqs > 0, ("number of tx queues per qset must be at least 1"));
+	KASSERT(nrxqs > 0, ("number of rx queues per qset must be at least 1"));
 
 	brscp = NULL;
 	txq = NULL;
@@ -5833,7 +5836,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		snprintf(txq->ift_db_mtx_name, MTX_NAME_LEN, "%s:tx(%d):db",
 			 device_get_nameunit(dev), txq->ift_id);
 
-		err = ifmp_ring_alloc(&txq->ift_br, 2048, txq, iflib_txq_drain,
+		err = ifmp_ring_alloc(&txq->ift_br, qdepth, txq, iflib_txq_drain,
 				      iflib_txq_can_drain, M_IFLIB, M_WAITOK);
 		if (err) {
 			/* XXX free any allocated rings */
