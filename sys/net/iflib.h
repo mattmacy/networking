@@ -206,7 +206,7 @@ typedef struct if_softc_ctx {
 	int isc_ntxqsets;
 	uint8_t	isc_min_tx_latency; /* disable doorbell update batching */
 	uint8_t	isc_rx_mvec_enable; /* generate mvecs on rx */
-	uint32_t isc_tx_budget_bytes_max;
+	uint32_t isc_txrx_budget_bytes_max;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_vectors;
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
