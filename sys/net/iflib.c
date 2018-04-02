@@ -2823,7 +2823,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		DBG_COUNTER_INC(rx_unavail);
 		return (false);
 	}
-	bytesmax = scctx->isc_tx_budget_bytes_max;
+	bytesmax = scctx->isc_txrx_budget_bytes_max;
 	vxlan_enabled = (if_getcapenable(ifp) & IFCAP_VXLANDECAP);
 	soft_csum = (if_getcapenable(ifp) & IFCAP_RXCSUM);
 	for (budget_left = budget; (budget_left > 0) && (avail > 0) && (rx_bytes < bytesmax); budget_left--, avail--) {
@@ -4293,7 +4293,7 @@ _task_fn_tx(void *context)
 	}
 	if (txq->ift_db_pending)
 		ifmp_ring_enqueue(txq->ift_br, (void **)&txq, 1);
-	ifmp_ring_check_drainage(txq->ift_br, TX_BATCH_SIZE, scctx->isc_tx_budget_bytes_max);
+	ifmp_ring_check_drainage(txq->ift_br, TX_BATCH_SIZE, scctx->isc_txrx_budget_bytes_max);
 	if (ctx->ifc_flags & IFC_LEGACY)
 		IFDI_INTR_ENABLE(ctx);
 	else {
@@ -4843,7 +4843,7 @@ iflib_reset_qvalues(if_ctx_t ctx)
 	main_txq = (sctx->isc_flags & IFLIB_HAS_TXCQ) ? 1 : 0;
 	main_rxq = (sctx->isc_flags & IFLIB_HAS_RXCQ) ? 1 : 0;
 
-	scctx->isc_tx_budget_bytes_max = IFLIB_MAX_TX_BYTES;
+	scctx->isc_txrx_budget_bytes_max = IFLIB_MAX_TX_BYTES;
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */
@@ -6826,7 +6826,9 @@ iflib_add_device_sysctl_pre(if_ctx_t ctx)
 	SYSCTL_ADD_U8(ctx_list, oid_list, OID_AUTO, "min_tx_latency",
 		       CTLFLAG_RWTUN, &ctx->ifc_softc_ctx.isc_min_tx_latency, 0,
                        "disable tx doorbell update batching");
-
+	SYSCTL_ADD_U32(ctx_list, oid_list, OID_AUTO, "txrx_budget_max",
+		       CTLFLAG_RWTUN, &ctx->ifc_softc_ctx.isc_txrx_budget_bytes_max, 0,
+                       "maximum bytes handled per tx/rx call");
 	/* XXX change for per-queue sizes */
 	SYSCTL_ADD_PROC(ctx_list, oid_list, OID_AUTO, "override_ntxds",
 		       CTLTYPE_STRING|CTLFLAG_RWTUN, ctx, IFLIB_NTXD_HANDLER,
