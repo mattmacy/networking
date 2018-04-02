@@ -7307,6 +7307,7 @@ iflib_vxlan_decap(struct ifnet *ifp, struct mbuf *m, uint16_t vxlan_port, bool s
 	vxlanid = vh->vxlh_vni;
 	eh = (struct ether_vlan_header *)(vh + 1);
 	m->m_flags |= M_VXLANTAG;
+	m->m_pkthdr.csum_flags |= CSUM_L3_VALID;
 	m->m_pkthdr.vxlanid = vxlanid;
 	if (__predict_true(m->m_len < len)) {
 		m->m_len -= len;
