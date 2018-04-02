@@ -36,7 +36,7 @@
 #endif
 
 struct ifmp_ring;
-typedef u_int (*mp_ring_drain_t)(struct ifmp_ring *, u_int, u_int);
+typedef u_int (*mp_ring_drain_t)(struct ifmp_ring *, u_int, u_int, u_int *, u_int);
 typedef u_int (*mp_ring_can_drain_t)(struct ifmp_ring *);
 typedef void (*mp_ring_serial_t)(struct ifmp_ring *);
 
@@ -63,8 +63,8 @@ struct ifmp_ring {
 int ifmp_ring_alloc(struct ifmp_ring **, int, void *, mp_ring_drain_t,
     mp_ring_can_drain_t, struct malloc_type *, int);
 void ifmp_ring_free(struct ifmp_ring *);
-int ifmp_ring_enqueue(struct ifmp_ring *, void **, int, int);
-void ifmp_ring_check_drainage(struct ifmp_ring *, int);
+int ifmp_ring_enqueue(struct ifmp_ring *, void **, int);
+void ifmp_ring_check_drainage(struct ifmp_ring *, int, uint32_t);
 void ifmp_ring_reset_stats(struct ifmp_ring *);
 int ifmp_ring_is_idle(struct ifmp_ring *);
 int ifmp_ring_is_stalled(struct ifmp_ring *r);

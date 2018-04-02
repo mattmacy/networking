@@ -312,6 +312,7 @@ typedef struct iflib_sw_tx_desc_array {
 #define IFLIB_MAX_TX_SEGS		128
 #define IFLIB_MAX_TX_QUEUES		128
 #define IFLIB_MAX_TX_BATCH		64
+#define IFLIB_MAX_TX_BYTES		(2*1024*1024)
 /* XXX --- make this an attach time value so we don't lose that space for !PSEUDO */
 #define IFLIB_RX_COPY_THRESH		128
 #define IFLIB_MAX_RX_REFRESH		32
@@ -722,7 +723,7 @@ static int iflib_rxd_avail(if_ctx_t ctx, iflib_rxq_t rxq, qidx_t cidx, qidx_t bu
 static int iflib_qset_structures_setup(if_ctx_t ctx);
 static int iflib_msix_init(if_ctx_t ctx);
 static int iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filterarg, int *rid, char *str);
-static void iflib_txq_check_drain(iflib_txq_t txq, int budget);
+static void iflib_txq_check_drain(iflib_txq_t txq, uint16_t budget);
 static uint32_t iflib_txq_can_drain(struct ifmp_ring *);
 static int iflib_register(if_ctx_t);
 static void iflib_init_locked(if_ctx_t ctx);
@@ -4090,10 +4091,10 @@ _ring_peek_one(struct ifmp_ring *r, int cidx, int offset, int remaining)
 }
 
 static void
-iflib_txq_check_drain(iflib_txq_t txq, int budget)
+iflib_txq_check_drain(iflib_txq_t txq, uint16_t budget)
 {
 
-	ifmp_ring_check_drainage(txq->ift_br, budget);
+	ifmp_ring_check_drainage(txq->ift_br, budget, IFLIB_MAX_TX_BYTES);
 }
 
 static uint32_t
@@ -4107,7 +4108,7 @@ iflib_txq_can_drain(struct ifmp_ring *r)
 }
 
 static uint32_t
-iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
+iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx, uint32_t *curbytes, uint32_t maxbytes)
 {
 	iflib_txq_t txq = r->cookie;
 	if_ctx_t ctx = txq->ift_ctx;
@@ -4151,7 +4152,8 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 #endif
 	do_prefetch = (ctx->ifc_flags & IFC_PREFETCH);
 	avail = TXQ_AVAIL(txq);
-	for (desc_used = i = 0; i < count && avail > MAX_TX_DESC(ctx) + 2; i++) {
+	for (desc_used = i = 0; i < count && avail > MAX_TX_DESC(ctx) + 2 &&
+			 *curbytes < maxbytes; i++) {
 		int pidx_prev, rem = do_prefetch ? count - i : 0;
 		int pktlen, is_mcast;
 
@@ -4182,6 +4184,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		pkt_sent++;
 		DBG_COUNTER_INC(tx_sent);
 		bytes_sent += pktlen;
+		*curbytes += pktlen;
 		mcast_sent += is_mcast;
 		avail = TXQ_AVAIL(txq);
 
@@ -4227,7 +4230,8 @@ iflib_txq_drain_always(struct ifmp_ring *r)
 }
 
 static uint32_t
-iflib_txq_drain_free(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
+iflib_txq_drain_free(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx,
+					 uint32_t *curbytes __unused, uint32_t maxbytes __unused)
 {
 	int i, avail;
 	struct mbuf **mp;
@@ -4260,7 +4264,7 @@ iflib_ifmp_purge(iflib_txq_t txq)
 	r->drain = iflib_txq_drain_free;
 	r->can_drain = iflib_txq_drain_always;
 
-	ifmp_ring_check_drainage(r, r->size);
+	ifmp_ring_check_drainage(r, r->size, UINT_MAX);
 
 	r->drain = iflib_txq_drain;
 	r->can_drain = iflib_txq_can_drain;
@@ -4272,6 +4276,7 @@ _task_fn_tx(void *context)
 	iflib_txq_t txq = context;
 	if_ctx_t ctx = txq->ift_ctx;
 	struct ifnet *ifp = ctx->ifc_ifp;
+	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	int rc;
 
 #ifdef IFLIB_DIAGNOSTICS
@@ -4286,8 +4291,8 @@ _task_fn_tx(void *context)
 		return;
 	}
 	if (txq->ift_db_pending)
-		ifmp_ring_enqueue(txq->ift_br, (void **)&txq, 1, TX_BATCH_SIZE);
-	ifmp_ring_check_drainage(txq->ift_br, TX_BATCH_SIZE);
+		ifmp_ring_enqueue(txq->ift_br, (void **)&txq, 1);
+	ifmp_ring_check_drainage(txq->ift_br, TX_BATCH_SIZE, scctx->isc_tx_budget_bytes_max);
 	if (ctx->ifc_flags & IFC_LEGACY)
 		IFDI_INTR_ENABLE(ctx);
 	else {
@@ -4438,14 +4443,14 @@ iflib_transmit_simple(iflib_txq_t txq, struct mbuf **m, int count)
 {
 	int err;
 
-	err = ifmp_ring_enqueue(txq->ift_br, (void **)m, count, TX_BATCH_SIZE);
+	err = ifmp_ring_enqueue(txq->ift_br, (void **)m, count);
 	GROUPTASK_ENQUEUE(&txq->ift_task);
 	if (__predict_false(err)) {
 			 /* support forthcoming later */
 #ifdef DRIVER_BACKPRESSURE
 		txq->ift_closed = TRUE;
 #endif
-		ifmp_ring_check_drainage(txq->ift_br, TX_BATCH_SIZE);
+		ifmp_ring_check_drainage(txq->ift_br, TX_BATCH_SIZE, IFLIB_MAX_TX_BYTES);
 		for (int i = 0; i < count; i++)
 			m_freem(m[i]);
 	}
@@ -4836,6 +4841,8 @@ iflib_reset_qvalues(if_ctx_t ctx)
 
 	main_txq = (sctx->isc_flags & IFLIB_HAS_TXCQ) ? 1 : 0;
 	main_rxq = (sctx->isc_flags & IFLIB_HAS_RXCQ) ? 1 : 0;
+
+	scctx->isc_tx_budget_bytes_max = IFLIB_MAX_TX_BYTES;
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */

@@ -202,10 +202,13 @@ typedef struct if_txrx {
 } *if_txrx_t;
 
 typedef struct if_softc_ctx {
-	int isc_vectors;
 	int isc_nrxqsets;
 	int isc_ntxqsets;
+	uint8_t	isc_min_tx_latency; /* disable doorbell update batching */
+	uint8_t	isc_rx_mvec_enable; /* generate mvecs on rx */
+	uint32_t isc_tx_budget_bytes_max;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
+	int isc_vectors;
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
 	int isc_ntxd[8];
 	int isc_nrxd[8];
@@ -227,8 +230,6 @@ typedef struct if_softc_ctx {
 	int isc_ntxqsets_max;
 
 	iflib_intr_mode_t isc_intr;
-	uint8_t	isc_min_tx_latency; /* disable doorbell update batching */
-	uint8_t	isc_rx_mvec_enable; /* generate mvecs on rx */
 	uint16_t isc_max_frame_size; /* set at init time by driver */
 	uint16_t isc_min_frame_size; /* set at init time by driver, only used if
 					IFLIB_NEED_ETHER_PAD is set. */
