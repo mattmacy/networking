@@ -76,6 +76,10 @@ int holdoff_tmr_idx = 2;
 SYSCTL_INT(_hw_cxgbe, OID_AUTO, nm_holdoff_tmr_idx, CTLFLAG_RWTUN,
     &holdoff_tmr_idx, 0, "Holdoff timer index for netmap rx queues.");
 
+int peak_utilization = 0;
+SYSCTL_INT(_hw_cxgbe, OID_AUTO, peak_utilization, CTLFLAG_RWTUN,
+	&peak_utilization, 0, "optimize for peak throughput (with subsequent burstiness)");
+
 /*
  * Congestion drops.
  * -1: no congestion feedback (not recommended).

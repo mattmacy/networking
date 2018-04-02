@@ -173,7 +173,7 @@ TUNABLE_INT("hw.cxgbe.lro_entries", &lro_entries);
 static int lro_mbufs = 0;
 TUNABLE_INT("hw.cxgbe.lro_mbufs", &lro_mbufs);
 
-static int peak_utilization = 0;
+extern int peak_utilization;
 
 struct txpkts {
 	u_int wr_type;		/* type 0 or type 1 */
@@ -894,9 +894,6 @@ t4_sge_sysctls(struct adapter *sc, struct sysctl_ctx_list *ctx,
 
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "fl_pack", CTLFLAG_RD,
 	    NULL, sp->pack_boundary, "payload pack boundary (bytes)");
-
-	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "peak_utilization", CTLFLAG_RWTUN,
-	    NULL, peak_utilization, "optimize for peak throughput (with subsequent burstiness)");
 }
 
 int
