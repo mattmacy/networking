@@ -2798,7 +2798,7 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 	int err, budget_left, rx_bytes, rx_pkts;
 	iflib_fl_t fl;
 	struct ifnet *ifp;
-	int vxlan_enabled, lro_enabled, soft_csum;
+	int vxlan_enabled, lro_enabled, soft_csum, bytesmax;
 	bool lro_possible = false;
 	bool v4_forwarding, v6_forwarding;
 
@@ -2823,9 +2823,10 @@ iflib_rxeof(iflib_rxq_t rxq, qidx_t budget)
 		DBG_COUNTER_INC(rx_unavail);
 		return (false);
 	}
+	bytesmax = scctx->isc_tx_budget_bytes_max;
 	vxlan_enabled = (if_getcapenable(ifp) & IFCAP_VXLANDECAP);
 	soft_csum = (if_getcapenable(ifp) & IFCAP_RXCSUM);
-	for (budget_left = budget; (budget_left > 0) && (avail > 0); budget_left--, avail--) {
+	for (budget_left = budget; (budget_left > 0) && (avail > 0) && (rx_bytes < bytesmax); budget_left--, avail--) {
 		if (__predict_false(!CTX_ACTIVE(ctx))) {
 			DBG_COUNTER_INC(rx_ctx_inactive);
 			break;
