@@ -270,6 +270,11 @@ mvec_pktlen(const struct mbuf *m, struct mvec_cursor *mc_, int pktno)
 
 	mcp = mc_ ? mc_ : &mc;
 	len = mcp->mc_off = mcp->mc_idx = 0;
+	MPASS(mc_ == NULL || m->m_next == NULL);
+	while (m->m_next) {
+		len += m->m_len;
+		m = m->m_next;
+	}
 	if (pktno >= 0) {
 		p = mvec_seek_pktno(m, mcp, 0, pktno);
 		if (__predict_false(p == NULL))
