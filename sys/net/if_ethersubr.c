@@ -1310,17 +1310,11 @@ static moduledata_t ether_mod = {
 	.name = "ether",
 };
 
-void
-ether_vlan_mtapv(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_int pktno)
-{
-	panic("XXX implmement me");
-}
-	
-void
-ether_vlan_mtap(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen)
+static void
+ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_int pktno)
 {
 	struct ether_vlan_header vlan;
-	struct mbuf mv, mb;
+	struct mbuf mv, mb, mp;
 
 	KASSERT((m->m_flags & M_VLANTAG) != 0,
 	    ("%s: vlan information not present", __func__));
@@ -1330,8 +1324,8 @@ ether_vlan_mtap(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen)
 	vlan.evl_proto = vlan.evl_encap_proto;
 	vlan.evl_encap_proto = htons(ETHERTYPE_VLAN);
 	vlan.evl_tag = htons(m->m_pkthdr.ether_vtag);
-	m->m_len -= sizeof(struct ether_header);
-	m->m_data += sizeof(struct ether_header);
+	mp.m_len = m->m_len - sizeof(struct ether_header);
+	mp.m_data = m->m_data + sizeof(struct ether_header);
 	/*
 	 * If a data link has been supplied by the caller, then we will need to
 	 * re-create a stack allocated mbuf chain with the following structure:
@@ -1343,17 +1337,31 @@ ether_vlan_mtap(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen)
 	 * Otherwise, submit the packet and vlan header via bpf_mtap2().
 	 */
 	if (data != NULL) {
-		mv.m_next = m;
+		mv.m_next = &mp;
 		mv.m_data = (caddr_t)&vlan;
 		mv.m_len = sizeof(vlan);
 		mb.m_next = &mv;
 		mb.m_data = data;
 		mb.m_len = dlen;
-		bpf_mtap(bp, &mb);
-	} else
-		bpf_mtap2(bp, &vlan, sizeof(vlan), m);
-	m->m_len += sizeof(struct ether_header);
-	m->m_data -= sizeof(struct ether_header);
+		bpf_mtapv(bp, &mb, pktno);
+	} else {
+		mv.m_next = &mp;
+		mv.m_data = (caddr_t)&vlan;
+		mv.m_len = sizeof(vlan);
+		bpf_mtapv(bp, &mv, pktno);
+	}
+}
+
+void
+ether_vlan_mtap(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen)
+{
+	ether_vlan_mtap_(bp, m, data, dlen, -1);
+}
+
+void
+ether_vlan_mtapv(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_int pktno)
+{
+	ether_vlan_mtap_(bp, m, data, dlen, pktno);
 }
 
 struct mbuf *
