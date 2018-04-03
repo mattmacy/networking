@@ -111,14 +111,15 @@ bpf_buffer_append_bytes(struct bpf_d *d, caddr_t buf, u_int offset,
 static void
 bpf_mbuf_loop(const struct mbuf *m, caddr_t dst, u_int len)
 {
+	const struct mbuf *mp = m;
 	u_int count;
 
 	while (len > 0) {
-		if (m == NULL)
+		if (mp == NULL)
 			panic("bpf_mcopy: len: %d ext_type: %d", len, (m->m_flags&M_EXT) ? m->m_ext.ext_type : -1);
-		count = min(m->m_len, len);
-		bcopy(mtod(m, void *), dst, count);
-		m = m->m_next;
+		count = min(mp->m_len, len);
+		bcopy(mtod(mp, void *), dst, count);
+		mp = mp->m_next;
 		dst += count;
 		len -= count;
 	}
