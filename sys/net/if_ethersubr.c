@@ -89,6 +89,8 @@ CTASSERT(sizeof (struct ether_header) == ETHER_ADDR_LEN * 2 + 2);
 CTASSERT(sizeof (struct ether_addr) == ETHER_ADDR_LEN);
 #endif
 
+static int do_fast_bypass;
+
 VNET_DEFINE(struct pfil_head, link_pfil_hook);	/* Packet filter hooks */
 
 /* netgraph node hooks for ng_ether(4) */
@@ -862,12 +864,12 @@ ether_input(struct ifnet *ifp, struct mbuf *m)
 
 	struct mbuf *mn;
 
-#ifdef notyet
-	if (ifp->if_bridge && (ifp->if_capabilities & IFCAP_BRIDGE_BATCH)) {
+	if (ifp->if_bridge &&
+		(ifp->if_capabilities & IFCAP_BRIDGE_BATCH) &&
+		do_fast_bypass) {
 		ether_input_bridge_batch(ifp, m);
 		return;
 	}
-#endif
 	/*
 	 * The drivers are allowed to pass in a chain of packets linked with
 	 * m_nextpkt. We split them up into separate packets here and pass
@@ -1111,7 +1113,8 @@ ether_reassign(struct ifnet *ifp, struct vnet *new_vnet, char *unused __unused)
 
 SYSCTL_DECL(_net_link);
 SYSCTL_NODE(_net_link, IFT_ETHER, ether, CTLFLAG_RW, 0, "Ethernet");
-
+SYSCTL_INT(_net_link_ether, OID_AUTO, fast_bypass, CTLFLAG_RW,
+		   &do_fast_bypass, 0, "enable loop bypass");
 #if 0
 /*
  * This is for reference.  We have a table-driven version
