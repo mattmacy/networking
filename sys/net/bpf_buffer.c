@@ -134,6 +134,13 @@ bpf_mvec_loop(const struct mbuf *m, caddr_t dst, u_int len, int pktno)
 	struct mvec_cursor mc;
 	int i, count;
 
+	if (m->m_next) {
+		count = min(m->m_len, len);
+		bcopy(mtod(m, void *), dst, count);
+		m = m->m_next;
+		dst += count;
+		len -= count;
+	}
 	mext = (const struct mbuf_ext *)m;
 	mh = &mext->me_mh;
 	me = &mext->me_ents[mh->mh_start];

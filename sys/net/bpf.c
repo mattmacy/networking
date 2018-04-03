@@ -2292,6 +2292,8 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 	mb.m_next = m;
 	mb.m_data = data;
 	mb.m_len = dlen;
+	mb.m_flags = m->m_flags;
+	mb.m_ext.ext_type = m->m_ext.ext_type;
 	pktlen += dlen;
 
 	gottime = BPF_TSTAMP_NONE;
