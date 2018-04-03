@@ -11,3 +11,4 @@ nooptions       DEADLKRES
 nooptions       FULL_BUF_TRACKING
 nooptions	DEBUG_MEMGUARD
 nooptions	KSTACK_PAGES
+options		NUMA

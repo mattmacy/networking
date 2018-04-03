@@ -241,8 +241,7 @@ device		netmap			# netmap(4) support
 device		crypto			# Required by IPSEC
 device		vmx
 
-options         NUMA
-options		MAXPHYS=(2*1024*1024)
+options		MAXPHYS=(4*1024*1024)
 options		IPFIREWALL_DEFAULT_TO_ACCEPT
 
 options		ALT_BREAK_TO_DEBUGGER
