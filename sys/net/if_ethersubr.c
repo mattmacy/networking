@@ -1311,7 +1311,7 @@ static moduledata_t ether_mod = {
 };
 
 static void
-ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_int pktno)
+ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, int pktno)
 {
 	struct ether_vlan_header vlan;
 	struct mbuf mv, mb;
@@ -1336,28 +1336,44 @@ ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_in
 	 *
 	 * Otherwise, submit the packet and vlan header via bpf_mtap2().
 	 */
+	if (m_ismvec(m)) {
+		struct mbuf_ext *mext;
+		const struct mvec_header *mh;
+
+		mext = (void *)m;
+		mh = &mext->me_mh;
+		mext->me_ents[mh->mh_start].me_len -= sizeof(struct ether_header);
+		mext->me_ents[mh->mh_start].me_off += sizeof(struct ether_header);
+
+		mv.m_flags = (m->m_flags & 0x3);
+		mv.m_ext.ext_type = m->m_ext.ext_type;
+	}
+
+	SLIST_INIT(&mv.m_pkthdr.tags);
 	if (data != NULL) {
-		mv.m_next = m;
-		mv.m_data = (caddr_t)&vlan;
-		mv.m_len = sizeof(vlan);
-		mb.m_next = &mv;
-		mb.m_data = data;
-		mb.m_len = dlen;
-		mb.m_flags = m->m_flags;
-		mb.m_ext.ext_type = m->m_ext.ext_type;
-		SLIST_INIT(&mb.m_pkthdr.tags);
-		bpf_mtapv(bp, &mb, pktno);
+		mb.m_next = m;
+		mb.m_data = (caddr_t)&vlan;
+		mb.m_len = sizeof(vlan);
+		mv.m_next = &mb;
+		mv.m_data = data;
+		mv.m_len = dlen;
 	} else {
 		mv.m_next = m;
 		mv.m_data = (caddr_t)&vlan;
 		mv.m_len = sizeof(vlan);
-		mv.m_flags = m->m_flags;
-		mv.m_ext.ext_type = m->m_ext.ext_type;
-		SLIST_INIT(&mv.m_pkthdr.tags);
-		bpf_mtapv(bp, &mv, pktno);
 	}
+	bpf_mtapv(bp, &mv, pktno);
 	m->m_len += sizeof(struct ether_header);
 	m->m_data -= sizeof(struct ether_header);
+	if (m_ismvec(m)) {
+		struct mbuf_ext *mext;
+		const struct mvec_header *mh;
+
+		mext = (void *)m;
+		mh = &mext->me_mh;
+		mext->me_ents[mh->mh_start].me_len += sizeof(struct ether_header);
+		mext->me_ents[mh->mh_start].me_off -= sizeof(struct ether_header);
+	}
 }
 
 void
@@ -1367,7 +1383,7 @@ ether_vlan_mtap(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen)
 }
 
 void
-ether_vlan_mtapv(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_int pktno)
+ether_vlan_mtapv(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, int pktno)
 {
 	ether_vlan_mtap_(bp, m, data, dlen, pktno);
 }

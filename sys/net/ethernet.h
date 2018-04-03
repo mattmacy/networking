@@ -417,7 +417,7 @@ extern	char *ether_sprintf(const u_int8_t *);
 void	ether_vlan_mtap(struct bpf_if *, struct mbuf *,
 	    void *, u_int);
 void	ether_vlan_mtapv(struct bpf_if *, struct mbuf *,
-		void *, u_int, u_int);
+		void *, u_int, int);
 struct mbuf  *ether_vlanencap(struct mbuf *, uint16_t);
 
 #ifdef _SYS_EVENTHANDLER_H_
