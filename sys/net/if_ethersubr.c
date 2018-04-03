@@ -1343,11 +1343,15 @@ ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_in
 		mb.m_next = &mv;
 		mb.m_data = data;
 		mb.m_len = dlen;
+		mb.m_flags = m->m_flags;
+		mb.m_ext.ext_type = m->m_ext.ext_type;
 		bpf_mtapv(bp, &mb, pktno);
 	} else {
 		mv.m_next = &mp;
 		mv.m_data = (caddr_t)&vlan;
 		mv.m_len = sizeof(vlan);
+		mv.m_flags = m->m_flags;
+		mv.m_ext.ext_type = m->m_ext.ext_type;
 		bpf_mtapv(bp, &mv, pktno);
 	}
 }
