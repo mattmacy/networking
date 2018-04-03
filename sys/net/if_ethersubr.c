@@ -1314,7 +1314,7 @@ static void
 ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_int pktno)
 {
 	struct ether_vlan_header vlan;
-	struct mbuf mv, mb, mp;
+	struct mbuf mv, mb;
 
 	KASSERT((m->m_flags & M_VLANTAG) != 0,
 	    ("%s: vlan information not present", __func__));
@@ -1324,8 +1324,8 @@ ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_in
 	vlan.evl_proto = vlan.evl_encap_proto;
 	vlan.evl_encap_proto = htons(ETHERTYPE_VLAN);
 	vlan.evl_tag = htons(m->m_pkthdr.ether_vtag);
-	mp.m_len = m->m_len - sizeof(struct ether_header);
-	mp.m_data = m->m_data + sizeof(struct ether_header);
+	m->m_len -= sizeof(struct ether_header);
+	m->m_data += sizeof(struct ether_header);
 	/*
 	 * If a data link has been supplied by the caller, then we will need to
 	 * re-create a stack allocated mbuf chain with the following structure:
@@ -1337,7 +1337,7 @@ ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_in
 	 * Otherwise, submit the packet and vlan header via bpf_mtap2().
 	 */
 	if (data != NULL) {
-		mv.m_next = &mp;
+		mv.m_next = m;
 		mv.m_data = (caddr_t)&vlan;
 		mv.m_len = sizeof(vlan);
 		mb.m_next = &mv;
@@ -1347,13 +1347,15 @@ ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_in
 		mb.m_ext.ext_type = m->m_ext.ext_type;
 		bpf_mtapv(bp, &mb, pktno);
 	} else {
-		mv.m_next = &mp;
+		mv.m_next = m;
 		mv.m_data = (caddr_t)&vlan;
 		mv.m_len = sizeof(vlan);
 		mv.m_flags = m->m_flags;
 		mv.m_ext.ext_type = m->m_ext.ext_type;
 		bpf_mtapv(bp, &mv, pktno);
 	}
+	m->m_len += sizeof(struct ether_header);
+	m->m_data -= sizeof(struct ether_header);
 }
 
 void
