@@ -261,9 +261,9 @@ mvec_seek_pktno(const struct mbuf *m, struct mvec_cursor *mc, int offset, uint16
 uint32_t
 mvec_pktlen(const struct mbuf *m, struct mvec_cursor *mc_, int pktno)
 {
-	const struct mbuf_ext *mext = (const struct mbuf_ext *)m;
-	const struct mvec_ent *me = mext->me_ents;
-	const struct mvec_header *mh = &mext->me_mh;
+	const struct mbuf_ext *mext;
+	const struct mvec_ent *me;
+	const struct mvec_header *mh;
 	struct mvec_cursor mc, *mcp;
 	int i, len, maxsegs;
 	void *p;
@@ -275,6 +275,10 @@ mvec_pktlen(const struct mbuf *m, struct mvec_cursor *mc_, int pktno)
 		len += m->m_len;
 		m = m->m_next;
 	}
+	mext = (const struct mbuf_ext *)m;
+	me = mext->me_ents;
+	mh = &mext->me_mh;
+	MPASS(len < 128);
 	if (pktno >= 0) {
 		p = mvec_seek_pktno(m, mcp, 0, pktno);
 		if (__predict_false(p == NULL))
