@@ -1345,6 +1345,7 @@ ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_in
 		mb.m_len = dlen;
 		mb.m_flags = m->m_flags;
 		mb.m_ext.ext_type = m->m_ext.ext_type;
+		SLIST_INIT(mb.m_pkthdr.tags);
 		bpf_mtapv(bp, &mb, pktno);
 	} else {
 		mv.m_next = m;
@@ -1352,6 +1353,7 @@ ether_vlan_mtap_(struct bpf_if *bp, struct mbuf *m, void *data, u_int dlen, u_in
 		mv.m_len = sizeof(vlan);
 		mv.m_flags = m->m_flags;
 		mv.m_ext.ext_type = m->m_ext.ext_type;
+		SLIST_INIT(mv.m_pkthdr.tags);
 		bpf_mtapv(bp, &mv, pktno);
 	}
 	m->m_len += sizeof(struct ether_header);
