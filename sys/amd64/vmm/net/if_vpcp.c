@@ -227,12 +227,6 @@ vpcp_input_process(struct ifnet *ifp, struct mbuf **m0, bool egress, vpc_obj_typ
 		} else {
 			if ((m->m_pkthdr.vxlanid != vs->vs_vxlanid)||
 				(m->m_pkthdr.ether_vtag != vs->vs_vlanid)) {
-				if (bootverbose) {
-					printf("source vxlanid: %d vtag: %d dest vxlanid: %d vtag: %d\n",
-						   m->m_pkthdr.vxlanid, m->m_pkthdr.ether_vtag,
-						   vs->vs_vxlanid, vs->vs_vlanid);
-
-				}
 				m_freem(m);
 				goto next;
 			}
