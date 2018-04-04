@@ -92,10 +92,13 @@ __FBSDID("$FreeBSD$");
 #include <machine/in_cksum.h>
 
 static int do_hw_vxtso = 0;
+static uint16_t source_port_range;
 static SYSCTL_NODE(_net, OID_AUTO, vpcmux, CTLFLAG_RD, 0,
                    "vpcmux parameters");
 SYSCTL_INT(_net_vpcmux, OID_AUTO, hw_vxtso, CTLFLAG_RW,
 		   &do_hw_vxtso, 0, "enable hw vxlan tso");
+SYSCTL_U16(_net_vpcmux, OID_AUTO, source_port_range, CTLFLAG_RW,
+		   &source_port_range, 0, "narrow source port range");
 
 
 #define	DPRINTF(...) do {								\
@@ -206,12 +209,18 @@ vpcmux_sport_hash(struct vpcmux_softc *vs, caddr_t data, uint32_t crcbuf[4])
 {
 	uint16_t range;
 	uint32_t hash;
+	uint16_t hash16, *hash16p;
 
-	range = vs->vs_max_port - vs->vs_min_port;
+	if (source_port_range)
+		range = source_port_range;
+	else
+		range = vs->vs_max_port - vs->vs_min_port - 2;
 	bcopy(data, &crcbuf[1], 12);
 	hash = sse42_crc32c(0, (const unsigned char *)crcbuf, 16);
-	hash %= range;
-	return (vs->vs_min_port + hash);
+	hash16p = (uint16_t*)&hash;
+	hash16 = hash16p[0] ^ hash16p[1];
+	hash16 %= range;
+	return (vs->vs_min_port + hash16);
 }
 
 static void
