@@ -849,7 +849,7 @@ ether_input_bridge_batch(struct ifnet *ifp, struct mbuf *m)
 			mt->m_nextpkt = mp;
 			mt = mp;
 		} else
-			mh = mt = NULL;
+			mh = mt = mp;
 	next:
 		mp = mnext;
 	} while (mp != NULL);
@@ -864,9 +864,9 @@ ether_input(struct ifnet *ifp, struct mbuf *m)
 
 	struct mbuf *mn;
 
-	if (ifp->if_bridge &&
-		(ifp->if_capabilities & IFCAP_BRIDGE_BATCH) &&
-		do_fast_bypass) {
+	if (!!(ifp->if_capabilities & IFCAP_BRIDGE_BATCH) &
+		!!do_fast_bypass) {
+		MPASS(ifp->if_bridge != NULL);
 		ether_input_bridge_batch(ifp, m);
 		return;
 	}
