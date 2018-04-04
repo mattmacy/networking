@@ -89,7 +89,7 @@ CTASSERT(sizeof (struct ether_header) == ETHER_ADDR_LEN * 2 + 2);
 CTASSERT(sizeof (struct ether_addr) == ETHER_ADDR_LEN);
 #endif
 
-static int do_fast_bypass;
+static int do_fast_bypass = 1;
 
 VNET_DEFINE(struct pfil_head, link_pfil_hook);	/* Packet filter hooks */
 
@@ -864,8 +864,7 @@ ether_input(struct ifnet *ifp, struct mbuf *m)
 
 	struct mbuf *mn;
 
-	if (!!(ifp->if_capabilities & IFCAP_BRIDGE_BATCH) &
-		!!do_fast_bypass) {
+	if (!!(ifp->if_capabilities & IFCAP_BRIDGE_BATCH) & !!do_fast_bypass) {
 		MPASS(ifp->if_bridge != NULL);
 		ether_input_bridge_batch(ifp, m);
 		return;
