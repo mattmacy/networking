@@ -439,6 +439,8 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, vpc_obj_type_t type)
 			ifp->if_bridge_linkstate = vpcp_stub_linkstate;
 			if (vs->vs_ifdev) {
 				ifdev = vs->vs_ifdev;
+				ifdev->if_capabilities &= ~IFCAP_BRIDGE_BATCH;
+				wmb();
 				ifdev->if_bridge = NULL;
 				wmb();
 				vpcsw_port_disconnect(switchctx, ifp);
@@ -480,6 +482,8 @@ vpcp_port_type_set(if_ctx_t portctx, vpc_ctx_t vctx, vpc_obj_type_t type)
 			ifdev->if_bridge_linkstate = vpcp_stub_linkstate;
 			wmb();
 			ifdev->if_bridge = vs;
+			wmb();
+			ifdev->if_capabilities |= IFCAP_BRIDGE_BATCH;
 			vpcsw_port_connect(switchctx, ifp, ifdev);
 			iflib_link_state_change(vs->vs_ctx, LINK_STATE_UP, baudrate);
 			if_ref(ifdev);

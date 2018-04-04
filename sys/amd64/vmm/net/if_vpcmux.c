@@ -817,6 +817,7 @@ vpcmux_underlay_connect(struct vpcmux_softc *vs, const vpc_id_t *id)
 		vs->vs_underlay_vctx = vctx;
 		vs->vs_underlay_ifp = vifp;
 		vs->vs_ethlink_ifp = ifp;
+		vifp->if_capabilities |= IFCAP_BRIDGE_BATCH;
 		vifp->if_bridge_input = vpcmux_bridge_input;
 		vifp->if_bridge_output = vpcmux_bridge_output;
 		vifp->if_bridge_linkstate = vpcmux_bridge_linkstate;
@@ -836,6 +837,7 @@ vpcmux_underlay_disconnect(struct vpcmux_softc *vs)
 		ifr.ifr_index = 0;
 		ifp = vs->vs_underlay_ifp;
 		(void)ifp->if_ioctl(ifp, SIOCSIFVXLANPORT, (caddr_t)&ifr);
+		ifp->if_capabilities &= ~IFCAP_BRIDGE_BATCH;
 		ifp->if_bridge = NULL;
 		ifp->if_bridge_input = NULL;
 		ifp->if_bridge_output = NULL;
