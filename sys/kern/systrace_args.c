@@ -3291,6 +3291,27 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 3;
 		break;
 	}
+	/* iflib_open */
+	case 578: {
+		struct iflib_open_args *p = params;
+		uarg[0] = (intptr_t) p->if_id; /* const void * */
+		iarg[1] = p->obj_type; /* iflib_type_t */
+		iarg[2] = p->flags; /* iflib_flags_t */
+		*n_args = 3;
+		break;
+	}
+	/* iflib_ctl */
+	case 579: {
+		struct iflib_ctl_args *p = params;
+		iarg[0] = p->ifd; /* int */
+		iarg[1] = p->op; /* iflib_op_t */
+		uarg[2] = p->innbyte; /* size_t */
+		uarg[3] = (intptr_t) p->in; /* const void * */
+		uarg[4] = (intptr_t) p->outnbyte; /* size_t * */
+		uarg[5] = (intptr_t) p->out; /* void * */
+		*n_args = 6;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -8777,6 +8798,47 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* iflib_open */
+	case 578:
+		switch(ndx) {
+		case 0:
+			p = "userland const void *";
+			break;
+		case 1:
+			p = "iflib_type_t";
+			break;
+		case 2:
+			p = "iflib_flags_t";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* iflib_ctl */
+	case 579:
+		switch(ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "iflib_op_t";
+			break;
+		case 2:
+			p = "size_t";
+			break;
+		case 3:
+			p = "userland const void *";
+			break;
+		case 4:
+			p = "userland size_t *";
+			break;
+		case 5:
+			p = "userland void *";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -10665,6 +10727,16 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* getrandom */
 	case 563:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* iflib_open */
+	case 578:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* iflib_ctl */
+	case 579:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

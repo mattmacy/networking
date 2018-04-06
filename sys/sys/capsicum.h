@@ -212,11 +212,20 @@
 	 CAP_GETSOCKOPT | CAP_LISTEN | CAP_PEELOFF | CAP_RECV | CAP_SEND | \
 	 CAP_SETSOCKOPT | CAP_SHUTDOWN)
 
+/* iflib descriptor unprivileged read */
+#define	CAP_IFLIB_READ		CAPRIGHT(0, 0x0000080000000000ULL)
+/* iflib descriptor unprivileged write */
+#define	CAP_IFLIB_WRITE		CAPRIGHT(0, 0x0000100000000000ULL)
+/* iflib descriptor privileged read */
+#define	CAP_IFLIB_PRIVREAD		CAPRIGHT(0, 0x0000200000000000ULL)
+/* iflib descriptor privileged write */
+#define	CAP_IFLIB_PRIVWRITE		CAPRIGHT(0, 0x0000400000000000ULL)
+
 /* All used bits for index 0. */
-#define	CAP_ALL0		CAPRIGHT(0, 0x000007FFFFFFFFFFULL)
+#define	CAP_ALL0		CAPRIGHT(0, 0x00007FFFFFFFFFFFULL)
 
 /* Available bits for index 0. */
-#define	CAP_UNUSED0_44		CAPRIGHT(0, 0x0000080000000000ULL)
+#define	CAP_UNUSED0_48		CAPRIGHT(0, 0x0000800000000000ULL)
 /* ... */
 #define	CAP_UNUSED0_57		CAPRIGHT(0, 0x0100000000000000ULL)
 

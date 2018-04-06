@@ -85,6 +85,12 @@ typedef	__cpuwhich_t	cpuwhich_t;
 typedef	__cpulevel_t	cpulevel_t;
 typedef	__cpusetid_t	cpusetid_t;
 
+typedef __if_id_t		if_id_t;
+typedef __iflib_type_t		iflib_type_t;
+typedef __iflib_flags_t		iflib_flags_t;
+typedef __iflib_op_t		iflib_op_t;
+
+
 #ifndef _BLKCNT_T_DECLARED
 typedef	__blkcnt_t	blkcnt_t;
 #define	_BLKCNT_T_DECLARED

@@ -1773,6 +1773,19 @@ struct getrandom_args {
 	char buflen_l_[PADL_(size_t)]; size_t buflen; char buflen_r_[PADR_(size_t)];
 	char flags_l_[PADL_(unsigned int)]; unsigned int flags; char flags_r_[PADR_(unsigned int)];
 };
+struct iflib_open_args {
+	char if_id_l_[PADL_(const void *)]; const void * if_id; char if_id_r_[PADR_(const void *)];
+	char obj_type_l_[PADL_(iflib_type_t)]; iflib_type_t obj_type; char obj_type_r_[PADR_(iflib_type_t)];
+	char flags_l_[PADL_(iflib_flags_t)]; iflib_flags_t flags; char flags_r_[PADR_(iflib_flags_t)];
+};
+struct iflib_ctl_args {
+	char ifd_l_[PADL_(int)]; int ifd; char ifd_r_[PADR_(int)];
+	char op_l_[PADL_(iflib_op_t)]; iflib_op_t op; char op_r_[PADR_(iflib_op_t)];
+	char innbyte_l_[PADL_(size_t)]; size_t innbyte; char innbyte_r_[PADR_(size_t)];
+	char in_l_[PADL_(const void *)]; const void * in; char in_r_[PADR_(const void *)];
+	char outnbyte_l_[PADL_(size_t *)]; size_t * outnbyte; char outnbyte_r_[PADR_(size_t *)];
+	char out_l_[PADL_(void *)]; void * out; char out_r_[PADR_(void *)];
+};
 int	nosys(struct thread *, struct nosys_args *);
 void	sys_sys_exit(struct thread *, struct sys_exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
@@ -2154,6 +2167,8 @@ int	sys_kevent(struct thread *, struct kevent_args *);
 int	sys_cpuset_getdomain(struct thread *, struct cpuset_getdomain_args *);
 int	sys_cpuset_setdomain(struct thread *, struct cpuset_setdomain_args *);
 int	sys_getrandom(struct thread *, struct getrandom_args *);
+int	sys_iflib_open(struct thread *, struct iflib_open_args *);
+int	sys_iflib_ctl(struct thread *, struct iflib_ctl_args *);
 
 #ifdef COMPAT_43
 
@@ -3047,6 +3062,8 @@ int	freebsd11_mknodat(struct thread *, struct freebsd11_mknodat_args *);
 #define	SYS_AUE_cpuset_getdomain	AUE_NULL
 #define	SYS_AUE_cpuset_setdomain	AUE_NULL
 #define	SYS_AUE_getrandom	AUE_NULL
+#define	SYS_AUE_iflib_open	AUE_IFLIB
+#define	SYS_AUE_iflib_ctl	AUE_IFLIB
 
 #undef PAD_
 #undef PADL_
