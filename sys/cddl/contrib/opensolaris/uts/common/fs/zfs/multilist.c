@@ -274,26 +274,6 @@ multilist_get_random_index(multilist_t *ml)
 	return (spa_get_random(ml->ml_num_sublists));
 }
 
-/* Lock and return the sublist specified at the given index */
-multilist_sublist_t *
-multilist_sublist_lock(multilist_t *ml, unsigned int sublist_idx)
-{
-	multilist_sublist_t *mls;
-
-	ASSERT3U(sublist_idx, <, ml->ml_num_sublists);
-	mls = &ml->ml_sublists[sublist_idx];
-	mutex_enter(&mls->mls_lock);
-
-	return (mls);
-}
-
-/* Lock and return the sublist that would be used to store the specified obj */
-multilist_sublist_t *
-multilist_sublist_lock_obj(multilist_t *ml, void *obj)
-{
-	return (multilist_sublist_lock(ml, ml->ml_index_func(ml, obj)));
-}
-
 void
 multilist_sublist_unlock(multilist_sublist_t *mls)
 {

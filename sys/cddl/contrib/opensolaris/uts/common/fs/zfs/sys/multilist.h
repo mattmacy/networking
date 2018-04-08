@@ -82,8 +82,23 @@ int  multilist_is_empty(multilist_t *);
 unsigned int multilist_get_num_sublists(multilist_t *);
 unsigned int multilist_get_random_index(multilist_t *);
 
-multilist_sublist_t *multilist_sublist_lock(multilist_t *, unsigned int);
-multilist_sublist_t *multilist_sublist_lock_obj(multilist_t *, void *);
+/* multilist_sublist_t *multilist_sublist_lock(multilist_t *, unsigned int); */
+
+/* Lock and return the sublist specified at the given index */
+
+#define multilist_sublist_lock(_ml, _sublist_idx)				\
+	({															\
+		multilist_sublist_t *mls;								\
+		ASSERT3U((_sublist_idx), <, (_ml)->ml_num_sublists);	\
+		mls = &(_ml)->ml_sublists[(_sublist_idx)];				\
+		mutex_enter(&mls->mls_lock);							\
+																\
+		mls;													\
+	})
+
+#define multilist_sublist_lock_obj(_ml, _obj)		\
+	multilist_sublist_lock((_ml), (_ml)->ml_index_func((_ml), (_obj)))
+
 void multilist_sublist_unlock(multilist_sublist_t *);
 
 void multilist_sublist_insert_head(multilist_sublist_t *, void *);
