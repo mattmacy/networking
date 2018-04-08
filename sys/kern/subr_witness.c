@@ -769,7 +769,7 @@ static const char *blessed_locks[] = {
 	"os->os_userused_lock",
 	"tx->tx_sync_lock",
 	"zcw->zcw_lock",
-	"zfs"
+	"zfs",
 	"zilog->zl_issuer_lock",
 	"zilog->zl_lock",
 	"zfsvfs->z_hold_mtx[i]",
