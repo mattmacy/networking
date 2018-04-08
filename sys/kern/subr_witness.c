@@ -174,7 +174,7 @@ __FBSDID("$FreeBSD$");
 	(WITNESS_ANCESTOR_MASK | WITNESS_DESCENDANT_MASK)
 #define	WITNESS_REVERSAL         0x10    /* A lock order reversal has been
 					  * observed. */
-#define	WITNESS_RESERVED1        0x20    /* Unused flag, reserved. */
+#define	WITNESS_BLESSED          0x20    /* Unused flag, reserved. */
 #define	WITNESS_RESERVED2        0x40    /* Unused flag, reserved. */
 #define	WITNESS_LOCK_ORDER_KNOWN 0x80    /* This lock order is known. */
 
@@ -278,12 +278,10 @@ struct witness_lock_order_hash {
 	u_int	wloh_count;
 };
 
-#ifdef BLESSING
 struct witness_blessed {
 	const char	*b_lock1;
 	const char	*b_lock2;
 };
-#endif
 
 struct witness_pendhelp {
 	const char		*wh_type;
@@ -329,6 +327,7 @@ static struct lock_instance	*find_instance(struct lock_list_entry *list,
 static int	isitmychild(struct witness *parent, struct witness *child);
 static int	isitmydescendant(struct witness *parent, struct witness *child);
 static void	itismychild(struct witness *parent, struct witness *child);
+static void	update_blessed(const char *, struct lock_class *);
 static int	sysctl_debug_witness_badstacks(SYSCTL_HANDLER_ARGS);
 static int	sysctl_debug_witness_watch(SYSCTL_HANDLER_ARGS);
 static int	sysctl_debug_witness_fullgraph(SYSCTL_HANDLER_ARGS);
@@ -635,9 +634,32 @@ static struct witness_order_list_entry order_lists[] = {
 	/*
 	 * ZFS locking
 	 */
+	{ "os->os_userused_lock", &lock_class_sx },
 	{ "dn->dn_mtx", &lock_class_sx },
-	{ "dr->dt.di.dr_mtx", &lock_class_sx },
+	{ NULL, NULL },
+	{ "os->os_userused_lock", &lock_class_sx },
+	{ "dn->dn_struct_rwlock", &lock_class_sx },
+	{ NULL, NULL },
+	{ "os->os_userused_lock", &lock_class_sx },
 	{ "db->db_mtx", &lock_class_sx },
+	{ NULL, NULL },
+	{ "os->os_userused_lock", &lock_class_sx },
+	{ "h->hash_mutexes[i]", &lock_class_sx },
+	{ NULL, NULL },
+	{ "os->os_userused_lock", &lock_class_sx },
+	{ "dn->dn_dbufs_mtx", &lock_class_sx },
+	{ NULL, NULL },
+	{ "os->os_userused_lock", &lock_class_sx },
+	{ "zap->zap_rwlock", &lock_class_sx },
+	{ NULL, NULL },
+	{ "mls->mls_lock", &lock_class_sx },
+	{ "dr->dt.di.dr_mtx", &lock_class_sx },
+	{ NULL, NULL },
+	{ "mls->mls_lock", &lock_class_sx },
+	{ "dn->dn_mtx", &lock_class_sx },
+	{ NULL, NULL },
+	{ "dp->dp_lock", &lock_class_sx },
+	{ "tx->tx_sync_lock", &lock_class_sx },
 	{ NULL, NULL },
 	/*
 	 * TCP log locks
@@ -715,18 +737,61 @@ static struct witness_order_list_entry order_lists[] = {
 	{ "pmc-leaf", &lock_class_mtx_spin },
 #endif
 	{ "blocked lock", &lock_class_mtx_spin },
-	{ NULL, NULL },
+	{ NULL, NULL},
 	{ NULL, NULL }
 };
 
-#ifdef BLESSING
 /*
  * Pairs of locks which have been blessed
  * Don't complain about order problems with blessed locks
+ * NB: Just the ZFS Hall of Shame for now
  */
-static struct witness_blessed blessed_list[] = {
+
+static struct lock_class *blessed_lock_types[] = {
+	&lock_class_sx,
+	&lock_class_lockmgr,
+	NULL
 };
-#endif
+static const char *blessed_locks[] = {
+	"buf_hash_table.ht_locks[i].ht_lock",
+	"bpo->bpo_lock",
+	"db->db_mtx",
+	"db->db_mtx",
+	"dd->dd_lock",
+	"dn->dn_dbufs_mtx",
+	"dn->dn_struct_rwlock",
+	"dr->dt.di.dr_mtx",
+	"ds->ds_lock",
+	"h->hash_mutexes[i]",
+	"mls->mls_lock",
+	"ms->ms_lock",
+	"os->os_userused_lock",
+	"tx->tx_sync_lock",
+	"zcw->zcw_lock",
+	"zfs"
+	"zilog->zl_issuer_lock",
+	"zilog->zl_lock",
+	"zfsvfs->z_hold_mtx[i]",
+};
+
+static struct witness_blessed blessed_list[] = {
+	{ "mls->mls_lock", "h->hash_mutexes[i]" },
+	{ "mls->mls_lock", "buf_hash_table.ht_locks[i].ht_lock"},
+	{ "mls->mls_lock", "dn->dn_struct_rwlock" },
+	{ "mls->mls_lock", "os->os_userused_lock" },
+	{ "mls->mls_lock", "ms->ms_lock" },
+	{ "mls->mls_lock", "db->db_mtx" },
+	{ "mls->mls_lock", "dn->dn_dbufs_mtx" },
+	{ "zilog->zl_issuer_lock", "zfsvfs->z_hold_mtx[i]"},
+	{ "dr->dt.di.dr_mtx", "dn->dn_struct_rwlock" },
+	{ "zilog->zl_lock", "zcw->zcw_lock" },
+	{ "zfsvfs->z_teardown_inactive_lock", "zfsvfs->z_hold_mtx[i]" },
+	{ "dd->dd_lock", "ds->ds_lock"},
+	{ "tx->tx_sync_lock", "bpo->bpo_lock" },
+	{ "db->db_mtx", "dr->dt.di.dr_mtx" },
+	{ "dn->dn_mtx", "db->db_mtx" },
+	{ "zfs", "zfsvfs->z_hold_mtx[i]"},
+};
 
 /*
  * This global is set to 0 once it becomes safe to use the witness code.
@@ -1220,6 +1285,8 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 	 * the check with the lock held to handle races with concurrent updates.
 	 */
 	w1 = plock->li_lock->lo_witness;
+	if (w_rmatrix[w1->w_index][w->w_index] & WITNESS_BLESSED)
+		return;
 	if (witness_lock_order_check(w1, w))
 		return;
 
@@ -1238,7 +1305,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 	if (w1 == w) {
 		i = w->w_index;
 		if (!(lock->lo_flags & LO_DUPOK) && !(flags & LOP_DUPOK) &&
-		    !(w_rmatrix[i][i] & WITNESS_REVERSAL)) {
+		    !(w_rmatrix[i][i] & (WITNESS_REVERSAL|WITNESS_BLESSED))) {
 		    w_rmatrix[i][i] |= WITNESS_REVERSAL;
 			w->w_reversed = 1;
 			mtx_unlock_spin(&w_mtx);
@@ -1327,22 +1394,13 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			if (!isitmydescendant(w, w1))
 				continue;
 		reversal:
-
+			/* Skip if this violation is blessed */
+			if (w_rmatrix[w1->w_index][w->w_index] & WITNESS_BLESSED)
+				continue;
 			/*
 			 * We have a lock order violation, check to see if it
 			 * is allowed or has already been yelled about.
 			 */
-#ifdef BLESSING
-
-			/*
-			 * If the lock order is blessed, just bail.  We don't
-			 * look for other lock order violations though, which
-			 * may be a bug.
-			 */
-			if (blessed(w, w1))
-				goto out;
-#endif
-
 			/* Bail if this violation is known */
 			if (w_rmatrix[w1->w_index][w->w_index] & WITNESS_REVERSAL)
 				goto out;
@@ -1352,6 +1410,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			w_rmatrix[w->w_index][w1->w_index] |= WITNESS_REVERSAL;
 			w->w_reversed = w1->w_reversed = 1;
 			witness_increment_graph_generation();
+
 			mtx_unlock_spin(&w_mtx);
 
 #ifdef WITNESS_NO_VNODE
@@ -1866,6 +1925,7 @@ enroll(const char *description, struct lock_class *lock_class)
 	/* Insert new witness into the hash */
 	witness_hash_put(w);
 	witness_increment_graph_generation();
+	update_blessed(description, lock_class);
 	mtx_unlock_spin(&w_mtx);
 	return (w);
 found:
@@ -2077,27 +2137,40 @@ isitmydescendant(struct witness *ancestor, struct witness *descendant)
 	    __func__));
 }
 
-#ifdef BLESSING
-static int
-blessed(struct witness *w1, struct witness *w2)
+static void
+update_blessed(const char *description, struct lock_class *type)
 {
-	int i;
 	struct witness_blessed *b;
+	struct witness *w1, *w2;
+	int i;
 
+	for (i = 0; i < nitems(blessed_lock_types); i++) {
+		if (type == blessed_lock_types[i])
+			break;
+	}
+	if (i == nitems(blessed_lock_types))
+		return;
+	for (i = 0; i < nitems(blessed_locks); i++) {
+		if (strcmp(description, blessed_locks[i]) == 0)
+			break;
+	}
+	if (i == nitems(blessed_locks))
+		return;
 	for (i = 0; i < nitems(blessed_list); i++) {
 		b = &blessed_list[i];
-		if (strcmp(w1->w_name, b->b_lock1) == 0) {
-			if (strcmp(w2->w_name, b->b_lock2) == 0)
-				return (1);
+		if (strcmp(description, b->b_lock1) &&
+			strcmp(description, b->b_lock2))
+			continue;
+		if ((w1 = witness_hash_get(b->b_lock1)) == NULL) {
 			continue;
 		}
-		if (strcmp(w1->w_name, b->b_lock2) == 0)
-			if (strcmp(w2->w_name, b->b_lock1) == 0)
-				return (1);
+		if ((w2 = witness_hash_get(b->b_lock2)) == NULL) {
+			continue;
+		}
+		w_rmatrix[w1->w_index][w2->w_index] |= WITNESS_BLESSED | WITNESS_LOCK_ORDER_KNOWN;
+		w_rmatrix[w2->w_index][w1->w_index] |= WITNESS_BLESSED | WITNESS_LOCK_ORDER_KNOWN;
 	}
-	return (0);
 }
-#endif
 
 static struct witness *
 witness_get(void)
@@ -2609,6 +2682,8 @@ restart:
 		if (tmp_w1->w_reversed == 0)
 			continue;
 		for (j = 1; j < w_max_used_index; j++) {
+			if (w_rmatrix[i][j] & WITNESS_BLESSED)
+				continue;
 			if ((w_rmatrix[i][j] & WITNESS_REVERSAL) == 0 || i > j)
 				continue;
 
@@ -2984,8 +3059,8 @@ witness_lock_order_check(struct witness *parent, struct witness *child)
 {
 
 	if (parent != child &&
-	    w_rmatrix[parent->w_index][child->w_index]
-	    & WITNESS_LOCK_ORDER_KNOWN &&
+	    (w_rmatrix[parent->w_index][child->w_index]
+		 & WITNESS_LOCK_ORDER_KNOWN) &&
 	    isitmychild(parent, child))
 		return (1);
 
