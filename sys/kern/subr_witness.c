@@ -758,6 +758,7 @@ static const char *blessed_locks[] = {
 	"db->db_mtx",
 	"db->db_mtx",
 	"dd->dd_lock",
+	"dl->dl_lock",
 	"dn->dn_dbufs_mtx",
 	"dn->dn_struct_rwlock",
 	"dr->dt.di.dr_mtx",
@@ -775,13 +776,14 @@ static const char *blessed_locks[] = {
 };
 
 static struct witness_blessed blessed_list[] = {
-	{ "mls->mls_lock", "h->hash_mutexes[i]" },
 	{ "mls->mls_lock", "buf_hash_table.ht_locks[i].ht_lock"},
-	{ "mls->mls_lock", "dn->dn_struct_rwlock" },
-	{ "mls->mls_lock", "os->os_userused_lock" },
-	{ "mls->mls_lock", "ms->ms_lock" },
+	{ "mls->mls_lock", "h->hash_mutexes[i]" },
 	{ "mls->mls_lock", "db->db_mtx" },
+	{ "mls->mls_lock", "db->dl_lock" },
 	{ "mls->mls_lock", "dn->dn_dbufs_mtx" },
+	{ "mls->mls_lock", "dn->dn_struct_rwlock" },
+	{ "mls->mls_lock", "ms->ms_lock" },
+	{ "mls->mls_lock", "os->os_userused_lock" },
 	{ "zilog->zl_issuer_lock", "zfsvfs->z_hold_mtx[i]"},
 	{ "dr->dt.di.dr_mtx", "dn->dn_struct_rwlock" },
 	{ "zilog->zl_lock", "zcw->zcw_lock" },
