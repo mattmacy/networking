@@ -316,9 +316,7 @@ witness_lock_order_key_equal(const struct witness_lock_order_key *a,
 static int	_isitmyx(struct witness *w1, struct witness *w2, int rmask,
 		    const char *fname);
 static void	adopt(struct witness *parent, struct witness *child);
-#ifdef BLESSING
 static int	blessed(struct witness *, struct witness *);
-#endif
 static void	depart(struct witness *w);
 static struct witness	*enroll(const char *description,
 			    struct lock_class *lock_class);
@@ -327,7 +325,6 @@ static struct lock_instance	*find_instance(struct lock_list_entry *list,
 static int	isitmychild(struct witness *parent, struct witness *child);
 static int	isitmydescendant(struct witness *parent, struct witness *child);
 static void	itismychild(struct witness *parent, struct witness *child);
-static void	update_blessed(const char *, struct lock_class *);
 static int	sysctl_debug_witness_badstacks(SYSCTL_HANDLER_ARGS);
 static int	sysctl_debug_witness_watch(SYSCTL_HANDLER_ARGS);
 static int	sysctl_debug_witness_fullgraph(SYSCTL_HANDLER_ARGS);
@@ -661,6 +658,10 @@ static struct witness_order_list_entry order_lists[] = {
 	{ "dp->dp_lock", &lock_class_sx },
 	{ "tx->tx_sync_lock", &lock_class_sx },
 	{ NULL, NULL },
+	{ "buf->b_evict_lock", &lock_class_sx },
+	{ "buf_hash_table.ht_locks[i].ht_lock", &lock_class_sx },
+	{ NULL, NULL },
+
 	/*
 	 * TCP log locks
 	 */
@@ -755,6 +756,7 @@ static struct lock_class *blessed_lock_types[] = {
 static const char *blessed_locks[] = {
 	"buf_hash_table.ht_locks[i].ht_lock",
 	"bpo->bpo_lock",
+	"buf->b_evict_lock",
 	"db->db_mtx",
 	"db->db_mtx",
 	"dd->dd_lock",
@@ -776,6 +778,11 @@ static const char *blessed_locks[] = {
 };
 
 static struct witness_blessed blessed_list[] = {
+	{ "dd->dd_lock", "ds->ds_lock"},
+	{ "dn->dn_mtx", "db->db_mtx" },
+	{ "dr->dt.di.dr_mtx" , "db->db_mtx" }, 
+	{ "dr->dt.di.dr_mtx", "dn->dn_struct_rwlock" },
+	{ "dr->dt.di.dr_mtx", "buf->b_evict_lock" },
 	{ "mls->mls_lock", "buf_hash_table.ht_locks[i].ht_lock"},
 	{ "mls->mls_lock", "h->hash_mutexes[i]" },
 	{ "mls->mls_lock", "db->db_mtx" },
@@ -784,14 +791,10 @@ static struct witness_blessed blessed_list[] = {
 	{ "mls->mls_lock", "dn->dn_struct_rwlock" },
 	{ "mls->mls_lock", "ms->ms_lock" },
 	{ "mls->mls_lock", "os->os_userused_lock" },
+	{ "tx->tx_sync_lock", "bpo->bpo_lock" },
 	{ "zilog->zl_issuer_lock", "zfsvfs->z_hold_mtx[i]"},
-	{ "dr->dt.di.dr_mtx", "dn->dn_struct_rwlock" },
 	{ "zilog->zl_lock", "zcw->zcw_lock" },
 	{ "zfsvfs->z_teardown_inactive_lock", "zfsvfs->z_hold_mtx[i]" },
-	{ "dd->dd_lock", "ds->ds_lock"},
-	{ "tx->tx_sync_lock", "bpo->bpo_lock" },
-	{ "db->db_mtx", "dr->dt.di.dr_mtx" },
-	{ "dn->dn_mtx", "db->db_mtx" },
 	{ "zfs", "zfsvfs->z_hold_mtx[i]"},
 };
 
@@ -1307,7 +1310,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 	if (w1 == w) {
 		i = w->w_index;
 		if (!(lock->lo_flags & LO_DUPOK) && !(flags & LOP_DUPOK) &&
-		    !(w_rmatrix[i][i] & (WITNESS_REVERSAL|WITNESS_BLESSED))) {
+		    !(w_rmatrix[i][i] & WITNESS_REVERSAL)) {
 		    w_rmatrix[i][i] |= WITNESS_REVERSAL;
 			w->w_reversed = 1;
 			mtx_unlock_spin(&w_mtx);
@@ -1406,6 +1409,8 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			/* Bail if this violation is known */
 			if (w_rmatrix[w1->w_index][w->w_index] & WITNESS_REVERSAL)
 				goto out;
+			if (blessed(w1, w))
+				continue;
 
 			/* Record this as a violation */
 			w_rmatrix[w1->w_index][w->w_index] |= WITNESS_REVERSAL;
@@ -1927,7 +1932,6 @@ enroll(const char *description, struct lock_class *lock_class)
 	/* Insert new witness into the hash */
 	witness_hash_put(w);
 	witness_increment_graph_generation();
-	update_blessed(description, lock_class);
 	mtx_unlock_spin(&w_mtx);
 	return (w);
 found:
@@ -2029,6 +2033,10 @@ adopt(struct witness *parent, struct witness *child)
 			w_data[i].w_num_descendants++;
 			w_data[j].w_num_ancestors++;
 
+			if (i == j)
+				continue;
+			if (w_rmatrix[i][j] & WITNESS_BLESSED)
+					continue;
 			/* 
 			 * Make sure we aren't marking a node as both an
 			 * ancestor and descendant. We should have caught 
@@ -2036,7 +2044,9 @@ adopt(struct witness *parent, struct witness *child)
 			 */
 			if ((w_rmatrix[i][j] & WITNESS_ANCESTOR_MASK) &&
 			    (w_rmatrix[i][j] & WITNESS_DESCENDANT_MASK)) {
-				printf("witness rmatrix paradox! [%d][%d]=%d "
+				if (blessed(parent, child))
+					continue;
+				printf("witness rmatrix paradox! [%d][%d]=0x%02x "
 				    "both ancestor and descendant\n",
 				    i, j, w_rmatrix[i][j]); 
 				kdb_backtrace();
@@ -2045,7 +2055,9 @@ adopt(struct witness *parent, struct witness *child)
 			}
 			if ((w_rmatrix[j][i] & WITNESS_ANCESTOR_MASK) &&
 			    (w_rmatrix[j][i] & WITNESS_DESCENDANT_MASK)) {
-				printf("witness rmatrix paradox! [%d][%d]=%d "
+				if (blessed(parent, child))
+					continue;
+				printf("witness rmatrix paradox! [%d][%d]=0x%02x "
 				    "both ancestor and descendant\n",
 				    j, i, w_rmatrix[j][i]); 
 				kdb_backtrace();
@@ -2100,11 +2112,15 @@ _isitmyx(struct witness *w1, struct witness *w2, int rmask, const char *fname)
 	r1 = w_rmatrix[i1][i2] & WITNESS_RELATED_MASK;
 	r2 = w_rmatrix[i2][i1] & WITNESS_RELATED_MASK;
 
+	if (w_rmatrix[i1][i2] & WITNESS_BLESSED)
+		return (0);
 	/* The flags on one better be the inverse of the flags on the other */
 	if (!((WITNESS_ATOD(r1) == r2 && WITNESS_DTOA(r2) == r1) ||
 	    (WITNESS_DTOA(r1) == r2 && WITNESS_ATOD(r2) == r1))) {
 		/* Don't squawk if we're potentially racing with an update. */
 		if (!mtx_owned(&w_mtx))
+			return (0);
+		if (blessed(w1, w2))
 			return (0);
 		printf("%s: rmatrix mismatch between %s (index %d) and %s "
 		    "(index %d): w_rmatrix[%d][%d] == %hhx but "
@@ -2139,39 +2155,78 @@ isitmydescendant(struct witness *ancestor, struct witness *descendant)
 	    __func__));
 }
 
-static void
-update_blessed(const char *description, struct lock_class *type)
+static int
+blessed(struct witness *w1, struct witness *w2)
 {
 	struct witness_blessed *b;
-	struct witness *w1, *w2;
+	const char *lock1, *lock2;
+	struct lock_class *class1, *class2;
 	int i;
 
+	lock1 = w1->w_name;
+	lock2 = w2->w_name;
+	class1 = w1->w_class;
+	class2 = w2->w_class;
+	/*
+	 * If this is not a white listed pair, try to
+	 * to determine this as quickly as possible.
+	 * 1) Check that both locks are in a class that is white listed
+	 * 2) Check that both locks names are among the white listed
+	 * 3) Check if this particular pair is white listed
+	 */
+
+	/*
+	 * blessed type
+	 */
 	for (i = 0; i < nitems(blessed_lock_types); i++) {
-		if (type == blessed_lock_types[i])
+		if (class1 == blessed_lock_types[i])
 			break;
 	}
 	if (i == nitems(blessed_lock_types))
-		return;
+		return (0);
+	for (i = 0; i < nitems(blessed_lock_types); i++) {
+		if (class2 == blessed_lock_types[i])
+			break;
+	}
+	if (i == nitems(blessed_lock_types))
+		return (0);
+
+	/*
+	 * blessed lock
+	 */
 	for (i = 0; i < nitems(blessed_locks); i++) {
-		if (strcmp(description, blessed_locks[i]) == 0)
+		if (strcmp(lock1, blessed_locks[i]) == 0)
 			break;
 	}
 	if (i == nitems(blessed_locks))
-		return;
+		return (0);
+	for (i = 0; i < nitems(blessed_locks); i++) {
+		if (strcmp(lock2, blessed_locks[i]) == 0)
+			break;
+	}
+	if (i == nitems(blessed_locks))
+		return (0);
+
+	/*
+	 * blessed pair
+	 */
 	for (i = 0; i < nitems(blessed_list); i++) {
 		b = &blessed_list[i];
-		if (strcmp(description, b->b_lock1) &&
-			strcmp(description, b->b_lock2))
-			continue;
-		if ((w1 = witness_hash_get(b->b_lock1)) == NULL) {
-			continue;
+		if ((strcmp(lock1, b->b_lock1) == 0 &&
+			 strcmp(lock2, b->b_lock2) == 0) ||
+			(strcmp(lock2, b->b_lock1) == 0 &&
+			 strcmp(lock1, b->b_lock2) == 0)) {
+			w1 = witness_hash_get(lock1);
+			w2 = witness_hash_get(lock2);
+			KASSERT(w1 != NULL, ("%s acquired but not in hash\n", lock1));
+			KASSERT(w2 != NULL, ("%s acquired but not in hash\n", lock2));
+
+			w_rmatrix[w1->w_index][w2->w_index] |= WITNESS_BLESSED | WITNESS_LOCK_ORDER_KNOWN;
+			w_rmatrix[w2->w_index][w1->w_index] |= WITNESS_BLESSED | WITNESS_LOCK_ORDER_KNOWN;
+			return (1);
 		}
-		if ((w2 = witness_hash_get(b->b_lock2)) == NULL) {
-			continue;
-		}
-		w_rmatrix[w1->w_index][w2->w_index] |= WITNESS_BLESSED | WITNESS_LOCK_ORDER_KNOWN;
-		w_rmatrix[w2->w_index][w1->w_index] |= WITNESS_BLESSED | WITNESS_LOCK_ORDER_KNOWN;
 	}
+	return (0);
 }
 
 static struct witness *
