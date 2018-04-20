@@ -96,8 +96,20 @@ __FBSDID("$FreeBSD$");
 #define	TC_TABLESIZE	128			/* Must be power of 2. */
 #define	TC_MASK		(TC_TABLESIZE - 1)
 #define	TC_SHIFT	8
-#define	TC_HASH(lock)	(((uintptr_t)(lock) >> TC_SHIFT) & TC_MASK)
+#define	TC_HASH(lock)	tc_hash_((uintptr_t)(lock))
 #define	TC_LOOKUP(lock)	&turnstile_chains[TC_HASH(lock)]
+
+HASH_PROBE_DEFINE(tc_hash);
+
+static __inline uintptr_t
+tc_hash_(uintptr_t lock)
+{
+	uintptr_t hashval;
+
+	hashval = (((uintptr_t)(lock) >> TC_SHIFT) & TC_MASK);
+	HASH_PROBE(tc_hash, lock, hashval);
+	return (hashval);
+}
 
 /*
  * There are three different lists of turnstiles as follows.  The list
