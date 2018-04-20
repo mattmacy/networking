@@ -91,6 +91,14 @@ struct mtx_pool *mtxpool_sleep;
 # define POINTER_BITS		32
 # define HASH_MULTIPLIER	2654435769u	      /* (2^32)*(sqrt(5)-1)/2 */
 #endif
+#ifdef HASH_PROFILING
+SDT_PROBE_DECLARE(lol, , hash, mtx_pool_find);
+SDT_PROBE_DEFINE3(lol, , hash, mtx_pool_find, "struct mtx_pool *", "u_long", "u_long");
+#define HASH_PROBE(a, b, c) SDT_PROBE3(lol, , hash, mtx_pool_find, a, b, c)
+#else
+#define HASH_PROBE(a, b, c)
+#endif
+
 
 /*
  * Return the (shared) pool mutex associated with the specified address.
@@ -101,7 +109,7 @@ struct mtx_pool *mtxpool_sleep;
 struct mtx *
 mtx_pool_find(struct mtx_pool *pool, void *ptr)
 {
-	int p;
+	uintptr_t p;
 
 	KASSERT(pool != NULL, ("_mtx_pool_find(): null pool"));
 	/*
@@ -110,6 +118,7 @@ mtx_pool_find(struct mtx_pool *pool, void *ptr)
 	 */
 	p = ((HASH_MULTIPLIER * (uintptr_t)ptr) >> pool->mtx_pool_shift) &
 	    pool->mtx_pool_mask;
+	HASH_PROBE(pool, (uintptr_t)ptr, p);
 	return (&pool->mtx_pool_ary[p]);
 }
 
