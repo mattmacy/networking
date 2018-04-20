@@ -37,6 +37,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/mount.h>
 #include <sys/rwlock.h>
 #include <sys/vnode.h>
+#ifdef HASH_PROFILING
+#include <sys/proc.h>
+#endif
 
 static MALLOC_DEFINE(M_VFS_HASH, "vfs_hash", "VFS hash table");
 
@@ -64,11 +67,16 @@ vfs_hash_index(struct vnode *vp)
 	return (vp->v_hash + vp->v_mount->mnt_hashseed);
 }
 
+HASH_PROBE_DEFINE(vfs_hash_bucket);
+
 static struct vfs_hash_head *
 vfs_hash_bucket(const struct mount *mp, u_int hash)
 {
+	uintptr_t hashval;
 
-	return (&vfs_hash_tbl[(hash + mp->mnt_hashseed) & vfs_hash_mask]);
+	hashval = (hash + mp->mnt_hashseed) & vfs_hash_mask;
+	HASH_PROBE(vfs_hash_bucket, hash, hashval);
+	return (&vfs_hash_tbl[hashval]);
 }
 
 int
