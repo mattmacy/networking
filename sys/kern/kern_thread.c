@@ -142,7 +142,7 @@ static int tid_head, tid_tail;
 static MALLOC_DEFINE(M_TIDHASH, "tidhash", "thread hash");
 
 struct	tidhashhead *tidhashtbl;
-u_long	tidhash;
+u_long	tidhashmask;
 struct	rwlock tidhash_lock;
 
 EVENTHANDLER_LIST_DEFINE(thread_ctor);
@@ -342,7 +342,7 @@ threadinit(void)
 	thread_zone = uma_zcreate("THREAD", sched_sizeof_thread(),
 	    thread_ctor, thread_dtor, thread_init, thread_fini,
 	    32 - 1, UMA_ZONE_NOFREE);
-	tidhashtbl = hashinit(maxproc / 2, M_TIDHASH, &tidhash);
+	tidhashtbl = hashinit(maxproc / 2, M_TIDHASH, &tidhashmask);
 	rw_init(&tidhash_lock, "tidhash");
 }
 

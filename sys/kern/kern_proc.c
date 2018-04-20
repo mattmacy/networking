@@ -103,6 +103,13 @@ SDT_PROBE_DEFINE3(proc, , dtor, return, "struct proc *", "int", "void *");
 SDT_PROBE_DEFINE3(proc, , init, entry, "struct proc *", "int", "int");
 SDT_PROBE_DEFINE3(proc, , init, return, "struct proc *", "int", "int");
 
+#ifdef HASH_PROFILING
+SDT_PROVIDER_DEFINE(lol);
+HASH_PROBE_DEFINE(pidhash);
+HASH_PROBE_DEFINE(tidhash);
+HASH_PROBE_DEFINE(pgrphash);
+#endif
+
 MALLOC_DEFINE(M_PGRP, "pgrp", "process group header");
 MALLOC_DEFINE(M_SESSION, "session", "session header");
 static MALLOC_DEFINE(M_PROC, "proc", "Proc structures");
@@ -127,9 +134,9 @@ static struct proc *zpfind_locked(pid_t pid);
  * Other process lists
  */
 struct pidhashhead *pidhashtbl;
-u_long pidhash;
+u_long pidhashmask;
 struct pgrphashhead *pgrphashtbl;
-u_long pgrphash;
+u_long pgrphashmask;
 struct proclist allproc;
 struct proclist zombproc;
 struct sx __exclusive_cache_line allproc_lock;
@@ -176,6 +183,7 @@ CTASSERT(sizeof(struct kinfo_proc) == KINFO_PROC_SIZE);
 CTASSERT(sizeof(struct kinfo_proc32) == KINFO_PROC32_SIZE);
 #endif
 
+
 /*
  * Initialize global process hashing structures.
  */
@@ -188,8 +196,8 @@ procinit(void)
 	mtx_init(&ppeers_lock, "p_peers", NULL, MTX_DEF);
 	LIST_INIT(&allproc);
 	LIST_INIT(&zombproc);
-	pidhashtbl = hashinit(maxproc / 4, M_PROC, &pidhash);
-	pgrphashtbl = hashinit(maxproc / 4, M_PROC, &pgrphash);
+	pidhashtbl = hashinit(maxproc / 4, M_PROC, &pidhashmask);
+	pgrphashtbl = hashinit(maxproc / 4, M_PROC, &pgrphashmask);
 	proc_zone = uma_zcreate("PROC", sched_sizeof_proc(),
 	    proc_ctor, proc_dtor, proc_init, proc_fini,
 	    UMA_ALIGN_PTR, UMA_ZONE_NOFREE);
@@ -852,7 +860,7 @@ DB_SHOW_COMMAND(pgrpdump, pgrpdump)
 	struct proc *p;
 	int i;
 
-	for (i = 0; i <= pgrphash; i++) {
+	for (i = 0; i <= pgrphashmask; i++) {
 		if (!LIST_EMPTY(&pgrphashtbl[i])) {
 			printf("\tindx %d\n", i);
 			LIST_FOREACH(pgrp, &pgrphashtbl[i], pg_hash) {

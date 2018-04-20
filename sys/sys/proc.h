@@ -55,6 +55,7 @@
 #include <sys/rtprio.h>			/* XXX. */
 #include <sys/runq.h>
 #include <sys/resource.h>
+#include <sys/sdt.h>
 #include <sys/sigio.h>
 #include <sys/signal.h>
 #include <sys/signalvar.h>
@@ -934,17 +935,63 @@ extern pid_t pid_max;
 
 #define	THREAD_CAN_SLEEP()		((curthread)->td_no_sleeping == 0)
 
-#define	PIDHASH(pid)	(&pidhashtbl[(pid) & pidhash])
 extern LIST_HEAD(pidhashhead, proc) *pidhashtbl;
-extern u_long pidhash;
-#define	TIDHASH(tid)	(&tidhashtbl[(tid) & tidhash])
+extern u_long pidhashmask;
 extern LIST_HEAD(tidhashhead, thread) *tidhashtbl;
-extern u_long tidhash;
+extern u_long tidhashmask;
 extern struct rwlock tidhash_lock;
-
-#define	PGRPHASH(pgid)	(&pgrphashtbl[(pgid) & pgrphash])
 extern LIST_HEAD(pgrphashhead, pgrp) *pgrphashtbl;
-extern u_long pgrphash;
+extern u_long pgrphashmask;
+
+#ifdef HASH_PROFILING
+SDT_PROVIDER_DECLARE(lol);
+#define HASH_PROBE(a, b, c) SDT_PROBE2(lol, , hash, a, b, c)
+#define HASH_PROBE_DECLARE(name) SDT_PROBE_DECLARE(lol, , hash, name)
+#define HASH_PROBE_DEFINE(name) SDT_PROBE_DEFINE2(lol, , hash, name, "u_long", "u_long")
+HASH_PROBE_DECLARE(pidhash);
+HASH_PROBE_DECLARE(tidhash);
+HASH_PROBE_DECLARE(pgrphash);
+
+#undef HASH_PROBE_DECLARE
+#else
+#define HASH_PROBE(a, b, c)
+#endif
+
+static __inline struct pidhashhead *
+pidhash_(int pid)
+{
+	uint64_t hashval;
+
+	hashval = pid & pidhashmask;
+	HASH_PROBE(pidhash, pid, hashval);
+	return (&pidhashtbl[hashval]);
+}
+
+static __inline struct tidhashhead *
+tidhash_(int tid)
+{
+	uint64_t hashval;
+
+	hashval = tid & tidhashmask;
+	HASH_PROBE(tidhash, tid, hashval);
+	return (&tidhashtbl[hashval]);
+}
+
+static __inline struct pgrphashhead *
+pgrphash_(int pgid)
+{
+	uint64_t hashval;
+
+	hashval = pgid & pgrphashmask;
+	HASH_PROBE(pgrphash, pgid, hashval);
+	return (&pgrphashtbl[hashval]);
+}
+#undef HASH_PROBE
+#define	PIDHASH(pid)	pidhash_(pid)
+#define	TIDHASH(tid)	tidhash_(tid)
+#define	PGRPHASH(pgid)	pgrphash_(pgid)
+
+
 
 extern struct sx allproc_lock;
 extern int allproc_gen;

@@ -1006,3 +1006,6 @@ EKCD		opt_ekcd.h
 
 # NVME options
 NVME_USE_NVD	opt_nvme.h
+
+# stats
+HASH_PROFILING	opt_global.h
