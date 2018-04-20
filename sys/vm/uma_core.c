@@ -97,6 +97,9 @@ __FBSDID("$FreeBSD$");
 #include <vm/memguard.h>
 #endif
 
+#ifdef HASH_PROFILING
+SDT_PROBE_DEFINE2(lol, , hash, uma_hash, "u_long", "u_long");
+#endif
 /*
  * This is the zone and keg from which all zones are spawned.
  */

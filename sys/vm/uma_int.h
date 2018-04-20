@@ -153,8 +153,7 @@
  * I should investigate other hashing algorithms.  This should yield a low
  * number of collisions if the pages are relatively contiguous.
  */
-
-#define UMA_HASH(h, s) ((((uintptr_t)s) >> UMA_SLAB_SHIFT) & (h)->uh_hashmask)
+#define UMA_HASH(h, s) uma_hash_((h), (uintptr_t)(s))
 
 #define UMA_HASH_INSERT(h, s, mem)					\
 		SLIST_INSERT_HEAD(&(h)->uh_slab_hash[UMA_HASH((h),	\
@@ -172,6 +171,19 @@ struct uma_hash {
 	int		uh_hashsize;	/* Current size of the hash table */
 	int		uh_hashmask;	/* Mask used during hashing */
 };
+SDT_PROBE_DECLARE(lol, , hash, uma_hash);
+
+static __inline uintptr_t
+uma_hash_(struct uma_hash *h, uintptr_t s)
+{
+	uintptr_t hashval;
+
+	hashval = (s >> UMA_SLAB_SHIFT) & h->uh_hashmask;
+#ifdef HASH_PROFILING
+	SDT_PROBE2(lol, , hash, uma_hash, s, hashval);
+#endif
+	return (hashval);
+}
 
 /*
  * align field or structure to cache line
