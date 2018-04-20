@@ -419,12 +419,16 @@ start_softclock(void *dummy)
 SYSINIT(start_softclock, SI_SUB_SOFTINTR, SI_ORDER_FIRST, start_softclock, NULL);
 
 #define	CC_HASH_SHIFT	8
+HASH_PROBE_DEFINE(callout_hash);
 
 static inline u_int
 callout_hash(sbintime_t sbt)
 {
+	uintptr_t hashval;
 
-	return (sbt >> (32 - CC_HASH_SHIFT));
+	hashval = (sbt >> (32 - CC_HASH_SHIFT));
+	HASH_PROBE(callout_hash, sbt, hashval);
+	return (hashval);
 }
 
 static inline u_int
