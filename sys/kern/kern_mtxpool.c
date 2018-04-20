@@ -94,9 +94,9 @@ struct mtx_pool *mtxpool_sleep;
 #ifdef HASH_PROFILING
 SDT_PROBE_DECLARE(lol, , hash, mtx_pool_find);
 SDT_PROBE_DEFINE3(lol, , hash, mtx_pool_find, "struct mtx_pool *", "u_long", "u_long");
-#define HASH_PROBE(a, b, c) SDT_PROBE3(lol, , hash, mtx_pool_find, a, b, c)
+#define POOL_HASH_PROBE(a, b, c) SDT_PROBE3(lol, , hash, mtx_pool_find, a, b, c)
 #else
-#define HASH_PROBE(a, b, c)
+#define POOL_HASH_PROBE(a, b, c)
 #endif
 
 
@@ -118,7 +118,7 @@ mtx_pool_find(struct mtx_pool *pool, void *ptr)
 	 */
 	p = ((HASH_MULTIPLIER * (uintptr_t)ptr) >> pool->mtx_pool_shift) &
 	    pool->mtx_pool_mask;
-	HASH_PROBE(pool, (uintptr_t)ptr, p);
+	POOL_HASH_PROBE(pool, (uintptr_t)ptr, p);
 	return (&pool->mtx_pool_ary[p]);
 }
 

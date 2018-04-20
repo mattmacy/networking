@@ -952,9 +952,9 @@ HASH_PROBE_DECLARE(pidhash);
 HASH_PROBE_DECLARE(tidhash);
 HASH_PROBE_DECLARE(pgrphash);
 
-#undef HASH_PROBE_DECLARE
 #else
 #define HASH_PROBE(a, b, c)
+#define HASH_PROBE_DEFINE(a)
 #endif
 
 static __inline struct pidhashhead *
@@ -986,7 +986,6 @@ pgrphash_(int pgid)
 	HASH_PROBE(pgrphash, pgid, hashval);
 	return (&pgrphashtbl[hashval]);
 }
-#undef HASH_PROBE
 #define	PIDHASH(pid)	pidhash_(pid)
 #define	TIDHASH(tid)	tidhash_(tid)
 #define	PGRPHASH(pgid)	pgrphash_(pgid)
