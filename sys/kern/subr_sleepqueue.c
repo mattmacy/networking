@@ -101,10 +101,22 @@ __FBSDID("$FreeBSD$");
 CTASSERT(powerof2(SC_TABLESIZE));
 #define	SC_MASK		(SC_TABLESIZE - 1)
 #define	SC_SHIFT	8
-#define	SC_HASH(wc)	((((uintptr_t)(wc) >> SC_SHIFT) ^ (uintptr_t)(wc)) & \
-			    SC_MASK)
+#define	SC_HASH(wc)	(sc_hash_((uintptr_t)(wc)))
 #define	SC_LOOKUP(wc)	&sleepq_chains[SC_HASH(wc)]
 #define NR_SLEEPQS      2
+
+HASH_PROBE_DEFINE(sc_hash);
+
+static __inline uintptr_t
+sc_hash_(uintptr_t wchan)
+{
+	uintptr_t hashval;
+
+	hashval = ((wchan >> SC_SHIFT) ^ wchan) & SC_MASK;
+	HASH_PROBE(sc_hash, wchan, hashval);
+	return (hashval);
+}
+
 /*
  * There are two different lists of sleep queues.  Both lists are connected
  * via the sq_hash entries.  The first list is the sleep queue chain list
