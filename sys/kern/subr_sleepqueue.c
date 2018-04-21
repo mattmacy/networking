@@ -91,8 +91,10 @@ __FBSDID("$FreeBSD$");
 #endif
 
 #if UINTPTR_MAX == UINT64_MAX	/* 64 bits */
+# define POINTER_BITS		64
 # define HASH_MULTIPLIER	11400714819323198485u /* (2^64)*(sqrt(5)-1)/2 */
 #else				/* assume 32 bits */
+# define POINTER_BITS		32
 # define HASH_MULTIPLIER	2654435769u	      /* (2^32)*(sqrt(5)-1)/2 */
 #endif
 
@@ -110,6 +112,9 @@ CTASSERT(powerof2(SC_TABLESIZE));
 #define	SC_LOOKUP(wc)	&sleepq_chains[SC_HASH(wc)]
 #define NR_SLEEPQS      2
 
+#define LOWBITS 10
+#define HASH_SHIFT (POINTER_BITS - LOWBITS)
+
 HASH_PROBE_DEFINE(sc_hash);
 
 static __inline uintptr_t
@@ -117,7 +122,7 @@ sc_hash_(uintptr_t wchan)
 {
 	uintptr_t hashval;
 
-	hashval = ((HASH_MULTIPLIER*wchan) >> SC_SHIFT) & SC_MASK;
+	hashval = ((HASH_MULTIPLIER*wchan) >> HASH_SHIFT) & SC_MASK;
 	HASH_PROBE(sc_hash, wchan, hashval);
 	return (hashval);
 }
