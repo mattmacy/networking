@@ -262,6 +262,7 @@ extern struct mtx_padalign pa_lock[];
 #define PDRSHIFT	21
 #endif
 
+#define VM_PAGE_TO_PHYS(entry)	((entry)->phys_addr)
 #define	pa_index(pa)	((pa) >> PDRSHIFT)
 #define	PA_LOCKPTR(pa)	((struct mtx *)(&pa_lock[pa_index(pa) % PA_LOCK_COUNT]))
 #define	PA_LOCKOBJPTR(pa)	((struct lock_object *)PA_LOCKPTR((pa)))
@@ -283,7 +284,28 @@ extern struct mtx_padalign pa_lock[];
 #define	vm_page_unlock(m)	vm_page_unlock_KBI((m), LOCK_FILE, LOCK_LINE)
 #define	vm_page_trylock(m)	vm_page_trylock_KBI((m), LOCK_FILE, LOCK_LINE)
 #else	/* !KLD_MODULE */
-#define	vm_page_lockptr(m)	(PA_LOCKPTR(VM_PAGE_TO_PHYS((m))))
+
+#if defined(_KERNEL)
+#include <sys/sdt.h>
+#include <vm/vm_param.h>
+SDT_PROBE_DECLARE(lol, , hash, pa_index);
+
+static __inline struct mtx *
+vm_page_lockptr(vm_page_t m)
+{
+	uintptr_t hashval;
+	vm_paddr_t pa;
+	uint32_t off;
+
+	pa = VM_PAGE_TO_PHYS(m);
+	off = pa_index(pa);
+	hashval = off % PA_LOCK_COUNT;
+#ifdef HASH_PROFILING
+	SDT_PROBE2(lol, , hash, pa_index, off, hashval);
+#endif
+	return ((struct mtx *)(&pa_lock[hashval]));
+}
+#endif
 #define	vm_page_lock(m)		mtx_lock(vm_page_lockptr((m)))
 #define	vm_page_unlock(m)	mtx_unlock(vm_page_lockptr((m)))
 #define	vm_page_trylock(m)	mtx_trylock(vm_page_lockptr((m)))
@@ -370,8 +392,6 @@ extern struct mtx_padalign pa_lock[];
 extern vm_page_t vm_page_array;		/* First resident page in table */
 extern long vm_page_array_size;		/* number of vm_page_t's */
 extern long first_page;			/* first physical page number */
-
-#define VM_PAGE_TO_PHYS(entry)	((entry)->phys_addr)
 
 /*
  * PHYS_TO_VM_PAGE() returns the vm_page_t object that represents a memory

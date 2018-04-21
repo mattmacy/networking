@@ -127,6 +127,9 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/md_var.h>
 
+#ifdef HASH_PROFILING
+SDT_PROBE_DEFINE2(lol, , hash, pa_index, "u_long", "u_long");
+#endif
 extern int	uma_startup_count(int);
 extern void	uma_startup(void *, int);
 extern int	vmem_startup_count(void);
