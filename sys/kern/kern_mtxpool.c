@@ -51,6 +51,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/kernel.h>
+#include <sys/file.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -83,6 +84,7 @@ struct mtx_pool {
 #define mtx_pool_next	mtx_pool_header.mtxpool_next
 
 struct mtx_pool *mtxpool_sleep;
+struct mtx_pool *mtxpool_file;
 
 #if UINTPTR_MAX == UINT64_MAX	/* 64 bits */
 # define POINTER_BITS		64
@@ -171,7 +173,9 @@ mtx_pool_setup_dynamic(void *dummy __unused)
 {
 	/* struct buf is 4048 - roundup for safety's sake */
 	mtxpool_sleep = mtx_pool_create("sleep mtxpool",
-	    MTX_POOL_SLEEP_SIZE, MTX_DEF, 2*PAGE_SIZE);
+	    MTX_POOL_SLEEP_SIZE, MTX_DEF, 8192);
+	mtxpool_file = mtx_pool_create("file mtxpool",
+	    MTX_POOL_SLEEP_SIZE, MTX_DEF, sizeof(struct file));
 }
 
 /*

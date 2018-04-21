@@ -405,6 +405,7 @@ struct mtx *mtx_pool_alloc(struct mtx_pool *pool);
  * mtxpool_sleep is a general purpose pool of sleep mutexes.
  */
 extern struct mtx_pool *mtxpool_sleep;
+extern struct mtx_pool *mtxpool_file;
 
 #ifndef LOCK_DEBUG
 #error LOCK_DEBUG not defined, include <sys/lock.h> before <sys/mutex.h>

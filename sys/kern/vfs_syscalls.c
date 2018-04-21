@@ -4546,7 +4546,7 @@ kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 		 * this new region if possible, otherwise create a new
 		 * non-standard region for this request.
 		 */
-		mtx_pool_lock(mtxpool_sleep, fp);
+		mtx_pool_lock(mtxpool_file, fp);
 		fa = fp->f_advice;
 		if (fa != NULL && fa->fa_advice == advice &&
 		    ((fa->fa_start <= end && fa->fa_end >= offset) ||
@@ -4563,7 +4563,7 @@ kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 			fp->f_advice = new;
 			new = fa;
 		}
-		mtx_pool_unlock(mtxpool_sleep, fp);
+		mtx_pool_unlock(mtxpool_file, fp);
 		break;
 	case POSIX_FADV_NORMAL:
 		/*
@@ -4571,7 +4571,7 @@ kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 		 * non-standard region, trim or remove the
 		 * non-standard region.
 		 */
-		mtx_pool_lock(mtxpool_sleep, fp);
+		mtx_pool_lock(mtxpool_file, fp);
 		fa = fp->f_advice;
 		if (fa != NULL) {
 			if (offset <= fa->fa_start && end >= fa->fa_end) {
@@ -4595,7 +4595,7 @@ kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 				fp->f_advice = NULL;
 			}
 		}
-		mtx_pool_unlock(mtxpool_sleep, fp);
+		mtx_pool_unlock(mtxpool_file, fp);
 		break;
 	case POSIX_FADV_WILLNEED:
 	case POSIX_FADV_DONTNEED:

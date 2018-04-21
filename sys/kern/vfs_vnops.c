@@ -690,7 +690,7 @@ foffset_lock(struct file *fp, int flags)
 	 * According to McKusick the vn lock was protecting f_offset here.
 	 * It is now protected by the FOFFSET_LOCKED flag.
 	 */
-	mtxp = mtx_pool_find(mtxpool_sleep, fp);
+	mtxp = mtx_pool_find(mtxpool_file, fp);
 	mtx_lock(mtxp);
 	if ((flags & FOF_NOLOCK) == 0) {
 		while (fp->f_vnread_flags & FOFFSET_LOCKED) {
@@ -722,7 +722,7 @@ foffset_unlock(struct file *fp, off_t val, int flags)
 	}
 #endif
 
-	mtxp = mtx_pool_find(mtxpool_sleep, fp);
+	mtxp = mtx_pool_find(mtxpool_file, fp);
 	mtx_lock(mtxp);
 	if ((flags & FOF_NOUPDATE) == 0)
 		fp->f_offset = val;
@@ -764,7 +764,7 @@ get_advice(struct file *fp, struct uio *uio)
 	if (fp->f_advice == NULL || fp->f_vnode->v_type != VREG)
 		return (ret);
 
-	mtxp = mtx_pool_find(mtxpool_sleep, fp);
+	mtxp = mtx_pool_find(mtxpool_file, fp);
 	mtx_lock(mtxp);
 	if (fp->f_advice != NULL &&
 	    uio->uio_offset >= fp->f_advice->fa_start &&
