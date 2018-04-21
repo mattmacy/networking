@@ -90,6 +90,11 @@ __FBSDID("$FreeBSD$");
 #include <ddb/ddb.h>
 #endif
 
+#if UINTPTR_MAX == UINT64_MAX	/* 64 bits */
+# define HASH_MULTIPLIER	11400714819323198485u /* (2^64)*(sqrt(5)-1)/2 */
+#else				/* assume 32 bits */
+# define HASH_MULTIPLIER	2654435769u	      /* (2^32)*(sqrt(5)-1)/2 */
+#endif
 
 /*
  * Constants for the hash table of sleep queue chains.
@@ -112,7 +117,7 @@ sc_hash_(uintptr_t wchan)
 {
 	uintptr_t hashval;
 
-	hashval = ((wchan >> SC_SHIFT) ^ wchan) & SC_MASK;
+	hashval = ((HASH_MULTIPLIER*wchan) >> SC_SHIFT) & SC_MASK;
 	HASH_PROBE(sc_hash, wchan, hashval);
 	return (hashval);
 }
