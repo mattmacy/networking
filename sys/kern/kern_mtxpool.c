@@ -132,7 +132,7 @@ mtx_pool_initialize(struct mtx_pool *pool, const char *mtx_name, int pool_size,
 
 	pool->mtx_pool_size = pool_size;
 	pool->mtx_pool_mask = pool_size - 1;
-	maskbits = flsl(objsize) + 2;
+	maskbits = max(fls(objsize) + 2, fls(pool_size)+1);
 	pool->mtx_pool_shift = POINTER_BITS - maskbits;
 	pool->mtx_pool_next = 0;
 	for (i = 0; i < pool_size; ++i)
