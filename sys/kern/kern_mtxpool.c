@@ -124,14 +124,13 @@ mtx_pool_find(struct mtx_pool *pool, void *ptr)
 
 static void
 mtx_pool_initialize(struct mtx_pool *pool, const char *mtx_name, int pool_size,
-    int opts)
+    int opts, int objsize)
 {
 	int i, maskbits;
 
 	pool->mtx_pool_size = pool_size;
 	pool->mtx_pool_mask = pool_size - 1;
-	for (i = 1, maskbits = 0; (i & pool_size) == 0; i = i << 1)
-		maskbits++;
+	maskbits = flsl(objsize) + 2;
 	pool->mtx_pool_shift = POINTER_BITS - maskbits;
 	pool->mtx_pool_next = 0;
 	for (i = 0; i < pool_size; ++i)
@@ -139,7 +138,7 @@ mtx_pool_initialize(struct mtx_pool *pool, const char *mtx_name, int pool_size,
 }
 
 struct mtx_pool *
-mtx_pool_create(const char *mtx_name, int pool_size, int opts)
+mtx_pool_create(const char *mtx_name, int pool_size, int opts, int size)
 {
 	struct mtx_pool *pool;
 
@@ -151,7 +150,7 @@ mtx_pool_create(const char *mtx_name, int pool_size, int opts)
 	pool = malloc(sizeof (struct mtx_pool) +
 	    ((pool_size - 1) * sizeof (struct mtx)),
 	    M_MTXPOOL, M_WAITOK | M_ZERO);
-	mtx_pool_initialize(pool, mtx_name, pool_size, opts);
+	mtx_pool_initialize(pool, mtx_name, pool_size, opts, size);
 	return pool;
 }
 
@@ -170,8 +169,9 @@ mtx_pool_destroy(struct mtx_pool **poolp)
 static void
 mtx_pool_setup_dynamic(void *dummy __unused)
 {
+	/* struct buf is 4048 - roundup for safety's sake */
 	mtxpool_sleep = mtx_pool_create("sleep mtxpool",
-	    MTX_POOL_SLEEP_SIZE, MTX_DEF);
+	    MTX_POOL_SLEEP_SIZE, MTX_DEF, 2*PAGE_SIZE);
 }
 
 /*

@@ -1913,7 +1913,8 @@ selectinit(void *dummy __unused)
 
 	selfd_zone = uma_zcreate("selfd", sizeof(struct selfd), NULL, NULL,
 	    NULL, NULL, UMA_ALIGN_PTR, 0);
-	mtxpool_select = mtx_pool_create("select mtxpool", 128, MTX_DEF);
+	mtxpool_select = mtx_pool_create("select mtxpool", 128, MTX_DEF,
+	    sizeof(struct selinfo));
 }
 
 /*

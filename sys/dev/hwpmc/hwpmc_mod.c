@@ -4987,7 +4987,7 @@ pmc_initialize(void)
 
 	/* allocate a pool of spin mutexes */
 	pmc_mtxpool = mtx_pool_create("pmc-leaf", pmc_mtxpool_size,
-	    MTX_SPIN);
+	    MTX_SPIN, sizeof(struct pmc));
 
 	PMCDBG4(MOD,INI,1, "pmc_ownerhash=%p, mask=0x%lx "
 	    "targethash=%p mask=0x%lx", pmc_ownerhash, pmc_ownerhashmask,
