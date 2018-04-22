@@ -37,9 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/mount.h>
 #include <sys/rwlock.h>
 #include <sys/vnode.h>
-#ifdef HASH_PROFILING
 #include <sys/proc.h>
-#endif
 
 static MALLOC_DEFINE(M_VFS_HASH, "vfs_hash", "VFS hash table");
 
