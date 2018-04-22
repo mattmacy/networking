@@ -143,8 +143,13 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 #define	PMCLOG_EMITNULLSTRING(L) do { bzero(_le, (L)); } while (0)
 
 #define	PMCLOG_DESPATCH(PO)						\
-	pmclog_release((PO));						\
-	spinlock_exit();							\
+	    pmclog_release((PO));						\
+	    spinlock_exit();							\
+	} while (0)
+
+#define	PMCLOG_DESPATCH_SYNC(PO)							\
+	    pmclog_schedule_io((PO));						\
+	    spinlock_exit();							\
 	} while (0)
 
 
@@ -679,7 +684,7 @@ pmclog_configure_log(struct pmc_mdep *md, struct pmc_owner *po, int logfd)
 	    sizeof(struct pmclog_initialize));
 	PMCLOG_EMIT32(PMC_VERSION);
 	PMCLOG_EMIT32(md->pmd_cputype);
-	PMCLOG_DESPATCH(po);
+	PMCLOG_DESPATCH_SYNC(po);
 
 	return (0);
 
@@ -878,7 +883,7 @@ void
 pmclog_process_closelog(struct pmc_owner *po)
 {
 	PMCLOG_RESERVE(po,CLOSELOG,sizeof(struct pmclog_closelog));
-	PMCLOG_DESPATCH(po);
+	PMCLOG_DESPATCH_SYNC(po);
 }
 
 void
@@ -942,14 +947,14 @@ pmclog_process_pmcallocate(struct pmc *pm)
 		else
 			PMCLOG_EMITNULLSTRING(PMC_NAME_MAX);
 		pmc_soft_ev_release(ps);
-		PMCLOG_DESPATCH(po);
+		PMCLOG_DESPATCH_SYNC(po);
 	} else {
 		PMCLOG_RESERVE(po, PMCALLOCATE,
 		    sizeof(struct pmclog_pmcallocate));
 		PMCLOG_EMIT32(pm->pm_id);
 		PMCLOG_EMIT32(pm->pm_event);
 		PMCLOG_EMIT32(pm->pm_flags);
-		PMCLOG_DESPATCH(po);
+		PMCLOG_DESPATCH_SYNC(po);
 	}
 }
 
@@ -970,7 +975,7 @@ pmclog_process_pmcattach(struct pmc *pm, pid_t pid, char *path)
 	PMCLOG_EMIT32(pm->pm_id);
 	PMCLOG_EMIT32(pid);
 	PMCLOG_EMITSTRING(path, pathlen);
-	PMCLOG_DESPATCH(po);
+	PMCLOG_DESPATCH_SYNC(po);
 }
 
 void
@@ -985,7 +990,7 @@ pmclog_process_pmcdetach(struct pmc *pm, pid_t pid)
 	PMCLOG_RESERVE(po, PMCDETACH, sizeof(struct pmclog_pmcdetach));
 	PMCLOG_EMIT32(pm->pm_id);
 	PMCLOG_EMIT32(pid);
-	PMCLOG_DESPATCH(po);
+	PMCLOG_DESPATCH_SYNC(po);
 }
 
 /*
