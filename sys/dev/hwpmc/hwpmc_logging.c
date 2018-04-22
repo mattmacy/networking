@@ -788,9 +788,6 @@ pmclog_flush(struct pmc_owner *po)
 		goto error;
 	}
 
-	/*
-	 * Schedule the current buffer if any and not empty.
-	 */
 	pmclog_schedule_all(po);
  error:
 	mtx_unlock(&pmc_kthread_mtx);
@@ -799,12 +796,14 @@ pmclog_flush(struct pmc_owner *po)
 }
 
 static void
-pmclog_schedule_one(void *arg)
+pmclog_schedule_one_cond(void *arg)
 {
 	struct pmc_owner *po = arg;
+	struct pmclog_buffer *plb;
 
 	spinlock_enter();
-	if (po->po_curbuf[curcpu] != NULL)
+	plb = po->po_curbuf[curcpu];
+	if (plb && plb->plb_ptr != plb->plb_base)
 		pmclog_schedule_io(po);
 	spinlock_exit();
 }
@@ -812,8 +811,18 @@ pmclog_schedule_one(void *arg)
 static void
 pmclog_schedule_all(struct pmc_owner *po)
 {
-	smp_rendezvous(smp_no_rendezvous_barrier, pmclog_schedule_one,
-				   smp_no_rendezvous_barrier, po);
+	/*
+	 * Schedule the current buffer if any and not empty.
+	 */
+	for (int i = 0; i < mp_ncpus; i++) {
+		thread_lock(curthread);
+		sched_bind(curthread, i);
+		thread_unlock(curthread);
+		pmclog_schedule_one_cond(po);
+	}
+	thread_lock(curthread);
+	sched_unbind(curthread);
+	thread_unlock(curthread);
 }
 
 int
