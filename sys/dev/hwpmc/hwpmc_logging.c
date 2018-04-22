@@ -50,7 +50,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/pmckern.h>
 #include <sys/pmclog.h>
 #include <sys/proc.h>
+#include <sys/sched.h>
 #include <sys/signalvar.h>
+#include <sys/smp.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
@@ -116,7 +118,8 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 /* reserve LEN bytes of space and initialize the entry header */
 #define	_PMCLOG_RESERVE(PO,TYPE,LEN,ACTION) do {			\
 		uint32_t *_le;						\
-		int _len = roundup((LEN), sizeof(uint32_t));		\
+		int _len = roundup((LEN), sizeof(uint32_t));	\
+		spinlock_enter();									\
 		if ((_le = pmclog_reserve((PO), _len)) == NULL) {	\
 			ACTION;						\
 		}							\
@@ -139,7 +142,8 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 #define	PMCLOG_EMITNULLSTRING(L) do { bzero(_le, (L)); } while (0)
 
 #define	PMCLOG_DESPATCH(PO)						\
-		pmclog_release((PO));					\
+	pmclog_release((PO));						\
+	spinlock_exit();							\
 	} while (0)
 
 
@@ -191,6 +195,7 @@ static void pmclog_loop(void *arg);
 static void pmclog_release(struct pmc_owner *po);
 static uint32_t *pmclog_reserve(struct pmc_owner *po, int length);
 static void pmclog_schedule_io(struct pmc_owner *po);
+static void pmclog_schedule_all(struct pmc_owner *po);
 static void pmclog_stop_kthread(struct pmc_owner *po);
 
 /*
@@ -206,9 +211,7 @@ pmclog_get_buffer(struct pmc_owner *po)
 {
 	struct pmclog_buffer *plb;
 
-	mtx_assert(&po->po_mtx, MA_OWNED);
-
-	KASSERT(po->po_curbuf == NULL,
+	KASSERT(po->po_curbuf[curcpu] == NULL,
 	    ("[pmclog,%d] po=%p current buffer still valid", __LINE__, po));
 
 	mtx_lock_spin(&pmc_bufferlist_mtx);
@@ -227,7 +230,7 @@ pmclog_get_buffer(struct pmc_owner *po)
 		    plb->plb_base, plb->plb_fence));
 #endif
 
-	po->po_curbuf = plb;
+	po->po_curbuf[curcpu] = plb;
 
 	/* update stats */
 	atomic_add_int(&pmc_stats.pm_buffer_requests, 1);
@@ -460,18 +463,21 @@ pmclog_loop(void *arg)
 static void
 pmclog_release(struct pmc_owner *po)
 {
-	KASSERT(po->po_curbuf->plb_ptr >= po->po_curbuf->plb_base,
+	struct pmclog_buffer *plb;
+
+	spinlock_enter();
+	plb = po->po_curbuf[curcpu];
+	KASSERT(plb->plb_ptr >= plb->plb_base,
 	    ("[pmclog,%d] buffer invariants po=%p ptr=%p base=%p", __LINE__,
-		po, po->po_curbuf->plb_ptr, po->po_curbuf->plb_base));
-	KASSERT(po->po_curbuf->plb_ptr <= po->po_curbuf->plb_fence,
+		po, plb->plb_ptr, plb->plb_base));
+	KASSERT(plb->plb_ptr <= plb->plb_fence,
 	    ("[pmclog,%d] buffer invariants po=%p ptr=%p fenc=%p", __LINE__,
-		po, po->po_curbuf->plb_ptr, po->po_curbuf->plb_fence));
+		po, plb->plb_ptr, plb->plb_fence));
 
 	/* schedule an I/O if we've filled a buffer */
-	if (po->po_curbuf->plb_ptr >= po->po_curbuf->plb_fence)
+	if (plb->plb_ptr >= plb->plb_fence)
 		pmclog_schedule_io(po);
-
-	mtx_unlock_spin(&po->po_mtx);
+	spinlock_exit();
 
 	PMCDBG1(LOG,REL,1, "po=%p", po);
 }
@@ -492,36 +498,32 @@ pmclog_reserve(struct pmc_owner *po, int length)
 	uintptr_t newptr, oldptr;
 	uint32_t *lh;
 	struct timespec ts;
+	struct pmclog_buffer *plb, **pplb;
 
 	PMCDBG2(LOG,ALL,1, "po=%p len=%d", po, length);
 
 	KASSERT(length % sizeof(uint32_t) == 0,
 	    ("[pmclog,%d] length not a multiple of word size", __LINE__));
 
-	mtx_lock_spin(&po->po_mtx);
-
 	/* No more data when shutdown in progress. */
-	if (po->po_flags & PMC_PO_SHUTDOWN) {
-		mtx_unlock_spin(&po->po_mtx);
+	if (po->po_flags & PMC_PO_SHUTDOWN)
 		return (NULL);
-	}
 
-	if (po->po_curbuf == NULL)
-		if (pmclog_get_buffer(po) != 0) {
-			mtx_unlock_spin(&po->po_mtx);
-			return (NULL);
-		}
+	pplb = &po->po_curbuf[curcpu];
+	if (*pplb == NULL && pmclog_get_buffer(po) != 0)
+		goto fail;
 
-	KASSERT(po->po_curbuf != NULL,
+	KASSERT(*pplb != NULL,
 	    ("[pmclog,%d] po=%p no current buffer", __LINE__, po));
 
-	KASSERT(po->po_curbuf->plb_ptr >= po->po_curbuf->plb_base &&
-	    po->po_curbuf->plb_ptr <= po->po_curbuf->plb_fence,
+	plb = *pplb;
+	KASSERT(plb->plb_ptr >= plb->plb_base &&
+	    plb->plb_ptr <= plb->plb_fence,
 	    ("[pmclog,%d] po=%p buffer invariants: ptr=%p base=%p fence=%p",
-		__LINE__, po, po->po_curbuf->plb_ptr, po->po_curbuf->plb_base,
-		po->po_curbuf->plb_fence));
+		__LINE__, po, plb->plb_ptr, plb->plb_base,
+		plb->plb_fence));
 
-	oldptr = (uintptr_t) po->po_curbuf->plb_ptr;
+	oldptr = (uintptr_t) plb->plb_ptr;
 	newptr = oldptr + length;
 
 	KASSERT(oldptr != (uintptr_t) NULL,
@@ -531,8 +533,8 @@ pmclog_reserve(struct pmc_owner *po, int length)
 	 * If we have space in the current buffer, return a pointer to
 	 * available space with the PO structure locked.
 	 */
-	if (newptr <= (uintptr_t) po->po_curbuf->plb_fence) {
-		po->po_curbuf->plb_ptr = (char *) newptr;
+	if (newptr <= (uintptr_t) plb->plb_fence) {
+		plb->plb_ptr = (char *) newptr;
 		goto done;
 	}
 
@@ -542,24 +544,23 @@ pmclog_reserve(struct pmc_owner *po, int length)
 	 */
 	pmclog_schedule_io(po);
 
-	if (pmclog_get_buffer(po) != 0) {
-		mtx_unlock_spin(&po->po_mtx);
-		return (NULL);
-	}
+	if (pmclog_get_buffer(po) != 0)
+		goto fail;
 
-	KASSERT(po->po_curbuf != NULL,
+	plb = *pplb;
+	KASSERT(plb != NULL,
 	    ("[pmclog,%d] po=%p no current buffer", __LINE__, po));
 
-	KASSERT(po->po_curbuf->plb_ptr != NULL,
+	KASSERT(plb->plb_ptr != NULL,
 	    ("[pmclog,%d] null return from pmc_get_log_buffer", __LINE__));
 
-	KASSERT(po->po_curbuf->plb_ptr == po->po_curbuf->plb_base &&
-	    po->po_curbuf->plb_ptr <= po->po_curbuf->plb_fence,
+	KASSERT(plb->plb_ptr == plb->plb_base &&
+	    plb->plb_ptr <= plb->plb_fence,
 	    ("[pmclog,%d] po=%p buffer invariants: ptr=%p base=%p fence=%p",
-		__LINE__, po, po->po_curbuf->plb_ptr, po->po_curbuf->plb_base,
-		po->po_curbuf->plb_fence));
+		__LINE__, po, plb->plb_ptr, plb->plb_base,
+		plb->plb_fence));
 
-	oldptr = (uintptr_t) po->po_curbuf->plb_ptr;
+	oldptr = (uintptr_t) plb->plb_ptr;
 
  done:
 	lh = (uint32_t *) oldptr;
@@ -568,6 +569,8 @@ pmclog_reserve(struct pmc_owner *po, int length)
 	*lh++ = ts.tv_sec & 0xFFFFFFFF;
 	*lh++ = ts.tv_nsec & 0xFFFFFFF;
 	return ((uint32_t *) oldptr);
+fail:			
+	return (NULL);
 }
 
 /*
@@ -579,26 +582,28 @@ pmclog_reserve(struct pmc_owner *po, int length)
 static void
 pmclog_schedule_io(struct pmc_owner *po)
 {
-	KASSERT(po->po_curbuf != NULL,
-	    ("[pmclog,%d] schedule_io with null buffer po=%p", __LINE__, po));
+	struct pmclog_buffer *plb;
 
-	KASSERT(po->po_curbuf->plb_ptr >= po->po_curbuf->plb_base,
+	plb = po->po_curbuf[curcpu];
+	po->po_curbuf[curcpu] = NULL;
+	KASSERT(plb != NULL,
+	    ("[pmclog,%d] schedule_io with null buffer po=%p", __LINE__, po));
+	KASSERT(plb->plb_ptr >= plb->plb_base,
 	    ("[pmclog,%d] buffer invariants po=%p ptr=%p base=%p", __LINE__,
-		po, po->po_curbuf->plb_ptr, po->po_curbuf->plb_base));
-	KASSERT(po->po_curbuf->plb_ptr <= po->po_curbuf->plb_fence,
+		po, plb->plb_ptr, plb->plb_base));
+	KASSERT(plb->plb_ptr <= plb->plb_fence,
 	    ("[pmclog,%d] buffer invariants po=%p ptr=%p fenc=%p", __LINE__,
-		po, po->po_curbuf->plb_ptr, po->po_curbuf->plb_fence));
+		po, plb->plb_ptr, plb->plb_fence));
 
 	PMCDBG1(LOG,SIO, 1, "po=%p", po);
-
-	mtx_assert(&po->po_mtx, MA_OWNED);
 
 	/*
 	 * Add the current buffer to the tail of the buffer list and
 	 * wakeup the helper.
 	 */
-	TAILQ_INSERT_TAIL(&po->po_logbuffers, po->po_curbuf, plb_next);
-	po->po_curbuf = NULL;
+	mtx_lock_spin(&po->po_mtx);
+	TAILQ_INSERT_TAIL(&po->po_logbuffers, plb, plb_next);
+	mtx_unlock_spin(&po->po_mtx);
 	wakeup_one(po);
 }
 
@@ -726,13 +731,17 @@ pmclog_deconfigure_log(struct pmc_owner *po)
 		TAILQ_INSERT_HEAD(&pmc_bufferlist, lb, plb_next);
 		mtx_unlock_spin(&pmc_bufferlist_mtx);
 	}
-
-	/* return the 'current' buffer to the global pool */
-	if ((lb = po->po_curbuf) != NULL) {
-		PMCLOG_INIT_BUFFER_DESCRIPTOR(lb);
-		mtx_lock_spin(&pmc_bufferlist_mtx);
-		TAILQ_INSERT_HEAD(&pmc_bufferlist, lb, plb_next);
-		mtx_unlock_spin(&pmc_bufferlist_mtx);
+	for (int i = 0; i < mp_ncpus; i++) {
+		thread_lock(curthread);
+		sched_bind(curthread, i);
+		thread_unlock(curthread);
+		/* return the 'current' buffer to the global pool */
+		if ((lb = po->po_curbuf[curcpu]) != NULL) {
+			PMCLOG_INIT_BUFFER_DESCRIPTOR(lb);
+			mtx_lock_spin(&pmc_bufferlist_mtx);
+			TAILQ_INSERT_HEAD(&pmc_bufferlist, lb, plb_next);
+			mtx_unlock_spin(&pmc_bufferlist_mtx);
+		}
 	}
 
 	/* drop a reference to the fd */
@@ -754,7 +763,6 @@ int
 pmclog_flush(struct pmc_owner *po)
 {
 	int error;
-	struct pmclog_buffer *lb;
 
 	PMCDBG1(LOG,FLS,1, "po=%p", po);
 
@@ -779,18 +787,24 @@ pmclog_flush(struct pmc_owner *po)
 	/*
 	 * Schedule the current buffer if any and not empty.
 	 */
-	mtx_lock_spin(&po->po_mtx);
-	lb = po->po_curbuf;
-	if (lb && lb->plb_ptr != lb->plb_base) {
-		pmclog_schedule_io(po);
-	} else
-		error = ENOBUFS;
-	mtx_unlock_spin(&po->po_mtx);
-
+	pmclog_schedule_all(po);
  error:
 	mtx_unlock(&pmc_kthread_mtx);
 
 	return (error);
+}
+
+static void
+pmclog_schedule_one(void *arg)
+{
+	pmclog_schedule_io((struct pmc_owner *)arg);
+}
+
+static void
+pmclog_schedule_all(struct pmc_owner *po)
+{
+	smp_rendezvous(smp_no_rendezvous_barrier, pmclog_schedule_one,
+				   smp_no_rendezvous_barrier, po);
 }
 
 int
@@ -806,19 +820,14 @@ pmclog_close(struct pmc_owner *po)
 	/*
 	 * Schedule the current buffer.
 	 */
-	mtx_lock_spin(&po->po_mtx);
-	if (po->po_curbuf)
-		pmclog_schedule_io(po);
-	else
-		wakeup_one(po);
-	mtx_unlock_spin(&po->po_mtx);
+	pmclog_schedule_all(po);
+	wakeup_one(po);
 
 	/*
 	 * Initiate shutdown: no new data queued,
 	 * thread will close file on last block.
 	 */
 	po->po_flags |= PMC_PO_SHUTDOWN;
-
 	mtx_unlock(&pmc_kthread_mtx);
 
 	return (0);

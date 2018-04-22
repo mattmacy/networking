@@ -625,9 +625,9 @@ struct pmc_op_getdyneventinfo {
 
 #define	PMC_HASH_SIZE				1024
 #define	PMC_MTXPOOL_SIZE			2048
-#define	PMC_LOG_BUFFER_SIZE			4
+#define	PMC_LOG_BUFFER_SIZE			512
 #define	PMC_NLOGBUFFERS				1024
-#define	PMC_NSAMPLES				1024
+#define	PMC_NSAMPLES				4096
 #define	PMC_CALLCHAIN_DEPTH			32
 
 #define PMC_SYSCTL_NAME_PREFIX "kern." PMC_MODULE_NAME "."
@@ -816,11 +816,11 @@ struct pmc_owner  {
 	struct proc		*po_owner;	/* owner proc */
 	uint32_t		po_flags;	/* (k) flags PMC_PO_* */
 	struct proc		*po_kthread;	/* (k) helper kthread */
-	struct pmclog_buffer	*po_curbuf;	/* current log buffer */
 	struct file		*po_file;	/* file reference */
 	int			po_error;	/* recorded error */
 	short			po_sscount;	/* # SS PMCs owned */
 	short			po_logprocmaps;	/* global mappings done */
+	struct pmclog_buffer	*po_curbuf[MAXCPU];	/* current log buffer */
 };
 
 #define	PMC_PO_OWNS_LOGFILE		0x00000001 /* has a log file */
