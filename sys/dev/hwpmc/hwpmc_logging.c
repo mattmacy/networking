@@ -121,6 +121,7 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 		int _len = roundup((LEN), sizeof(uint32_t));	\
 		spinlock_enter();									\
 		if ((_le = pmclog_reserve((PO), _len)) == NULL) {	\
+			spinlock_exit();								\
 			ACTION;						\
 		}							\
 		*_le = _PMCLOG_TO_HEADER(TYPE,_len);			\
@@ -569,7 +570,7 @@ pmclog_reserve(struct pmc_owner *po, int length)
 	*lh++ = ts.tv_sec & 0xFFFFFFFF;
 	*lh++ = ts.tv_nsec & 0xFFFFFFF;
 	return ((uint32_t *) oldptr);
-fail:			
+ fail:
 	return (NULL);
 }
 
@@ -743,6 +744,9 @@ pmclog_deconfigure_log(struct pmc_owner *po)
 			mtx_unlock_spin(&pmc_bufferlist_mtx);
 		}
 	}
+	thread_lock(curthread);
+	sched_unbind(curthread);
+	thread_unlock(curthread);
 
 	/* drop a reference to the fd */
 	if (po->po_file != NULL) {
@@ -797,7 +801,12 @@ pmclog_flush(struct pmc_owner *po)
 static void
 pmclog_schedule_one(void *arg)
 {
-	pmclog_schedule_io((struct pmc_owner *)arg);
+	struct pmc_owner *po = arg;
+
+	spinlock_enter();
+	if (po->po_curbuf[curcpu] != NULL)
+		pmclog_schedule_io(po);
+	spinlock_exit();
 }
 
 static void
