@@ -2192,7 +2192,7 @@ pmc_allocate_pmc_descriptor(void)
 
 	pmc = malloc(sizeof(struct pmc), M_PMC, M_WAITOK|M_ZERO);
 	pmc->pm_runcount = counter_u64_alloc(M_WAITOK);
-	pmc->pm_pcpu_state = malloc(sizeof(struct pmc_pcpu_state), M_PMC, M_WAITOK|M_ZERO);
+	pmc->pm_pcpu_state = malloc(sizeof(struct pmc_pcpu_state)*mp_ncpus, M_PMC, M_WAITOK|M_ZERO);
 	PMCDBG1(PMC,ALL,1, "allocate-pmc -> pmc=%p", pmc);
 
 	return pmc;
