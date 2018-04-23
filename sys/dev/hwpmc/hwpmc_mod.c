@@ -4820,7 +4820,8 @@ static int
 pmc_initialize(void)
 {
 	int c, cpu, error, n, ri;
-	unsigned int maxcpu;
+	unsigned int maxcpu, domain;
+	struct pcpu *pc;
 	struct pmc_binding pb;
 	struct pmc_sample *ps;
 	struct pmc_classdep *pcd;
@@ -4944,9 +4945,10 @@ pmc_initialize(void)
 	for (cpu = 0; cpu < maxcpu; cpu++) {
 		if (!pmc_cpu_is_active(cpu))
 			continue;
-
-		sb = malloc(sizeof(struct pmc_samplebuffer) +
-		    pmc_nsamples * sizeof(struct pmc_sample), M_PMC,
+		pc = pcpu_find(cpu);
+		domain = pc->pc_domain;
+		sb = malloc_domain(sizeof(struct pmc_samplebuffer) +
+			pmc_nsamples * sizeof(struct pmc_sample), M_PMC, domain,
 		    M_WAITOK|M_ZERO);
 		sb->ps_read = sb->ps_write = sb->ps_samples;
 		sb->ps_fence = sb->ps_samples + pmc_nsamples;
@@ -4954,8 +4956,8 @@ pmc_initialize(void)
 		KASSERT(pmc_pcpu[cpu] != NULL,
 		    ("[pmc,%d] cpu=%d Null per-cpu data", __LINE__, cpu));
 
-		sb->ps_callchains = malloc(pmc_callchaindepth * pmc_nsamples *
-		    sizeof(uintptr_t), M_PMC, M_WAITOK|M_ZERO);
+		sb->ps_callchains = malloc_domain(pmc_callchaindepth * pmc_nsamples *
+			sizeof(uintptr_t), M_PMC, domain, M_WAITOK|M_ZERO);
 
 		for (n = 0, ps = sb->ps_samples; n < pmc_nsamples; n++, ps++)
 			ps->ps_pc = sb->ps_callchains +
@@ -4963,8 +4965,8 @@ pmc_initialize(void)
 
 		pmc_pcpu[cpu]->pc_sb[PMC_HR] = sb;
 
-		sb = malloc(sizeof(struct pmc_samplebuffer) +
-		    pmc_nsamples * sizeof(struct pmc_sample), M_PMC,
+		sb = malloc_domain(sizeof(struct pmc_samplebuffer) +
+			pmc_nsamples * sizeof(struct pmc_sample), M_PMC, domain,
 		    M_WAITOK|M_ZERO);
 		sb->ps_read = sb->ps_write = sb->ps_samples;
 		sb->ps_fence = sb->ps_samples + pmc_nsamples;
@@ -4972,8 +4974,8 @@ pmc_initialize(void)
 		KASSERT(pmc_pcpu[cpu] != NULL,
 		    ("[pmc,%d] cpu=%d Null per-cpu data", __LINE__, cpu));
 
-		sb->ps_callchains = malloc(pmc_callchaindepth * pmc_nsamples *
-		    sizeof(uintptr_t), M_PMC, M_WAITOK|M_ZERO);
+		sb->ps_callchains = malloc_domain(pmc_callchaindepth * pmc_nsamples *
+			sizeof(uintptr_t), M_PMC, domain, M_WAITOK|M_ZERO);
 
 		for (n = 0, ps = sb->ps_samples; n < pmc_nsamples; n++, ps++)
 			ps->ps_pc = sb->ps_callchains +
