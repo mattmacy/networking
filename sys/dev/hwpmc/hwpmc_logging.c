@@ -81,31 +81,28 @@ SYSCTL_INT(_kern_hwpmc, OID_AUTO, logbuffersize, CTLFLAG_RDTUN,
  * kern.hwpmc.nbuffer -- number of global log buffers
  */
 
-static int pmc_nlogbuffers = PMC_NLOGBUFFERS;
+static int pmc_nlogbuffers_pcpu = PMC_NLOGBUFFERS_PCPU;
 #if (__FreeBSD_version < 1100000)
-TUNABLE_INT(PMC_SYSCTL_NAME_PREFIX "nbuffers", &pmc_nlogbuffers);
+TUNABLE_INT(PMC_SYSCTL_NAME_PREFIX "nbuffers", &pmc_nlogbuffers_pcpu);
 #endif
-SYSCTL_INT(_kern_hwpmc, OID_AUTO, nbuffers, CTLFLAG_RDTUN,
-    &pmc_nlogbuffers, 0, "number of global log buffers");
+SYSCTL_INT(_kern_hwpmc, OID_AUTO, nbuffers_pcpu, CTLFLAG_RDTUN,
+    &pmc_nlogbuffers_pcpu, 0, "number of log buffers per cpu");
 
 /*
  * Global log buffer list and associated spin lock.
  */
 
-TAILQ_HEAD(, pmclog_buffer) pmc_bufferlist =
-	TAILQ_HEAD_INITIALIZER(pmc_bufferlist);
-static struct mtx pmc_bufferlist_mtx;	/* spin lock */
 static struct mtx pmc_kthread_mtx;	/* sleep lock */
 
-#define	PMCLOG_INIT_BUFFER_DESCRIPTOR(D) do {				\
-		const int __roundup = roundup(sizeof(*D),		\
-			sizeof(uint32_t));				\
-		(D)->plb_fence = ((char *) (D)) +			\
-			 1024*pmclog_buffer_size;			\
-		(D)->plb_base  = (D)->plb_ptr = ((char *) (D)) +	\
-			__roundup;					\
+#define	PMCLOG_INIT_BUFFER_DESCRIPTOR(D, buf, domain) do {						\
+		(D)->plb_fence = ((char *) (buf)) +	1024*pmclog_buffer_size;			\
+		(D)->plb_base  = (D)->plb_ptr = ((char *) (buf));				\
+		(D)->plb_domain = domain; \
 	} while (0)
 
+#define	PMCLOG_RESET_BUFFER_DESCRIPTOR(D) do {			\
+		(D)->plb_ptr  = (D)->plb_base; \
+	} while (0)
 
 /*
  * Log file record constructors.
@@ -190,7 +187,18 @@ struct pmclog_buffer {
 	char 		*plb_base;
 	char		*plb_ptr;
 	char 		*plb_fence;
-};
+	uint16_t	 plb_domain;
+} __aligned(CACHE_LINE_SIZE);
+
+struct pmc_domain_buffer_header {
+	struct mtx pdbh_mtx;
+	TAILQ_HEAD(, pmclog_buffer) pdbh_head;
+	struct pmclog_buffer *pdbh_plbs;
+	int pdbh_ncpus;
+} __aligned(CACHE_LINE_SIZE);
+
+struct pmc_domain_buffer_header *pmc_dom_hdrs[MAXMEMDOM];
+
 
 /*
  * Prototypes
@@ -208,6 +216,21 @@ static void pmclog_stop_kthread(struct pmc_owner *po);
  * Helper functions
  */
 
+static inline void
+pmc_plb_rele_unlocked(struct pmclog_buffer *plb)
+{
+	TAILQ_INSERT_HEAD(&pmc_dom_hdrs[plb->plb_domain]->pdbh_head, plb, plb_next);
+}
+
+static inline void
+pmc_plb_rele(struct pmclog_buffer *plb)
+{
+	mtx_lock_spin(&pmc_dom_hdrs[plb->plb_domain]->pdbh_mtx);
+	pmc_plb_rele_unlocked(plb);
+	mtx_unlock_spin(&pmc_dom_hdrs[plb->plb_domain]->pdbh_mtx);
+}
+
+
 /*
  * Get a log buffer
  */
@@ -216,14 +239,16 @@ static int
 pmclog_get_buffer(struct pmc_owner *po)
 {
 	struct pmclog_buffer *plb;
+	int domain;
 
 	KASSERT(po->po_curbuf[curcpu] == NULL,
 	    ("[pmclog,%d] po=%p current buffer still valid", __LINE__, po));
 
-	mtx_lock_spin(&pmc_bufferlist_mtx);
-	if ((plb = TAILQ_FIRST(&pmc_bufferlist)) != NULL)
-		TAILQ_REMOVE(&pmc_bufferlist, plb, plb_next);
-	mtx_unlock_spin(&pmc_bufferlist_mtx);
+	domain = PCPU_GET(domain);
+	mtx_lock_spin(&pmc_dom_hdrs[domain]->pdbh_mtx);
+	if ((plb = TAILQ_FIRST(&pmc_dom_hdrs[domain]->pdbh_head)) != NULL)
+		TAILQ_REMOVE(&pmc_dom_hdrs[domain]->pdbh_head, plb, plb_next);
+	mtx_unlock_spin(&pmc_dom_hdrs[domain]->pdbh_mtx);
 
 	PMCDBG2(LOG,GTB,1, "po=%p plb=%p", po, plb);
 
@@ -430,12 +455,9 @@ pmclog_loop(void *arg)
 		mtx_lock(&pmc_kthread_mtx);
 
 		/* put the used buffer back into the global pool */
-		PMCLOG_INIT_BUFFER_DESCRIPTOR(lb);
+		PMCLOG_RESET_BUFFER_DESCRIPTOR(lb);
 
-		mtx_lock_spin(&pmc_bufferlist_mtx);
-		TAILQ_INSERT_HEAD(&pmc_bufferlist, lb, plb_next);
-		mtx_unlock_spin(&pmc_bufferlist_mtx);
-
+		pmc_plb_rele(lb);
 		lb = NULL;
 	}
 
@@ -446,11 +468,9 @@ pmclog_loop(void *arg)
 
 	/* return the current I/O buffer to the global pool */
 	if (lb) {
-		PMCLOG_INIT_BUFFER_DESCRIPTOR(lb);
+		PMCLOG_RESET_BUFFER_DESCRIPTOR(lb);
 
-		mtx_lock_spin(&pmc_bufferlist_mtx);
-		TAILQ_INSERT_HEAD(&pmc_bufferlist, lb, plb_next);
-		mtx_unlock_spin(&pmc_bufferlist_mtx);
+		pmc_plb_rele(lb);
 	}
 
 	/*
@@ -732,10 +752,8 @@ pmclog_deconfigure_log(struct pmc_owner *po)
 	/* return all queued log buffers to the global pool */
 	while ((lb = TAILQ_FIRST(&po->po_logbuffers)) != NULL) {
 		TAILQ_REMOVE(&po->po_logbuffers, lb, plb_next);
-		PMCLOG_INIT_BUFFER_DESCRIPTOR(lb);
-		mtx_lock_spin(&pmc_bufferlist_mtx);
-		TAILQ_INSERT_HEAD(&pmc_bufferlist, lb, plb_next);
-		mtx_unlock_spin(&pmc_bufferlist_mtx);
+		PMCLOG_RESET_BUFFER_DESCRIPTOR(lb);
+		pmc_plb_rele(lb);
 	}
 	for (int i = 0; i < mp_ncpus; i++) {
 		thread_lock(curthread);
@@ -743,10 +761,8 @@ pmclog_deconfigure_log(struct pmc_owner *po)
 		thread_unlock(curthread);
 		/* return the 'current' buffer to the global pool */
 		if ((lb = po->po_curbuf[curcpu]) != NULL) {
-			PMCLOG_INIT_BUFFER_DESCRIPTOR(lb);
-			mtx_lock_spin(&pmc_bufferlist_mtx);
-			TAILQ_INSERT_HEAD(&pmc_bufferlist, lb, plb_next);
-			mtx_unlock_spin(&pmc_bufferlist_mtx);
+			PMCLOG_RESET_BUFFER_DESCRIPTOR(lb);
+			pmc_plb_rele(lb);
 		}
 	}
 	thread_lock(curthread);
@@ -1115,30 +1131,57 @@ pmclog_process_userlog(struct pmc_owner *po, struct pmc_op_writelog *wl)
 void
 pmclog_initialize()
 {
-	int n;
+	int domain, cpu;
+	struct pcpu *pc;
 	struct pmclog_buffer *plb;
 
-	if (pmclog_buffer_size <= 0) {
+	if (pmclog_buffer_size <= 0 || pmclog_buffer_size > 16*1024) {
 		(void) printf("hwpmc: tunable logbuffersize=%d must be "
-		    "greater than zero.\n", pmclog_buffer_size);
+					  "greater than zero and less than or equal to 16MB.\n",
+					  pmclog_buffer_size);
 		pmclog_buffer_size = PMC_LOG_BUFFER_SIZE;
 	}
 
-	if (pmc_nlogbuffers <= 0) {
+	if (pmc_nlogbuffers_pcpu <= 0) {
 		(void) printf("hwpmc: tunable nlogbuffers=%d must be greater "
-		    "than zero.\n", pmc_nlogbuffers);
-		pmc_nlogbuffers = PMC_NLOGBUFFERS;
+					  "than zero.\n", pmc_nlogbuffers_pcpu);
+		pmc_nlogbuffers_pcpu = PMC_NLOGBUFFERS_PCPU;
 	}
 
-	/* create global pool of log buffers */
-	for (n = 0; n < pmc_nlogbuffers; n++) {
-		plb = malloc(1024 * pmclog_buffer_size, M_PMC,
-		    M_WAITOK|M_ZERO);
-		PMCLOG_INIT_BUFFER_DESCRIPTOR(plb);
-		TAILQ_INSERT_HEAD(&pmc_bufferlist, plb, plb_next);
+	if (pmc_nlogbuffers_pcpu*pmclog_buffer_size > 32*1024) {
+		(void) printf("hwpmc: memory allocated pcpu must be less than 32MB (is %dK).\n",
+					  pmc_nlogbuffers_pcpu*pmclog_buffer_size);
+		pmc_nlogbuffers_pcpu = PMC_NLOGBUFFERS_PCPU;
+		pmclog_buffer_size = PMC_LOG_BUFFER_SIZE;
 	}
-	mtx_init(&pmc_bufferlist_mtx, "pmc-buffer-list", "pmc-leaf",
-	    MTX_SPIN);
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		pmc_dom_hdrs[domain] = malloc_domain(sizeof(struct pmc_domain_buffer_header), M_PMC, domain,
+										M_WAITOK|M_ZERO);
+		mtx_init(&pmc_dom_hdrs[domain]->pdbh_mtx, "pmc_bufferlist_mtx", "pmc-leaf", MTX_SPIN);
+		TAILQ_INIT(&pmc_dom_hdrs[domain]->pdbh_head);
+	}
+	CPU_FOREACH(cpu) {
+		if (CPU_ABSENT(cpu))
+			continue;
+		pc = pcpu_find(cpu);
+		domain = pc->pc_domain;
+		pmc_dom_hdrs[domain]->pdbh_ncpus++;
+	}
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		int ncpus = pmc_dom_hdrs[domain]->pdbh_ncpus;
+		int total = ncpus*pmc_nlogbuffers_pcpu;
+
+		plb = malloc_domain(sizeof(struct pmclog_buffer)*total, M_PMC, domain, M_WAITOK|M_ZERO);
+		pmc_dom_hdrs[domain]->pdbh_plbs = plb;
+		for (int i = 0; i < total; i++, plb++) {
+			void *buf;
+
+			buf = malloc_domain(1024 * pmclog_buffer_size, M_PMC, domain,
+								M_WAITOK|M_ZERO);
+			PMCLOG_INIT_BUFFER_DESCRIPTOR(plb, buf, domain);
+			pmc_plb_rele_unlocked(plb);
+		}
+	}
 	mtx_init(&pmc_kthread_mtx, "pmc-kthread", "pmc-sleep", MTX_DEF);
 }
 
@@ -1152,12 +1195,17 @@ void
 pmclog_shutdown()
 {
 	struct pmclog_buffer *plb;
+	int domain;
 
 	mtx_destroy(&pmc_kthread_mtx);
-	mtx_destroy(&pmc_bufferlist_mtx);
 
-	while ((plb = TAILQ_FIRST(&pmc_bufferlist)) != NULL) {
-		TAILQ_REMOVE(&pmc_bufferlist, plb, plb_next);
-		free(plb, M_PMC);
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		mtx_destroy(&pmc_dom_hdrs[domain]->pdbh_mtx);
+		while ((plb = TAILQ_FIRST(&pmc_dom_hdrs[domain]->pdbh_head)) != NULL) {
+			TAILQ_REMOVE(&pmc_dom_hdrs[domain]->pdbh_head, plb, plb_next);
+			free(plb->plb_base, M_PMC);
+		}
+		free(pmc_dom_hdrs[domain]->pdbh_plbs, M_PMC);
+		free(pmc_dom_hdrs[domain], M_PMC);
 	}
 }
