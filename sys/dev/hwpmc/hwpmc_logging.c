@@ -211,6 +211,7 @@ static uint32_t *pmclog_reserve(struct pmc_owner *po, int length);
 static void pmclog_schedule_io(struct pmc_owner *po);
 static void pmclog_schedule_all(struct pmc_owner *po);
 static void pmclog_stop_kthread(struct pmc_owner *po);
+static __inline void pmclog_prefetch(caddr_t ptr, int recordlen);
 
 /*
  * Helper functions
@@ -549,6 +550,7 @@ pmclog_reserve(struct pmc_owner *po, int length)
 		__LINE__, po, plb->plb_ptr, plb->plb_base,
 		plb->plb_fence));
 
+	pmclog_prefetch(plb->plb_ptr, length);
 	oldptr = (uintptr_t) plb->plb_ptr;
 	newptr = oldptr + length;
 
@@ -577,6 +579,7 @@ pmclog_reserve(struct pmc_owner *po, int length)
 	KASSERT(plb != NULL,
 	    ("[pmclog,%d] po=%p no current buffer", __LINE__, po));
 
+	pmclog_prefetch(plb->plb_ptr, length);
 	KASSERT(plb->plb_ptr != NULL,
 	    ("[pmclog,%d] null return from pmc_get_log_buffer", __LINE__));
 
@@ -870,6 +873,30 @@ pmclog_close(struct pmc_owner *po)
 	mtx_unlock(&pmc_kthread_mtx);
 
 	return (0);
+}
+
+static __inline void
+pmclog_prefetch(caddr_t ptr, int recordlen)
+{
+	int lines;
+
+	lines = (recordlen + (CACHE_LINE_SIZE-1)) >> CACHE_LINE_SHIFT;
+	__builtin_prefetch(ptr);
+	__builtin_prefetch(ptr + CACHE_LINE_SIZE);
+	switch(lines) {
+		case 8:
+			__builtin_prefetch(ptr + 7*CACHE_LINE_SIZE);
+		case 7:
+			__builtin_prefetch(ptr + 6*CACHE_LINE_SIZE);
+		case 6:
+			__builtin_prefetch(ptr + 5*CACHE_LINE_SIZE);
+		case 5:
+			__builtin_prefetch(ptr + 4*CACHE_LINE_SIZE);
+		case 4:
+			__builtin_prefetch(ptr + 3*CACHE_LINE_SIZE);
+		case 3:
+			__builtin_prefetch(ptr + 2*CACHE_LINE_SIZE);
+	}
 }
 
 void
