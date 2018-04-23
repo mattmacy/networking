@@ -1311,10 +1311,10 @@ pmc_process_csw_in(struct thread *td)
 
 		/* If a sampling mode PMC, reset stalled state. */
 		if (PMC_TO_MODE(pm) == PMC_MODE_TS)
-			CPU_CLR_ATOMIC(cpu, &pm->pm_stalled);
+			pm->pm_pcpu_state[cpu].pps_stalled = 0;
 
 		/* Indicate that we desire this to run. */
-		CPU_SET_ATOMIC(cpu, &pm->pm_cpustate);
+		pm->pm_pcpu_state[cpu].pps_cpustate = 1;
 
 		/* Start the PMC. */
 		pcd->pcd_start_pmc(cpu, adjri);
@@ -1417,8 +1417,8 @@ pmc_process_csw_out(struct thread *td)
 		 * an interrupt re-enables the PMC after this code has
 		 * already checked the pm_stalled flag.
 		 */
-		CPU_CLR_ATOMIC(cpu, &pm->pm_cpustate);
-		if (!CPU_ISSET(cpu, &pm->pm_stalled))
+		pm->pm_pcpu_state[cpu].pps_cpustate = 0;
+		if (pm->pm_pcpu_state[cpu].pps_stalled == 0)
 			pcd->pcd_stop_pmc(cpu, adjri);
 
 		/* reduce this PMC's runcount */
@@ -2192,7 +2192,7 @@ pmc_allocate_pmc_descriptor(void)
 
 	pmc = malloc(sizeof(struct pmc), M_PMC, M_WAITOK|M_ZERO);
 	pmc->pm_runcount = counter_u64_alloc(M_WAITOK);
-
+	pmc->pm_pcpu_state = malloc(sizeof(struct pmc_pcpu_state), M_PMC, M_WAITOK|M_ZERO);
 	PMCDBG1(PMC,ALL,1, "allocate-pmc -> pmc=%p", pmc);
 
 	return pmc;
@@ -2218,6 +2218,7 @@ pmc_destroy_pmc_descriptor(struct pmc *pm)
 		 counter_u64_fetch(pm->pm_runcount)));
 
 	counter_u64_free(pm->pm_runcount);
+	free(pm->pm_pcpu_state, M_PMC);
 	free(pm, M_PMC);
 }
 
@@ -2297,9 +2298,9 @@ pmc_release_pmc_descriptor(struct pmc *pm)
 		pmc_select_cpu(cpu);
 
 		/* switch off non-stalled CPUs */
-		CPU_CLR_ATOMIC(cpu, &pm->pm_cpustate);
+		pm->pm_pcpu_state[cpu].pps_cpustate = 0;
 		if (pm->pm_state == PMC_STATE_RUNNING &&
-		    !CPU_ISSET(cpu, &pm->pm_stalled)) {
+			pm->pm_pcpu_state[cpu].pps_stalled == 0) {
 
 			phw = pmc_pcpu[cpu]->pc_hwpmcs[ri];
 
@@ -2737,10 +2738,10 @@ pmc_start(struct pmc *pm)
 		 pm->pm_sc.pm_initial)) == 0) {
 		/* If a sampling mode PMC, reset stalled state. */
 		if (PMC_IS_SAMPLING_MODE(mode))
-			CPU_CLR_ATOMIC(cpu, &pm->pm_stalled);
+			pm->pm_pcpu_state[cpu].pps_stalled = 0;
 
 		/* Indicate that we desire this to run. Start it. */
-		CPU_SET_ATOMIC(cpu, &pm->pm_cpustate);
+		pm->pm_pcpu_state[cpu].pps_cpustate = 1;
 		error = pcd->pcd_start_pmc(cpu, adjri);
 	}
 	critical_exit();
@@ -2804,7 +2805,7 @@ pmc_stop(struct pmc *pm)
 	ri = PMC_TO_ROWINDEX(pm);
 	pcd = pmc_ri_to_classdep(md, ri, &adjri);
 
-	CPU_CLR_ATOMIC(cpu, &pm->pm_cpustate);
+	pm->pm_pcpu_state[cpu].pps_cpustate = 0;
 	critical_enter();
 	if ((error = pcd->pcd_stop_pmc(cpu, adjri)) == 0)
 		error = pcd->pcd_read_pmc(cpu, adjri, &pm->pm_sc.pm_initial);
@@ -4125,7 +4126,7 @@ pmc_process_interrupt(int cpu, int ring, struct pmc *pm, struct trapframe *tf,
 
 	ps = psb->ps_write;
 	if (ps->ps_nsamples) {	/* in use, reader hasn't caught up */
-		CPU_SET_ATOMIC(cpu, &pm->pm_stalled);
+		pm->pm_pcpu_state[cpu].pps_stalled = 1;
 		counter_u64_add(pmc_stats.pm_intr_bufferfull, 1);
 		PMCDBG6(SAM,INT,1,"(spc) cpu=%d pm=%p tf=%p um=%d wr=%d rd=%d",
 		    cpu, pm, (void *) tf, inuserspace,
@@ -4398,11 +4399,11 @@ pmc_process_samples(int cpu, int ring)
 		if (pm == NULL ||			 /* !cfg'ed */
 		    pm->pm_state != PMC_STATE_RUNNING || /* !active */
 		    !PMC_IS_SAMPLING_MODE(PMC_TO_MODE(pm)) || /* !sampling */
-		    !CPU_ISSET(cpu, &pm->pm_cpustate) || /* !desired */
-		    !CPU_ISSET(cpu, &pm->pm_stalled)) /* !stalled */
+			!pm->pm_pcpu_state[cpu].pps_cpustate  || /* !desired */
+		    !pm->pm_pcpu_state[cpu].pps_stalled) /* !stalled */
 			continue;
 
-		CPU_CLR_ATOMIC(cpu, &pm->pm_stalled);
+		pm->pm_pcpu_state[cpu].pps_stalled = 0;
 		(*pcd->pcd_start_pmc)(cpu, adjri);
 	}
 }
@@ -4532,9 +4533,9 @@ pmc_process_exit(void *arg __unused, struct proc *p)
 			 * the PMC after this code has already checked
 			 * the pm_stalled flag.
 			 */
-			if (CPU_ISSET(cpu, &pm->pm_cpustate)) {
-				CPU_CLR_ATOMIC(cpu, &pm->pm_cpustate);
-				if (!CPU_ISSET(cpu, &pm->pm_stalled)) {
+			if (pm->pm_pcpu_state[cpu].pps_cpustate) {
+				pm->pm_pcpu_state[cpu].pps_cpustate = 0;
+				if (!pm->pm_pcpu_state[cpu].pps_stalled) {
 					(void) pcd->pcd_stop_pmc(cpu, adjri);
 					pcd->pcd_read_pmc(cpu, adjri,
 					    &newvalue);
