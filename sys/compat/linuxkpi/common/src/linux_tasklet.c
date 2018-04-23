@@ -110,7 +110,7 @@ tasklet_subsystem_init(void *arg __unused)
 		snprintf(buf, sizeof(buf), "softirq%d", i);
 		taskqgroup_attach_cpu(qgroup_softirq, &tw->gtask,
 		    "tasklet", i, -1, buf);
-       }
+	}
 }
 SYSINIT(linux_tasklet, SI_SUB_TASKQ, SI_ORDER_THIRD, tasklet_subsystem_init, NULL);
 

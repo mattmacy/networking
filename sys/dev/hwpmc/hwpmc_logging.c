@@ -239,9 +239,9 @@ pmclog_get_buffer(struct pmc_owner *po)
 	po->po_curbuf[curcpu] = plb;
 
 	/* update stats */
-	atomic_add_int(&pmc_stats.pm_buffer_requests, 1);
+	counter_u64_add(pmc_stats.pm_buffer_requests, 1);
 	if (plb == NULL)
-		atomic_add_int(&pmc_stats.pm_buffer_requests_failed, 1);
+		counter_u64_add(pmc_stats.pm_buffer_requests_failed, 1);
 
 	return (plb ? 0 : ENOMEM);
 }
