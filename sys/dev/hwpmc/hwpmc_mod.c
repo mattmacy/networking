@@ -138,7 +138,7 @@ static eventhandler_tag	pmc_exit_tag, pmc_fork_tag, pmc_kld_load_tag,
     pmc_kld_unload_tag;
 
 /* Module statistics */
-struct pmc_op_getdriverstats pmc_stats;
+struct pmc_driverstats pmc_stats;
 
 /* Machine/processor dependent operations */
 static struct pmc_mdep  *md;
@@ -1260,7 +1260,7 @@ pmc_process_csw_in(struct thread *td)
 			continue;
 
 		/* increment PMC runcount */
-		atomic_add_rel_int(&pm->pm_runcount, 1);
+		counter_u64_add(pm->pm_runcount, 1);
 
 		/* configure the HWPMC we are going to use. */
 		pcd = pmc_ri_to_classdep(md, ri, &adjri);
@@ -1422,7 +1422,7 @@ pmc_process_csw_out(struct thread *td)
 			pcd->pcd_stop_pmc(cpu, adjri);
 
 		/* reduce this PMC's runcount */
-		atomic_subtract_rel_int(&pm->pm_runcount, 1);
+		counter_u64_add(pm->pm_runcount, -1);
 
 		/*
 		 * If this PMC is associated with this process,
@@ -2191,6 +2191,7 @@ pmc_allocate_pmc_descriptor(void)
 	struct pmc *pmc;
 
 	pmc = malloc(sizeof(struct pmc), M_PMC, M_WAITOK|M_ZERO);
+	pmc->pm_runcount = counter_u64_alloc(M_WAITOK);
 
 	PMCDBG1(PMC,ALL,1, "allocate-pmc -> pmc=%p", pmc);
 
@@ -2212,10 +2213,11 @@ pmc_destroy_pmc_descriptor(struct pmc *pm)
 	    ("[pmc,%d] destroying pmc with targets", __LINE__));
 	KASSERT(pm->pm_owner == NULL,
 	    ("[pmc,%d] destroying pmc attached to an owner", __LINE__));
-	KASSERT(pm->pm_runcount == 0,
-	    ("[pmc,%d] pmc has non-zero run count %d", __LINE__,
-		pm->pm_runcount));
+	KASSERT(counter_u64_fetch(pm->pm_runcount) == 0,
+	    ("[pmc,%d] pmc has non-zero run count %ld", __LINE__,
+		 counter_u64_fetch(pm->pm_runcount)));
 
+	counter_u64_free(pm->pm_runcount);
 	free(pm, M_PMC);
 }
 
@@ -2231,13 +2233,13 @@ pmc_wait_for_pmc_idle(struct pmc *pm)
 	 * Loop (with a forced context switch) till the PMC's runcount
 	 * comes down to zero.
 	 */
-	while (atomic_load_acq_32(&pm->pm_runcount) > 0) {
+	while (counter_u64_fetch(pm->pm_runcount) > 0) {
 #ifdef HWPMC_DEBUG
 		maxloop--;
 		KASSERT(maxloop > 0,
-		    ("[pmc,%d] (ri%d, rc%d) waiting too long for "
+		    ("[pmc,%d] (ri%d, rc%ld) waiting too long for "
 			"pmc to be free", __LINE__,
-			PMC_TO_ROWINDEX(pm), pm->pm_runcount));
+			 PMC_TO_ROWINDEX(pm), counter_u64_fetch(pm->pm_runcount)));
 #endif
 		pmc_force_context_switch();
 	}
@@ -2884,7 +2886,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 	    pmc_op_to_name[op], arg);
 
 	error = 0;
-	atomic_add_int(&pmc_stats.pm_syscalls, 1);
+	counter_u64_add(pmc_stats.pm_syscalls, 1);
 
 	switch (op) {
 
@@ -3063,8 +3065,16 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 	case PMC_OP_GETDRIVERSTATS:
 	{
 		struct pmc_op_getdriverstats gms;
-
-		bcopy(&pmc_stats, &gms, sizeof(gms));
+#define CFETCH(a, b, field) a.field = counter_u64_fetch(b.field)
+		CFETCH(gms, pmc_stats, pm_intr_ignored);
+		CFETCH(gms, pmc_stats, pm_intr_processed);
+		CFETCH(gms, pmc_stats, pm_intr_bufferfull);
+		CFETCH(gms, pmc_stats, pm_syscalls);
+		CFETCH(gms, pmc_stats, pm_syscall_errors);
+		CFETCH(gms, pmc_stats, pm_buffer_requests);
+		CFETCH(gms, pmc_stats, pm_buffer_requests_failed);
+		CFETCH(gms, pmc_stats, pm_log_sweeps);
+#undef CFETCH
 		error = copyout(&gms, arg, sizeof(gms));
 	}
 	break;
@@ -4040,7 +4050,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		sx_xunlock(&pmc_sx);
 done_syscall:
 	if (error)
-		atomic_add_int(&pmc_stats.pm_syscall_errors, 1);
+		counter_u64_add(pmc_stats.pm_syscall_errors, 1);
 
 	return (error);
 }
@@ -4116,7 +4126,7 @@ pmc_process_interrupt(int cpu, int ring, struct pmc *pm, struct trapframe *tf,
 	ps = psb->ps_write;
 	if (ps->ps_nsamples) {	/* in use, reader hasn't caught up */
 		CPU_SET_ATOMIC(cpu, &pm->pm_stalled);
-		atomic_add_int(&pmc_stats.pm_intr_bufferfull, 1);
+		counter_u64_add(pmc_stats.pm_intr_bufferfull, 1);
 		PMCDBG6(SAM,INT,1,"(spc) cpu=%d pm=%p tf=%p um=%d wr=%d rd=%d",
 		    cpu, pm, (void *) tf, inuserspace,
 		    (int) (psb->ps_write - psb->ps_samples),
@@ -4133,11 +4143,11 @@ pmc_process_interrupt(int cpu, int ring, struct pmc *pm, struct trapframe *tf,
 	    (int) (psb->ps_write - psb->ps_samples),
 	    (int) (psb->ps_read - psb->ps_samples));
 
-	KASSERT(pm->pm_runcount >= 0,
-	    ("[pmc,%d] pm=%p runcount %d", __LINE__, (void *) pm,
-		pm->pm_runcount));
+	KASSERT(counter_u64_fetch(pm->pm_runcount) >= 0,
+	    ("[pmc,%d] pm=%p runcount %ld", __LINE__, (void *) pm,
+		 counter_u64_fetch(pm->pm_runcount)));
 
-	atomic_add_rel_int(&pm->pm_runcount, 1);	/* hold onto PMC */
+	counter_u64_add(pm->pm_runcount, 1);	/* hold onto PMC */
 
 	ps->ps_pmc = pm;
 	if ((td = curthread) && td->td_proc)
@@ -4244,8 +4254,8 @@ pmc_capture_user_callchain(int cpu, int ring, struct trapframe *tf)
 		    ("[pmc,%d] Retrieving callchain for PMC that doesn't "
 			"want it", __LINE__));
 
-		KASSERT(pm->pm_runcount > 0,
-		    ("[pmc,%d] runcount %d", __LINE__, pm->pm_runcount));
+		KASSERT(counter_u64_fetch(pm->pm_runcount) > 0,
+		    ("[pmc,%d] runcount %ld", __LINE__, counter_u64_fetch(pm->pm_runcount)));
 
 		/*
 		 * Retrieve the callchain and mark the sample buffer
@@ -4309,9 +4319,9 @@ pmc_process_samples(int cpu, int ring)
 
 		pm = ps->ps_pmc;
 
-		KASSERT(pm->pm_runcount > 0,
-		    ("[pmc,%d] pm=%p runcount %d", __LINE__, (void *) pm,
-			pm->pm_runcount));
+		KASSERT(counter_u64_fetch(pm->pm_runcount) > 0,
+		    ("[pmc,%d] pm=%p runcount %ld", __LINE__, (void *) pm,
+			 counter_u64_fetch(pm->pm_runcount)));
 
 		po = pm->pm_owner;
 
@@ -4359,7 +4369,7 @@ pmc_process_samples(int cpu, int ring)
 
 	entrydone:
 		ps->ps_nsamples = 0; /* mark entry as free */
-		atomic_subtract_rel_int(&pm->pm_runcount, 1);
+		counter_u64_add(pm->pm_runcount, -1);
 
 		/* increment read pointer, modulo sample size */
 		if (++ps == psb->ps_fence)
@@ -4368,7 +4378,7 @@ pmc_process_samples(int cpu, int ring)
 			psb->ps_read = ps;
 	}
 
-	atomic_add_int(&pmc_stats.pm_log_sweeps, 1);
+	counter_u64_add(pmc_stats.pm_log_sweeps, 1);
 
 	/* Do not re-enable stalled PMCs if we failed to process any samples */
 	if (n == 0)
@@ -4513,9 +4523,9 @@ pmc_process_exit(void *arg __unused, struct proc *p)
 			    ("[pmc,%d] pm %p != pp_pmcs[%d] %p",
 				__LINE__, pm, ri, pp->pp_pmcs[ri].pp_pmc));
 
-			KASSERT(pm->pm_runcount > 0,
-			    ("[pmc,%d] bad runcount ri %d rc %d",
-				__LINE__, ri, pm->pm_runcount));
+			KASSERT(counter_u64_fetch(pm->pm_runcount) > 0,
+			    ("[pmc,%d] bad runcount ri %d rc %ld",
+				 __LINE__, ri, counter_u64_fetch(pm->pm_runcount)));
 
 			/*
 			 * Change desired state, and then stop if not
@@ -4540,9 +4550,9 @@ pmc_process_exit(void *arg __unused, struct proc *p)
 				}
 			}
 
-			atomic_subtract_rel_int(&pm->pm_runcount,1);
+			counter_u64_add(pm->pm_runcount, -1);
 
-			KASSERT((int) pm->pm_runcount >= 0,
+			KASSERT((int) counter_u64_fetch(pm->pm_runcount) >= 0,
 			    ("[pmc,%d] runcount is %d", __LINE__, ri));
 
 			(void) pcd->pcd_config_pmc(cpu, adjri, NULL);
@@ -4895,6 +4905,14 @@ pmc_initialize(void)
 
 	maxcpu = pmc_cpu_max();
 
+	pmc_stats.pm_intr_ignored = counter_u64_alloc(M_WAITOK|M_ZERO);
+	pmc_stats.pm_intr_processed = counter_u64_alloc(M_WAITOK|M_ZERO);
+	pmc_stats.pm_intr_bufferfull = counter_u64_alloc(M_WAITOK|M_ZERO);
+	pmc_stats.pm_syscalls = counter_u64_alloc(M_WAITOK|M_ZERO);
+	pmc_stats.pm_syscall_errors = counter_u64_alloc(M_WAITOK|M_ZERO);
+	pmc_stats.pm_buffer_requests = counter_u64_alloc(M_WAITOK|M_ZERO);
+	pmc_stats.pm_buffer_requests_failed = counter_u64_alloc(M_WAITOK|M_ZERO);
+	pmc_stats.pm_log_sweeps = counter_u64_alloc(M_WAITOK|M_ZERO);
 	/* allocate space for the per-cpu array */
 	pmc_pcpu = malloc(maxcpu * sizeof(struct pmc_cpu *), M_PMC,
 	    M_WAITOK|M_ZERO);
@@ -5164,6 +5182,14 @@ pmc_cleanup(void)
 		free(pmc_pcpu[cpu], M_PMC);
 	}
 
+	counter_u64_free(pmc_stats.pm_intr_ignored);
+	counter_u64_free(pmc_stats.pm_intr_processed);
+	counter_u64_free(pmc_stats.pm_intr_bufferfull);
+	counter_u64_free(pmc_stats.pm_syscalls);
+	counter_u64_free(pmc_stats.pm_syscall_errors);
+	counter_u64_free(pmc_stats.pm_buffer_requests);
+	counter_u64_free(pmc_stats.pm_buffer_requests_failed);
+	counter_u64_free(pmc_stats.pm_log_sweeps);
 	free(pmc_pcpu, M_PMC);
 	pmc_pcpu = NULL;
 

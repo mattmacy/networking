@@ -36,7 +36,7 @@
 #define	_SYS_PMC_H_
 
 #include <dev/hwpmc/pmc_events.h>
-
+#include <sys/counter.h>
 #include <machine/pmc_mdep.h>
 #include <machine/profile.h>
 
@@ -553,6 +553,19 @@ struct pmc_op_configurelog {
  * Retrieve pmc(4) driver-wide statistics.
  */
 
+struct pmc_driverstats {
+	counter_u64_t	pm_intr_ignored;	/* #interrupts ignored */
+	counter_u64_t	pm_intr_processed;	/* #interrupts processed */
+	counter_u64_t	pm_intr_bufferfull;	/* #interrupts with ENOSPC */
+	counter_u64_t	pm_syscalls;		/* #syscalls */
+	counter_u64_t	pm_syscall_errors;	/* #syscalls with errors */
+	counter_u64_t	pm_buffer_requests;	/* #buffer requests */
+	counter_u64_t	pm_buffer_requests_failed; /* #failed buffer requests */
+	counter_u64_t	pm_log_sweeps;		/* #sample buffer processing
+						   passes */
+};
+
+
 struct pmc_op_getdriverstats {
 	unsigned int	pm_intr_ignored;	/* #interrupts ignored */
 	unsigned int	pm_intr_processed;	/* #interrupts processed */
@@ -741,7 +754,7 @@ struct pmc {
 	enum pmc_event	pm_event;	/* event being measured */
 	uint32_t	pm_flags;	/* additional flags PMC_F_... */
 	struct pmc_owner *pm_owner;	/* owner thread state */
-	int		pm_runcount;	/* #cpus currently on */
+	counter_u64_t		pm_runcount;	/* #cpus currently on */
 	enum pmc_state	pm_state;	/* current PMC state */
 	uint32_t	pm_overflowcnt;	/* count overflow interrupts */
 
@@ -1012,7 +1025,7 @@ struct pmc_mdep  {
 extern struct pmc_cpu **pmc_pcpu;
 
 /* driver statistics */
-extern struct pmc_op_getdriverstats pmc_stats;
+extern struct pmc_driverstats pmc_stats;
 
 #if	defined(HWPMC_DEBUG)
 #include <sys/ktr.h>
