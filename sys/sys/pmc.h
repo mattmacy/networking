@@ -714,7 +714,10 @@ struct pmc_target {
  * field is '0'.
  *
  */
-
+struct pmc_pcpu_state {
+	uint8_t pps_stalled;
+	uint8_t pps_cpustate;
+} __aligned(CACHE_LINE_SIZE);
 struct pmc {
 	LIST_HEAD(,pmc_target)	pm_targets;	/* list of target processes */
 	LIST_ENTRY(pmc)		pm_next;	/* owner's list */
@@ -748,7 +751,7 @@ struct pmc {
 		pmc_value_t	pm_initial;	/* counting PMC modes */
 	} pm_sc;
 
-	volatile cpuset_t pm_stalled;	/* marks stalled sampling PMCs */
+	struct pmc_pcpu_state *pm_pcpu_state;
 	volatile cpuset_t pm_cpustate;	/* CPUs where PMC should be active */
 	uint32_t	pm_caps;	/* PMC capabilities */
 	enum pmc_event	pm_event;	/* event being measured */
