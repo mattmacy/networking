@@ -1537,7 +1537,7 @@ pmc_process_mmap(struct thread *td, struct pmckern_map_in *pkm)
 	/* Inform owners of all system-wide sampling PMCs. */
 	LIST_FOREACH(po, &pmc_ss_owners, po_ssnext)
 	    if (po->po_flags & PMC_PO_OWNS_LOGFILE)
-		pmclog_process_map_in(po, pid, pkm->pm_address, fullpath);
+			pmclog_process_map_in(po, pid, pkm->pm_address, fullpath);
 
 	if ((pp = pmc_find_process_descriptor(td->td_proc, 0)) == NULL)
 		goto done;
@@ -1993,7 +1993,7 @@ pmc_hook_handler(struct thread *td, int function, void *arg)
 		 * had already processed the interrupt).  We don't
 		 * lose the interrupt sample.
 		 */
-		CPU_CLR_ATOMIC(PCPU_GET(cpuid), &pmc_cpumask);
+		DPCPU_SET(pmc_sampled, 0);
 		pmc_process_samples(PCPU_GET(cpuid), PMC_HR);
 		pmc_process_samples(PCPU_GET(cpuid), PMC_SR);
 		break;
@@ -4190,7 +4190,7 @@ pmc_process_interrupt(int cpu, int ring, struct pmc *pm, struct trapframe *tf,
  done:
 	/* mark CPU as needing processing */
 	if (callchaindepth != PMC_SAMPLE_INUSE)
-		CPU_SET_ATOMIC(cpu, &pmc_cpumask);
+		DPCPU_SET(pmc_sampled, 1);
 
 	return (error);
 }
@@ -4285,9 +4285,7 @@ next:
 	sched_unpin();	/* Can migrate safely now. */
 
 	/* mark CPU as needing processing */
-	CPU_SET_ATOMIC(cpu, &pmc_cpumask);
-
-	return;
+	DPCPU_SET(pmc_sampled, 1);
 }
 
 /*
@@ -4336,7 +4334,7 @@ pmc_process_samples(int cpu, int ring)
 		/* If there is a pending AST wait for completion */
 		if (ps->ps_nsamples == PMC_SAMPLE_INUSE) {
 			/* Need a rescan at a later time. */
-			CPU_SET_ATOMIC(cpu, &pmc_cpumask);
+			DPCPU_SET(pmc_sampled, 1);
 			break;
 		}
 
@@ -5066,7 +5064,8 @@ pmc_cleanup(void)
 	PMCDBG0(MOD,INI,0, "cleanup");
 
 	/* switch off sampling */
-	CPU_ZERO(&pmc_cpumask);
+	CPU_FOREACH(cpu)
+		DPCPU_ID_SET(cpu, pmc_sampled, 0);
 	pmc_intr = NULL;
 
 	sx_xlock(&pmc_sx);
