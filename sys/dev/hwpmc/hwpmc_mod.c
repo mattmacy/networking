@@ -1859,9 +1859,6 @@ pmc_sample_handler(void *arg __unused)
 	DPCPU_SET(pmc_sampled, 0);
 	pmc_process_samples(PCPU_GET(cpuid), PMC_HR);
 	pmc_process_samples(PCPU_GET(cpuid), PMC_SR);
-
-	if (DPCPU_GET(pmc_sampled))
-		GROUPTASK_ENQUEUE(DPCPU_PTR(pmc_sample_task));
 }
 
 static int
