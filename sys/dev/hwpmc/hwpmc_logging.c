@@ -84,7 +84,7 @@ SYSCTL_INT(_kern_hwpmc, OID_AUTO, logbuffersize, CTLFLAG_RDTUN,
 
 static int pmc_nlogbuffers_pcpu = PMC_NLOGBUFFERS_PCPU;
 #if (__FreeBSD_version < 1100000)
-TUNABLE_INT(PMC_SYSCTL_NAME_PREFIX "nbuffers", &pmc_nlogbuffers_pcpu);
+TUNABLE_INT(PMC_SYSCTL_NAME_PREFIX "nbuffers_pcpu", &pmc_nlogbuffers_pcpu);
 #endif
 SYSCTL_INT(_kern_hwpmc, OID_AUTO, nbuffers_pcpu, CTLFLAG_RDTUN,
     &pmc_nlogbuffers_pcpu, 0, "number of log buffers per cpu");
@@ -823,9 +823,7 @@ pmclog_flush_handler(void *arg)
 	plb = po->po_curbuf[curcpu];
 	if (plb && plb->plb_ptr != plb->plb_base)
 		pmclog_schedule_io(po);
-	atomic_add_int(&po->po_flush_pend_count, -1);
-	MPASS(po->po_flush_pend_count >= 0);
-	if (po->po_flush_pend_count == 0) {
+	if (refcount_release(&po->po_flush_pend_count)) {
 		mtx_lock(&po->po_mtx);
 		wakeup_one(po);
 		mtx_unlock(&po->po_mtx);
@@ -837,14 +835,17 @@ pmclog_schedule_all(struct pmc_owner *po)
 {
 	int cpu;
 
-	mtx_lock(&po->po_mtx);
-	po->po_flush_pend_count = po->po_cpu_count;
+	mtx_assert(&pmc_kthread_mtx, MA_OWNED);
+	MPASS(po->po_cpu_count);
+	refcount_init(&po->po_flush_pend_count, po->po_cpu_count);
+
 	CPU_FOREACH(cpu) {
 		if (CPU_ABSENT(cpu))
 			continue;
+		MPASS(cpu < po->po_cpu_count);;
 		GROUPTASK_ENQUEUE(&po->po_flushtask[cpu]);
 	}
-	msleep(po, &po->po_mtx, PWAIT|PDROP, "pmcflush", 0);
+	msleep(po, &pmc_kthread_mtx, PWAIT, "pmcflush", 0);
 }
 
 int
