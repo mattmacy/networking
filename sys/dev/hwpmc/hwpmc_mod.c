@@ -5108,6 +5108,7 @@ pmc_cleanup(void)
 	struct pmc_ownerhash *ph;
 	struct pmc_owner *po, *tmp;
 	struct pmc_binding pb;
+	struct grouptask *gtask;
 #ifdef	HWPMC_DEBUG
 	struct pmc_processhash *prh;
 #endif
@@ -5190,6 +5191,12 @@ pmc_cleanup(void)
  	/* do processor and pmc-class dependent cleanup */
 	maxcpu = pmc_cpu_max();
 
+	CPU_FOREACH(cpu) {
+		if (CPU_ABSENT(cpu))
+			continue;
+		gtask = DPCPU_ID_PTR(cpu, pmc_sample_task);
+		taskqgroup_detach(qgroup_softirq, gtask);
+	}
 	PMCDBG0(MOD,INI,3, "md cleanup");
 	if (md) {
 		pmc_save_cpu_binding(&pb);
