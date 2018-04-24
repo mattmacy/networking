@@ -2215,6 +2215,8 @@ pmc_allocate_pmc_descriptor(void)
 static void
 pmc_destroy_pmc_descriptor(struct pmc *pm)
 {
+	struct grouptask *gtask;
+	int cpu;
 
 	KASSERT(pm->pm_state == PMC_STATE_DELETED ||
 	    pm->pm_state == PMC_STATE_FREE,
@@ -2226,7 +2228,12 @@ pmc_destroy_pmc_descriptor(struct pmc *pm)
 	KASSERT(counter_u64_fetch(pm->pm_runcount) == 0,
 	    ("[pmc,%d] pmc has non-zero run count %ld", __LINE__,
 		 counter_u64_fetch(pm->pm_runcount)));
-
+	CPU_FOREACH(cpu) {
+		if (CPU_ABSENT(cpu))
+			continue;
+		gtask = DPCPU_ID_PTR(cpu, pmc_sample_task);
+		gtaskqueue_drain(gtask->gt_taskqueue, &gtask->gt_task);
+	}
 	counter_u64_free(pm->pm_runcount);
 	free(pm->pm_pcpu_state, M_PMC);
 	free(pm, M_PMC);
