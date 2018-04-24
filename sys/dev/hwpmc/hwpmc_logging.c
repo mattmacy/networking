@@ -802,15 +802,13 @@ pmclog_flush(struct pmc_owner *po)
 	 * Check that we do have an active log file.
 	 */
 	mtx_lock(&pmc_kthread_mtx);
-	if ((po->po_flags & PMC_PO_OWNS_LOGFILE) == 0) {
+	if (po->po_flags & PMC_PO_OWNS_LOGFILE) {
+		mtx_unlock(&pmc_kthread_mtx);
+		pmclog_schedule_all(po);
+	} else {
+		mtx_unlock(&pmc_kthread_mtx);
 		error = EINVAL;
-		goto error;
 	}
-
-	pmclog_schedule_all(po);
- error:
-	mtx_unlock(&pmc_kthread_mtx);
-
 	return (error);
 }
 
@@ -854,8 +852,8 @@ pmclog_close(struct pmc_owner *po)
 	PMCDBG1(LOG,CLO,1, "po=%p", po);
 
 	pmclog_process_closelog(po);
-	mtx_lock(&pmc_kthread_mtx);
 	pmclog_schedule_all(po);
+	mtx_lock(&pmc_kthread_mtx);
 	wakeup_one(po);
 
 	/*
