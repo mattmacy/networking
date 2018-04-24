@@ -223,9 +223,9 @@ pmc_plb_rele_unlocked(struct pmclog_buffer *plb)
 static inline void
 pmc_plb_rele(struct pmclog_buffer *plb)
 {
-	mtx_lock_spin(&pmc_dom_hdrs[plb->plb_domain]->pdbh_mtx);
+	mtx_lock(&pmc_dom_hdrs[plb->plb_domain]->pdbh_mtx);
 	pmc_plb_rele_unlocked(plb);
-	mtx_unlock_spin(&pmc_dom_hdrs[plb->plb_domain]->pdbh_mtx);
+	mtx_unlock(&pmc_dom_hdrs[plb->plb_domain]->pdbh_mtx);
 }
 
 
@@ -243,10 +243,10 @@ pmclog_get_buffer(struct pmc_owner *po)
 	    ("[pmclog,%d] po=%p current buffer still valid", __LINE__, po));
 
 	domain = PCPU_GET(domain);
-	mtx_lock_spin(&pmc_dom_hdrs[domain]->pdbh_mtx);
+	mtx_lock(&pmc_dom_hdrs[domain]->pdbh_mtx);
 	if ((plb = TAILQ_FIRST(&pmc_dom_hdrs[domain]->pdbh_head)) != NULL)
 		TAILQ_REMOVE(&pmc_dom_hdrs[domain]->pdbh_head, plb, plb_next);
-	mtx_unlock_spin(&pmc_dom_hdrs[domain]->pdbh_mtx);
+	mtx_unlock(&pmc_dom_hdrs[domain]->pdbh_mtx);
 
 	PMCDBG2(LOG,GTB,1, "po=%p plb=%p", po, plb);
 
@@ -394,9 +394,9 @@ pmclog_loop(void *arg)
 			break;
 
 		if (lb == NULL) { /* look for a fresh buffer to write */
-			mtx_lock_spin(&po->po_mtx);
+			mtx_lock(&po->po_mtx);
 			if ((lb = TAILQ_FIRST(&po->po_logbuffers)) == NULL) {
-				mtx_unlock_spin(&po->po_mtx);
+				mtx_unlock(&po->po_mtx);
 
 				/* No more buffers and shutdown required. */
 				if (po->po_flags & PMC_PO_SHUTDOWN)
@@ -408,7 +408,7 @@ pmclog_loop(void *arg)
 			}
 
 			TAILQ_REMOVE(&po->po_logbuffers, lb, plb_next);
-			mtx_unlock_spin(&po->po_mtx);
+			mtx_unlock(&po->po_mtx);
 		}
 
 		mtx_unlock(&pmc_kthread_mtx);
@@ -625,9 +625,9 @@ pmclog_schedule_io(struct pmc_owner *po)
 	 * Add the current buffer to the tail of the buffer list and
 	 * wakeup the helper.
 	 */
-	mtx_lock_spin(&po->po_mtx);
+	mtx_lock(&po->po_mtx);
 	TAILQ_INSERT_TAIL(&po->po_logbuffers, plb, plb_next);
-	mtx_unlock_spin(&po->po_mtx);
+	mtx_unlock(&po->po_mtx);
 	wakeup_one(po);
 }
 
