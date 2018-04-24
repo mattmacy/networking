@@ -814,38 +814,37 @@ pmclog_flush(struct pmc_owner *po)
 	return (error);
 }
 
-void
-pmclog_flush_handler(void *arg)
-{
-	struct pmc_owner *po = arg;
-	struct pmclog_buffer *plb;
-
-	plb = po->po_curbuf[curcpu];
-	if (plb && plb->plb_ptr != plb->plb_base)
-		pmclog_schedule_io(po);
-	if (refcount_release(&po->po_flush_pend_count)) {
-		mtx_lock(&pmc_kthread_mtx);
-		wakeup_one((void*)(uintptr_t)&po->po_flush_pend_count);
-		mtx_unlock(&pmc_kthread_mtx);
-	}
-}
-
 static void
 pmclog_schedule_all(struct pmc_owner *po)
 {
+	struct pmclog_buffer *plb;
+	struct grouptask *gtask;
+	bool dowakeup;
 	int cpu;
 
-	mtx_assert(&pmc_kthread_mtx, MA_OWNED);
-	MPASS(po->po_cpu_count);
-	refcount_init(&po->po_flush_pend_count, po->po_cpu_count);
-
+	/*
+	 * Schedule the current buffers.
+	 */
+	dowakeup = false;
 	CPU_FOREACH(cpu) {
 		if (CPU_ABSENT(cpu))
 			continue;
-		MPASS(cpu < po->po_cpu_count);;
-		GROUPTASK_ENQUEUE(&po->po_flushtask[cpu]);
+		gtask = DPCPU_ID_PTR(cpu, pmc_sample_task);
+		gtaskqueue_block(gtask->gt_taskqueue);
+		gtaskqueue_drain_all(gtask->gt_taskqueue);
+
+		plb = po->po_curbuf[cpu];
+		po->po_curbuf[cpu] = NULL;
+		if (plb && plb->plb_ptr != plb->plb_base) {
+			dowakeup = true;
+			mtx_lock(&po->po_mtx);
+			TAILQ_INSERT_TAIL(&po->po_logbuffers, plb, plb_next);
+			mtx_unlock(&po->po_mtx);
+		}
+		gtaskqueue_unblock(gtask->gt_taskqueue);
 	}
-	msleep((void *)(uintptr_t)&po->po_flush_pend_count, &pmc_kthread_mtx, PWAIT, "pmcflush", 0);
+	if (dowakeup)
+		wakeup_one(po);
 }
 
 int
@@ -855,12 +854,7 @@ pmclog_close(struct pmc_owner *po)
 	PMCDBG1(LOG,CLO,1, "po=%p", po);
 
 	pmclog_process_closelog(po);
-
 	mtx_lock(&pmc_kthread_mtx);
-
-	/*
-	 * Schedule the current buffer.
-	 */
 	pmclog_schedule_all(po);
 	wakeup_one(po);
 

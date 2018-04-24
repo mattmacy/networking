@@ -1840,7 +1840,7 @@ const char *pmc_hooknames[] = {
 };
 #endif
 
-static DPCPU_DEFINE(struct grouptask, pmc_sample_task);
+DPCPU_DEFINE(struct grouptask, pmc_sample_task);
 
 static void
 pmc_sample_handler(void *arg __unused)
@@ -1856,11 +1856,12 @@ pmc_sample_handler(void *arg __unused)
 		 * had already processed the interrupt).  We don't
 		 * lose the interrupt sample.
 		 */
-	while (DPCPU_GET(pmc_sampled)) {
-		DPCPU_SET(pmc_sampled, 0);
-		pmc_process_samples(PCPU_GET(cpuid), PMC_HR);
-		pmc_process_samples(PCPU_GET(cpuid), PMC_SR);
-	}
+	DPCPU_SET(pmc_sampled, 0);
+	pmc_process_samples(PCPU_GET(cpuid), PMC_HR);
+	pmc_process_samples(PCPU_GET(cpuid), PMC_SR);
+
+	if (DPCPU_GET(pmc_sampled))
+		GROUPTASK_ENQUEUE(DPCPU_PTR(pmc_sample_task));
 }
 
 static int
@@ -2065,31 +2066,15 @@ pmc_hook_handler(struct thread *td, int function, void *arg)
 static struct pmc_owner *
 pmc_allocate_owner_descriptor(struct proc *p)
 {
-	uint32_t hindex, cpu;
+	uint32_t hindex;
 	struct pmc_owner *po;
 	struct pmc_ownerhash *poh;
-	struct grouptask *gtask;
-	char buf[32];
 
 	hindex = PMC_HASH_PTR(p, pmc_ownerhashmask);
 	poh = &pmc_ownerhash[hindex];
 
 	/* allocate space for N pointers and one descriptor struct */
 	po = malloc(sizeof(struct pmc_owner), M_PMC, M_WAITOK|M_ZERO);
-	po->po_flushtask = malloc(sizeof(struct grouptask)*mp_ncpus, M_PMC, M_WAITOK|M_ZERO);
-	gtask = po->po_flushtask;
-	CPU_FOREACH(cpu) {
-		if (CPU_ABSENT(cpu)) {
-			gtask++;
-			continue;
-		}
-		po->po_cpu_count++;
-		GROUPTASK_INIT(gtask, 0, pmclog_flush_handler, po);
-		snprintf(buf, sizeof(buf), "pmc_flush_task%d", cpu);
-		taskqgroup_attach_cpu(qgroup_softirq, gtask,
-			"hwpmc", cpu, -1, buf);
-		gtask++;
-	}
 	po->po_owner = p;
 	LIST_INSERT_HEAD(poh, po, po_next); /* insert into hash table */
 
@@ -2105,23 +2090,11 @@ pmc_allocate_owner_descriptor(struct proc *p)
 static void
 pmc_destroy_owner_descriptor(struct pmc_owner *po)
 {
-	struct grouptask *gtask;
-	int cpu;
 
 	PMCDBG4(OWN,REL,1, "destroy-owner po=%p proc=%p (%d, %s)",
 	    po, po->po_owner, po->po_owner->p_pid, po->po_owner->p_comm);
 
 	mtx_destroy(&po->po_mtx);
-	gtask = po->po_flushtask;
-	CPU_FOREACH(cpu) {
-		if (CPU_ABSENT(cpu)) {
-			gtask++;
-			continue;
-		}
-		taskqgroup_detach(qgroup_softirq, gtask);
-		gtask++;
-	}
-	free(po->po_flushtask, M_PMC);
 	free(po, M_PMC);
 }
 

@@ -836,9 +836,6 @@ struct pmc_owner  {
 	int			po_error;	/* recorded error */
 	short			po_sscount;	/* # SS PMCs owned */
 	short			po_logprocmaps;	/* global mappings done */
-	short			po_cpu_count;
-	volatile int			po_flush_pend_count;	/* # pending flush tasks */
-	struct grouptask *po_flushtask;
 	struct pmclog_buffer	*po_curbuf[MAXCPU];	/* current log buffer */
 };
 
@@ -1164,6 +1161,7 @@ extern struct pmc_debugflags pmc_debugflags;
 /* declare a dedicated memory pool */
 MALLOC_DECLARE(M_PMC);
 
+DPCPU_DECLARE(struct grouptask, pmc_sample_task);
 /*
  * Functions
  */
