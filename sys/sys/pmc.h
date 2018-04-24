@@ -836,6 +836,9 @@ struct pmc_owner  {
 	int			po_error;	/* recorded error */
 	short			po_sscount;	/* # SS PMCs owned */
 	short			po_logprocmaps;	/* global mappings done */
+	short			po_cpu_count;
+	volatile int			po_flush_pend_count;	/* # pending flush tasks */
+	struct grouptask *po_flushtask;
 	struct pmclog_buffer	*po_curbuf[MAXCPU];	/* current log buffer */
 };
 

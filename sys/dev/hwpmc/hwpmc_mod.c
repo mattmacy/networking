@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/eventhandler.h>
 #include <sys/jail.h>
+#include <sys/gtaskqueue.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/limits.h>
@@ -1839,6 +1840,29 @@ const char *pmc_hooknames[] = {
 };
 #endif
 
+static DPCPU_DEFINE(struct grouptask, pmc_sample_task);
+
+static void
+pmc_sample_handler(void *arg __unused)
+{
+		/*
+		 * Clear the cpu specific bit in the CPU mask before
+		 * do the rest of the processing.  If the NMI handler
+		 * gets invoked after the "atomic_clear_int()" call
+		 * below but before "pmc_process_samples()" gets
+		 * around to processing the interrupt, then we will
+		 * come back here at the next hardclock() tick (and
+		 * may find nothing to do if "pmc_process_samples()"
+		 * had already processed the interrupt).  We don't
+		 * lose the interrupt sample.
+		 */
+	while (DPCPU_GET(pmc_sampled)) {
+		DPCPU_SET(pmc_sampled, 0);
+		pmc_process_samples(PCPU_GET(cpuid), PMC_HR);
+		pmc_process_samples(PCPU_GET(cpuid), PMC_SR);
+	}
+}
+
 static int
 pmc_hook_handler(struct thread *td, int function, void *arg)
 {
@@ -1981,23 +2005,8 @@ pmc_hook_handler(struct thread *td, int function, void *arg)
 	 * are being processed.
 	 */
 	case PMC_FN_DO_SAMPLES:
-
-		/*
-		 * Clear the cpu specific bit in the CPU mask before
-		 * do the rest of the processing.  If the NMI handler
-		 * gets invoked after the "atomic_clear_int()" call
-		 * below but before "pmc_process_samples()" gets
-		 * around to processing the interrupt, then we will
-		 * come back here at the next hardclock() tick (and
-		 * may find nothing to do if "pmc_process_samples()"
-		 * had already processed the interrupt).  We don't
-		 * lose the interrupt sample.
-		 */
-		DPCPU_SET(pmc_sampled, 0);
-		pmc_process_samples(PCPU_GET(cpuid), PMC_HR);
-		pmc_process_samples(PCPU_GET(cpuid), PMC_SR);
+		GROUPTASK_ENQUEUE(DPCPU_PTR(pmc_sample_task));
 		break;
-
 	case PMC_FN_MMAP:
 		sx_assert(&pmc_sx, SX_LOCKED);
 		pmc_process_mmap(td, (struct pmckern_map_in *) arg);
@@ -2056,20 +2065,36 @@ pmc_hook_handler(struct thread *td, int function, void *arg)
 static struct pmc_owner *
 pmc_allocate_owner_descriptor(struct proc *p)
 {
-	uint32_t hindex;
+	uint32_t hindex, cpu;
 	struct pmc_owner *po;
 	struct pmc_ownerhash *poh;
+	struct grouptask *gtask;
+	char buf[32];
 
 	hindex = PMC_HASH_PTR(p, pmc_ownerhashmask);
 	poh = &pmc_ownerhash[hindex];
 
 	/* allocate space for N pointers and one descriptor struct */
 	po = malloc(sizeof(struct pmc_owner), M_PMC, M_WAITOK|M_ZERO);
+	po->po_flushtask = malloc(sizeof(struct grouptask)*mp_ncpus, M_PMC, M_WAITOK|M_ZERO);
+	gtask = po->po_flushtask;
+	CPU_FOREACH(cpu) {
+		if (CPU_ABSENT(cpu)) {
+			gtask++;
+			continue;
+		}
+		po->po_cpu_count++;
+		GROUPTASK_INIT(gtask, 0, pmclog_flush_handler, po);
+		snprintf(buf, sizeof(buf), "pmc_flush_task%d", cpu);
+		taskqgroup_attach_cpu(qgroup_softirq, gtask,
+			"hwpmc", cpu, -1, buf);
+		gtask++;
+	}
 	po->po_owner = p;
 	LIST_INSERT_HEAD(poh, po, po_next); /* insert into hash table */
 
 	TAILQ_INIT(&po->po_logbuffers);
-	mtx_init(&po->po_mtx, "pmc-owner-mtx", "pmc-per-proc", MTX_SPIN);
+	mtx_init(&po->po_mtx, "pmc-owner-mtx", "pmc-per-proc", MTX_DEF);
 
 	PMCDBG4(OWN,ALL,1, "allocate-owner proc=%p (%d, %s) pmc-owner=%p",
 	    p, p->p_pid, p->p_comm, po);
@@ -2080,11 +2105,23 @@ pmc_allocate_owner_descriptor(struct proc *p)
 static void
 pmc_destroy_owner_descriptor(struct pmc_owner *po)
 {
+	struct grouptask *gtask;
+	int cpu;
 
 	PMCDBG4(OWN,REL,1, "destroy-owner po=%p proc=%p (%d, %s)",
 	    po, po->po_owner, po->po_owner->p_pid, po->po_owner->p_comm);
 
 	mtx_destroy(&po->po_mtx);
+	gtask = po->po_flushtask;
+	CPU_FOREACH(cpu) {
+		if (CPU_ABSENT(cpu)) {
+			gtask++;
+			continue;
+		}
+		taskqgroup_detach(qgroup_softirq, gtask);
+		gtask++;
+	}
+	free(po->po_flushtask, M_PMC);
 	free(po, M_PMC);
 }
 
@@ -4821,6 +4858,8 @@ pmc_initialize(void)
 {
 	int c, cpu, error, n, ri;
 	unsigned int maxcpu, domain;
+	char buf[32];
+	struct grouptask *gtask;
 	struct pcpu *pc;
 	struct pmc_binding pb;
 	struct pmc_sample *ps;
@@ -5027,6 +5066,15 @@ pmc_initialize(void)
 	/* initialize logging */
 	pmclog_initialize();
 
+	CPU_FOREACH(n) {
+		if (CPU_ABSENT(n))
+			continue;
+		gtask = DPCPU_ID_PTR(n, pmc_sample_task);
+		GROUPTASK_INIT(gtask, 0, pmc_sample_handler, NULL);
+		snprintf(buf, sizeof(buf), "pmc_sample_task%d", n);
+		taskqgroup_attach_cpu(qgroup_softirq, gtask,
+			"hwpmc", n, -1, buf);
+	}
 	/* set hook functions */
 	pmc_intr = md->pmd_intr;
 	pmc_hook = pmc_hook_handler;

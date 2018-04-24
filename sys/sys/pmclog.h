@@ -262,6 +262,7 @@ int	pmclog_deconfigure_log(struct pmc_owner *_po);
 int	pmclog_flush(struct pmc_owner *_po);
 int	pmclog_close(struct pmc_owner *_po);
 void	pmclog_initialize(void);
+void	pmclog_flush_handler(void *arg);
 int	pmclog_proc_create(struct thread *td, void **handlep);
 void	pmclog_proc_ignite(void *handle, struct pmc_owner *po);
 void	pmclog_process_callchain(struct pmc *_pm, struct pmc_sample *_ps);

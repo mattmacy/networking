@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/file.h>
+#include <sys/gtaskqueue.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/lock.h>
@@ -116,9 +117,7 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 #define	_PMCLOG_RESERVE(PO,TYPE,LEN,ACTION) do {			\
 		uint32_t *_le;						\
 		int _len = roundup((LEN), sizeof(uint32_t));	\
-		spinlock_enter();									\
 		if ((_le = pmclog_reserve((PO), _len)) == NULL) {	\
-			spinlock_exit();								\
 			ACTION;						\
 		}							\
 		*_le = _PMCLOG_TO_HEADER(TYPE,_len);			\
@@ -141,12 +140,10 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 
 #define	PMCLOG_DESPATCH(PO)						\
 	    pmclog_release((PO));						\
-	    spinlock_exit();							\
 	} while (0)
 
 #define	PMCLOG_DESPATCH_SYNC(PO)							\
 	    pmclog_schedule_io((PO));						\
-	    spinlock_exit();							\
 	} while (0)
 
 
@@ -492,7 +489,6 @@ pmclog_release(struct pmc_owner *po)
 {
 	struct pmclog_buffer *plb;
 
-	spinlock_enter();
 	plb = po->po_curbuf[curcpu];
 	KASSERT(plb->plb_ptr >= plb->plb_base,
 	    ("[pmclog,%d] buffer invariants po=%p ptr=%p base=%p", __LINE__,
@@ -504,7 +500,6 @@ pmclog_release(struct pmc_owner *po)
 	/* schedule an I/O if we've filled a buffer */
 	if (plb->plb_ptr >= plb->plb_fence)
 		pmclog_schedule_io(po);
-	spinlock_exit();
 
 	PMCDBG1(LOG,REL,1, "po=%p", po);
 }
@@ -819,34 +814,37 @@ pmclog_flush(struct pmc_owner *po)
 	return (error);
 }
 
-static void
-pmclog_schedule_one_cond(void *arg)
+void
+pmclog_flush_handler(void *arg)
 {
 	struct pmc_owner *po = arg;
 	struct pmclog_buffer *plb;
 
-	spinlock_enter();
 	plb = po->po_curbuf[curcpu];
 	if (plb && plb->plb_ptr != plb->plb_base)
 		pmclog_schedule_io(po);
-	spinlock_exit();
+	atomic_add_int(&po->po_flush_pend_count, -1);
+	MPASS(po->po_flush_pend_count >= 0);
+	if (po->po_flush_pend_count == 0) {
+		mtx_lock(&po->po_mtx);
+		wakeup_one(po);
+		mtx_unlock(&po->po_mtx);
+	}
 }
 
 static void
 pmclog_schedule_all(struct pmc_owner *po)
 {
-	/*
-	 * Schedule the current buffer if any and not empty.
-	 */
-	for (int i = 0; i < mp_ncpus; i++) {
-		thread_lock(curthread);
-		sched_bind(curthread, i);
-		thread_unlock(curthread);
-		pmclog_schedule_one_cond(po);
+	int cpu;
+
+	mtx_lock(&po->po_mtx);
+	po->po_flush_pend_count = po->po_cpu_count;
+	CPU_FOREACH(cpu) {
+		if (CPU_ABSENT(cpu))
+			continue;
+		GROUPTASK_ENQUEUE(&po->po_flushtask[cpu]);
 	}
-	thread_lock(curthread);
-	sched_unbind(curthread);
-	thread_unlock(curthread);
+	msleep(po, &po->po_mtx, PWAIT|PDROP, "pmcflush", 0);
 }
 
 int
@@ -1182,9 +1180,9 @@ pmclog_initialize()
 		pmclog_buffer_size = PMC_LOG_BUFFER_SIZE;
 	}
 	for (domain = 0; domain < vm_ndomains; domain++) {
-		pmc_dom_hdrs[domain] = malloc_domain(sizeof(struct pmc_domain_buffer_header), M_PMC, domain,
-										M_WAITOK|M_ZERO);
-		mtx_init(&pmc_dom_hdrs[domain]->pdbh_mtx, "pmc_bufferlist_mtx", "pmc-leaf", MTX_SPIN);
+		pmc_dom_hdrs[domain] = malloc_domain(sizeof(struct pmc_domain_buffer_header),
+								   M_PMC, domain, M_WAITOK|M_ZERO);
+		mtx_init(&pmc_dom_hdrs[domain]->pdbh_mtx, "pmc_bufferlist_mtx", "pmc-leaf", MTX_DEF);
 		TAILQ_INIT(&pmc_dom_hdrs[domain]->pdbh_head);
 	}
 	CPU_FOREACH(cpu) {
