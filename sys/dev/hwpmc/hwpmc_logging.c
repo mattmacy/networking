@@ -824,9 +824,9 @@ pmclog_flush_handler(void *arg)
 	if (plb && plb->plb_ptr != plb->plb_base)
 		pmclog_schedule_io(po);
 	if (refcount_release(&po->po_flush_pend_count)) {
-		mtx_lock(&po->po_mtx);
-		wakeup_one(po);
-		mtx_unlock(&po->po_mtx);
+		mtx_lock(&pmc_kthread_mtx);
+		wakeup_one(&po->po_flush_pend_count);
+		mtx_unlock(&pmc_kthread_mtx);
 	}
 }
 
@@ -845,7 +845,7 @@ pmclog_schedule_all(struct pmc_owner *po)
 		MPASS(cpu < po->po_cpu_count);;
 		GROUPTASK_ENQUEUE(&po->po_flushtask[cpu]);
 	}
-	msleep(po, &pmc_kthread_mtx, PWAIT, "pmcflush", 0);
+	msleep(&po->po_flush_pend_count, &pmc_kthread_mtx, PWAIT, "pmcflush", 0);
 }
 
 int
