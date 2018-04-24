@@ -56,21 +56,21 @@ struct task {
 
 struct gtask {
 	STAILQ_ENTRY(gtask) ta_link;	/* (q) link for queue */
-	uint16_t ta_flags;		/* (q) state flags */
-	u_short	ta_priority;		/* (c) Priority */
 	gtask_fn_t *ta_func;		/* (c) task handler */
 	void	*ta_context;		/* (c) argument for handler */
+	uint16_t ta_flags;		/* (q) state flags */
+	u_short	ta_priority;		/* (c) Priority */
 };
 
 struct grouptask {
 	struct	gtask		gt_task;
+	int16_t			gt_irq;
+	int16_t			gt_cpu;
 	void			*gt_taskqueue;
 	LIST_ENTRY(grouptask)	gt_list;
 	void			*gt_uniq;
 #define GROUPTASK_NAMELEN	32
 	char			gt_name[GROUPTASK_NAMELEN];
-	int16_t			gt_irq;
-	int16_t			gt_cpu;
-};
+} __aligned(CACHE_LINE_SIZE);
 
 #endif /* !_SYS__TASK_H_ */
