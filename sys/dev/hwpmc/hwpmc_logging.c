@@ -830,16 +830,16 @@ pmclog_schedule_all(struct pmc_owner *po)
 		gtask = DPCPU_ID_PTR(cpu, pmc_sample_task);
 		gtaskqueue_block(gtask->gt_taskqueue);
 		gtaskqueue_drain_all(gtask->gt_taskqueue);
-
 		plb = po->po_curbuf[cpu];
 		po->po_curbuf[cpu] = NULL;
+		wmb();
+		gtaskqueue_unblock(gtask->gt_taskqueue);
 		if (plb && plb->plb_ptr != plb->plb_base) {
 			dowakeup = true;
 			mtx_lock(&po->po_mtx);
 			TAILQ_INSERT_TAIL(&po->po_logbuffers, plb, plb_next);
 			mtx_unlock(&po->po_mtx);
 		}
-		gtaskqueue_unblock(gtask->gt_taskqueue);
 	}
 	if (dowakeup)
 		wakeup_one(po);
