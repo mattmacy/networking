@@ -257,14 +257,6 @@ SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, buffer_requests_failed, CTLFLAG_
 SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, log_sweeps, CTLFLAG_RW,
 				   &pmc_stats.pm_log_sweeps, "# of ?");
 
-__read_mostly int pmc_skip_logging = 0;
-SYSCTL_INT(_kern_hwpmc, OID_AUTO, skip_logging, CTLFLAG_RW,
-    &pmc_skip_logging, 0, "don't log");
-__read_mostly int pmc_skip_processing = 0;
-SYSCTL_INT(_kern_hwpmc, OID_AUTO, skip_processing, CTLFLAG_RW,
-    &pmc_skip_processing, 0, "don't log");
-
-
 static int pmc_callchaindepth = PMC_CALLCHAIN_DEPTH;
 SYSCTL_INT(_kern_hwpmc, OID_AUTO, callchaindepth, CTLFLAG_RDTUN,
     &pmc_callchaindepth, 0, "depth of call chain records");
@@ -4394,8 +4386,7 @@ pmc_process_samples(int cpu, int ring)
 		 * or a system-wide sampling PMC.  Dispatch a log
 		 * entry to the PMC's owner process.
 		 */
-		if (!pmc_skip_logging)
-			pmclog_process_callchain(pm, ps);
+		pmclog_process_callchain(pm, ps);
 
 	entrydone:
 		ps->ps_nsamples = 0; /* mark entry as free */

@@ -1030,8 +1030,6 @@ extern struct pmc_cpu **pmc_pcpu;
 /* driver statistics */
 extern struct pmc_driverstats pmc_stats;
 
-extern int pmc_skip_logging;
-extern int pmc_skip_processing;
 #if	defined(HWPMC_DEBUG)
 #include <sys/ktr.h>
 
