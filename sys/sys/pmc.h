@@ -638,9 +638,9 @@ struct pmc_op_getdyneventinfo {
 
 #define	PMC_HASH_SIZE				1024
 #define	PMC_MTXPOOL_SIZE			2048
-#define	PMC_LOG_BUFFER_SIZE			512
+#define	PMC_LOG_BUFFER_SIZE			128
 #define	PMC_NLOGBUFFERS_PCPU		8
-#define	PMC_NSAMPLES				4096
+#define	PMC_NSAMPLES				64
 #define	PMC_CALLCHAIN_DEPTH			32
 
 #define PMC_SYSCTL_NAME_PREFIX "kern." PMC_MODULE_NAME "."
