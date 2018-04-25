@@ -316,7 +316,7 @@ static int close_table;
 
 static void print_events_table_prefix(FILE *fp, const char *tblname)
 {
-	fprintf(fp, "struct pmu_event %s[] = {\n", tblname);
+	fprintf(fp, "static struct pmu_event %s[] = {\n", tblname);
 	close_table = 1;
 }
 
@@ -1106,7 +1106,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Include pmu-events.h first */
-	fprintf(eventsfp, "#include \"../../pmu-events/pmu-events.h\"\n");
+	fprintf(eventsfp, "#include \"pmu-events/pmu-events.h\"\n");
 
 	/*
 	 * The mapfile allows multiple CPUids to point to the same JSON file,
