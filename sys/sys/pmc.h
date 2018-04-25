@@ -552,7 +552,7 @@ struct pmc_op_configurelog {
  *
  * Retrieve pmc(4) driver-wide statistics.
  */
-
+#ifdef _KERNEL
 struct pmc_driverstats {
 	counter_u64_t	pm_intr_ignored;	/* #interrupts ignored */
 	counter_u64_t	pm_intr_processed;	/* #interrupts processed */
@@ -564,7 +564,7 @@ struct pmc_driverstats {
 	counter_u64_t	pm_log_sweeps;		/* #sample buffer processing
 						   passes */
 };
-
+#endif
 
 struct pmc_op_getdriverstats {
 	unsigned int	pm_intr_ignored;	/* #interrupts ignored */
