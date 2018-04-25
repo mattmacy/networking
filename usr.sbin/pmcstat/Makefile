@@ -28,7 +28,7 @@ JEVENTS= pmu-events/jevents
 .endif
 
 pmu_events.c: ${JEVENTS}
-	${JEVENTS} ${EVENT_ARCH} pmu-events/arch pmu_events.c
+	${JEVENTS} ${EVENT_ARCH} ${.CURDIR}/pmu-events/arch pmu_events.c
 SRCS+= pmu_events.c
 CFLAGS+= -I${.CURDIR}
 .endif
