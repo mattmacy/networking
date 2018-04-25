@@ -236,7 +236,8 @@ static void pmc_generic_cpu_finalize(struct pmc_mdep *md);
  */
 
 SYSCTL_DECL(_kern_hwpmc);
-SYSCTL_DECL(_kern_hwpmc_stats);
+SYSCTL_NODE(_kern_hwpmc, OID_AUTO, stats, CTLFLAG_RW, 0, "HWPMC stats");
+
 
 /* Stats. */
 SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, intr_ignored, CTLFLAG_RW,
