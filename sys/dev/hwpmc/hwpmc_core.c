@@ -2807,9 +2807,10 @@ core_intr(int cpu, struct trapframe *tf)
 		if (pm->pm_state != PMC_STATE_RUNNING)
 			continue;
 
-		error = pmc_process_interrupt(cpu, PMC_HR, pm, tf,
-		    TRAPF_USERMODE(tf));
-
+		if (!pmc_skip_processing) {
+			error = pmc_process_interrupt(cpu, PMC_HR, pm, tf,
+			    TRAPF_USERMODE(tf));
+		}
 		v = pm->pm_sc.pm_reloadcount;
 		v = iap_reload_count_to_perfctr_value(v);
 
@@ -2896,8 +2897,10 @@ core2_intr(int cpu, struct trapframe *tf)
 		    !PMC_IS_SAMPLING_MODE(PMC_TO_MODE(pm)))
 			continue;
 
-		error = pmc_process_interrupt(cpu, PMC_HR, pm, tf,
-		    TRAPF_USERMODE(tf));
+		if (!pmc_skip_processing) {
+			error = pmc_process_interrupt(cpu, PMC_HR, pm, tf,
+			    TRAPF_USERMODE(tf));
+		}
 		if (error)
 			intrenable &= ~flag;
 
@@ -2924,8 +2927,10 @@ core2_intr(int cpu, struct trapframe *tf)
 		    !PMC_IS_SAMPLING_MODE(PMC_TO_MODE(pm)))
 			continue;
 
-		error = pmc_process_interrupt(cpu, PMC_HR, pm, tf,
-		    TRAPF_USERMODE(tf));
+		if (!pmc_skip_processing) {
+			error = pmc_process_interrupt(cpu, PMC_HR, pm, tf,
+			    TRAPF_USERMODE(tf));
+		}
 		if (error)
 			intrenable &= ~flag;
 

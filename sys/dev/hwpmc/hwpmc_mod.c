@@ -140,6 +140,7 @@ static eventhandler_tag	pmc_exit_tag, pmc_fork_tag, pmc_kld_load_tag,
 /* Module statistics */
 struct pmc_driverstats pmc_stats;
 
+
 /* Machine/processor dependent operations */
 static struct pmc_mdep  *md;
 
@@ -235,6 +236,33 @@ static void pmc_generic_cpu_finalize(struct pmc_mdep *md);
  */
 
 SYSCTL_DECL(_kern_hwpmc);
+SYSCTL_DECL(_kern_hwpmc_stats);
+
+/* Stats. */
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, intr_ignored, CTLFLAG_RW,
+				   &pmc_stats.pm_intr_ignored, "# of interrupts ignored");
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, intr_processed, CTLFLAG_RW,
+				   &pmc_stats.pm_intr_processed, "# of interrupts processed");
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, intr_bufferfull, CTLFLAG_RW,
+				   &pmc_stats.pm_intr_bufferfull, "# of interrupts where buffer was full");
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, syscalls, CTLFLAG_RW,
+				   &pmc_stats.pm_syscalls, "# of syscalls");
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, syscall_errors, CTLFLAG_RW,
+				   &pmc_stats.pm_syscall_errors, "# of syscall_errors");
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, buffer_requests, CTLFLAG_RW,
+				   &pmc_stats.pm_buffer_requests, "# of buffer requests");
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, buffer_requests_failed, CTLFLAG_RW,
+				   &pmc_stats.pm_buffer_requests_failed, "# of buffer requests which failed");
+SYSCTL_COUNTER_U64(_kern_hwpmc_stats, OID_AUTO, log_sweeps, CTLFLAG_RW,
+				   &pmc_stats.pm_log_sweeps, "# of ?");
+
+__read_mostly int pmc_skip_logging = 0;
+SYSCTL_INT(_kern_hwpmc, OID_AUTO, skip_logging, CTLFLAG_RW,
+    &pmc_skip_logging, 0, "don't log");
+__read_mostly int pmc_skip_processing = 0;
+SYSCTL_INT(_kern_hwpmc, OID_AUTO, skip_processing, CTLFLAG_RW,
+    &pmc_skip_processing, 0, "don't log");
+
 
 static int pmc_callchaindepth = PMC_CALLCHAIN_DEPTH;
 SYSCTL_INT(_kern_hwpmc, OID_AUTO, callchaindepth, CTLFLAG_RDTUN,
@@ -249,6 +277,7 @@ SYSCTL_PROC(_kern_hwpmc, OID_AUTO, debugflags,
     CTLTYPE_STRING | CTLFLAG_RWTUN | CTLFLAG_NOFETCH,
     0, 0, pmc_debugflags_sysctl_handler, "A", "debug flags");
 #endif
+
 
 /*
  * kern.hwpmc.hashrows -- determines the number of rows in the
@@ -4364,7 +4393,8 @@ pmc_process_samples(int cpu, int ring)
 		 * or a system-wide sampling PMC.  Dispatch a log
 		 * entry to the PMC's owner process.
 		 */
-		pmclog_process_callchain(pm, ps);
+		if (!pmc_skip_logging)
+			pmclog_process_callchain(pm, ps);
 
 	entrydone:
 		ps->ps_nsamples = 0; /* mark entry as free */
@@ -4830,6 +4860,15 @@ pmc_initialize(void)
 	md = NULL;
 	error = 0;
 
+	pmc_stats.pm_intr_ignored = counter_u64_alloc(M_WAITOK);
+	pmc_stats.pm_intr_processed = counter_u64_alloc(M_WAITOK);
+	pmc_stats.pm_intr_bufferfull = counter_u64_alloc(M_WAITOK);
+	pmc_stats.pm_syscalls = counter_u64_alloc(M_WAITOK);
+	pmc_stats.pm_syscall_errors = counter_u64_alloc(M_WAITOK);
+	pmc_stats.pm_buffer_requests = counter_u64_alloc(M_WAITOK);
+	pmc_stats.pm_buffer_requests_failed = counter_u64_alloc(M_WAITOK);
+	pmc_stats.pm_log_sweeps = counter_u64_alloc(M_WAITOK);
+
 #ifdef	HWPMC_DEBUG
 	/* parse debug flags first */
 	if (TUNABLE_STR_FETCH(PMC_SYSCTL_NAME_PREFIX "debugflags",
@@ -4905,14 +4944,6 @@ pmc_initialize(void)
 
 	maxcpu = pmc_cpu_max();
 
-	pmc_stats.pm_intr_ignored = counter_u64_alloc(M_WAITOK|M_ZERO);
-	pmc_stats.pm_intr_processed = counter_u64_alloc(M_WAITOK|M_ZERO);
-	pmc_stats.pm_intr_bufferfull = counter_u64_alloc(M_WAITOK|M_ZERO);
-	pmc_stats.pm_syscalls = counter_u64_alloc(M_WAITOK|M_ZERO);
-	pmc_stats.pm_syscall_errors = counter_u64_alloc(M_WAITOK|M_ZERO);
-	pmc_stats.pm_buffer_requests = counter_u64_alloc(M_WAITOK|M_ZERO);
-	pmc_stats.pm_buffer_requests_failed = counter_u64_alloc(M_WAITOK|M_ZERO);
-	pmc_stats.pm_log_sweeps = counter_u64_alloc(M_WAITOK|M_ZERO);
 	/* allocate space for the per-cpu array */
 	pmc_pcpu = malloc(maxcpu * sizeof(struct pmc_cpu *), M_PMC,
 	    M_WAITOK|M_ZERO);
@@ -5184,14 +5215,6 @@ pmc_cleanup(void)
 		free(pmc_pcpu[cpu], M_PMC);
 	}
 
-	counter_u64_free(pmc_stats.pm_intr_ignored);
-	counter_u64_free(pmc_stats.pm_intr_processed);
-	counter_u64_free(pmc_stats.pm_intr_bufferfull);
-	counter_u64_free(pmc_stats.pm_syscalls);
-	counter_u64_free(pmc_stats.pm_syscall_errors);
-	counter_u64_free(pmc_stats.pm_buffer_requests);
-	counter_u64_free(pmc_stats.pm_buffer_requests_failed);
-	counter_u64_free(pmc_stats.pm_log_sweeps);
 	free(pmc_pcpu, M_PMC);
 	pmc_pcpu = NULL;
 
@@ -5209,7 +5232,14 @@ pmc_cleanup(void)
 	}
 
 	pmclog_shutdown();
-
+	counter_u64_free(pmc_stats.pm_intr_ignored);
+	counter_u64_free(pmc_stats.pm_intr_processed);
+	counter_u64_free(pmc_stats.pm_intr_bufferfull);
+	counter_u64_free(pmc_stats.pm_syscalls);
+	counter_u64_free(pmc_stats.pm_syscall_errors);
+	counter_u64_free(pmc_stats.pm_buffer_requests);
+	counter_u64_free(pmc_stats.pm_buffer_requests_failed);
+	counter_u64_free(pmc_stats.pm_log_sweeps);
 	sx_xunlock(&pmc_sx); 	/* we are done */
 }
 
