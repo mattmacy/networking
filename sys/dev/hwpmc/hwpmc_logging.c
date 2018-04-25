@@ -116,9 +116,7 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 #define	_PMCLOG_RESERVE(PO,TYPE,LEN,ACTION) do {			\
 		uint32_t *_le;						\
 		int _len = roundup((LEN), sizeof(uint32_t));	\
-		spinlock_enter();									\
 		if ((_le = pmclog_reserve((PO), _len)) == NULL) {	\
-			spinlock_exit();								\
 			ACTION;						\
 		}							\
 		*_le = _PMCLOG_TO_HEADER(TYPE,_len);			\
@@ -141,12 +139,10 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 
 #define	PMCLOG_DESPATCH(PO)						\
 	    pmclog_release((PO));						\
-	    spinlock_exit();							\
 	} while (0)
 
 #define	PMCLOG_DESPATCH_SYNC(PO)							\
 	    pmclog_schedule_io((PO));						\
-	    spinlock_exit();							\
 	} while (0)
 
 
@@ -491,7 +487,6 @@ pmclog_release(struct pmc_owner *po)
 {
 	struct pmclog_buffer *plb;
 
-	spinlock_enter();
 	plb = po->po_curbuf[curcpu];
 	KASSERT(plb->plb_ptr >= plb->plb_base,
 	    ("[pmclog,%d] buffer invariants po=%p ptr=%p base=%p", __LINE__,
@@ -503,7 +498,6 @@ pmclog_release(struct pmc_owner *po)
 	/* schedule an I/O if we've filled a buffer */
 	if (plb->plb_ptr >= plb->plb_fence)
 		pmclog_schedule_io(po);
-	spinlock_exit();
 
 	PMCDBG1(LOG,REL,1, "po=%p", po);
 }
