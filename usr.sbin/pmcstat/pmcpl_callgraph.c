@@ -495,12 +495,12 @@ pmcstat_cgnode_topprint(struct pmcstat_cgnode *cg,
 		    pmcstat_string_unintern(sym->ps_name));
 	} else
 		snprintf(ns, sizeof(ns), "%p",
-		    (void *)cg->pcg_func);
+		    (void *)(cg->pcg_image->pi_vaddr + cg->pcg_func));
 
 	PMCSTAT_ATTRON(v_attrs);
 	PMCSTAT_PRINTW("%5.5s", vs);
 	PMCSTAT_ATTROFF(v_attrs);
-	PMCSTAT_PRINTW(" %-10.10s %-20.20s",
+	PMCSTAT_PRINTW(" %-15.15s %-22.22s",
 	    pmcstat_string_unintern(cg->pcg_image->pi_name),
 	    ns);
 
@@ -624,7 +624,7 @@ pmcpl_cg_topdisplay(void)
 	qsort(sortbuffer, nentries, sizeof(struct pmcstat_cgnode *),
 	    pmcstat_cgnode_compare);
 
-	PMCSTAT_PRINTW("%5.5s %-10.10s %-20.20s %s\n",
+	PMCSTAT_PRINTW("%5.5s %-15.15s %-22.22s %s\n",
 	    "%SAMP", "IMAGE", "FUNCTION", "CALLERS");
 
 	nentries = min(pmcstat_displayheight - 2, nentries);
