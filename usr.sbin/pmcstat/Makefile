@@ -9,7 +9,9 @@ LIBADD=	kvm pmc m ncursesw pmcstat elf
 
 SRCS=	pmcstat.c pmcstat.h pmcstat_log.c \
 pmcpl_callgraph.c pmcpl_gprof.c pmcpl_annotate.c \
-pmcpl_annotate_cg.c pmcpl_calltree.c
+pmcpl_annotate_cg.c pmcpl_calltree.c pmu_util.c
+
+CFLAGS+= -I${.CURDIR}
 
 .if (${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
 	${MACHINE_CPUARCH} == "powerpc")
@@ -30,7 +32,6 @@ JEVENTS= pmu-events/jevents
 pmu_events.c: ${JEVENTS}
 	${JEVENTS} ${EVENT_ARCH} ${.CURDIR}/pmu-events/arch pmu_events.c
 SRCS+= pmu_events.c
-CFLAGS+= -I${.CURDIR}
 .endif
 
 .include <bsd.prog.mk>

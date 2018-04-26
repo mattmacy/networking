@@ -89,4 +89,5 @@ void	pmcstat_topexit(void);
 void pmcstat_log_shutdown_logging(void);
 void pmcstat_log_initialize_logging(void);
 
+uint64_t pmu_sample_rate_get(const char *);
 #endif	/* _PMCSTAT_H_ */
