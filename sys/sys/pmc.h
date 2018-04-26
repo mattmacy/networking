@@ -1030,6 +1030,9 @@ extern struct pmc_cpu **pmc_pcpu;
 /* driver statistics */
 extern struct pmc_driverstats pmc_stats;
 
+/* cpu model name for pmu lookup */
+extern char pmc_cpuid[64];
+
 #if	defined(HWPMC_DEBUG)
 #include <sys/ktr.h>
 
