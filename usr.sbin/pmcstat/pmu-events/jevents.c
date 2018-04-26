@@ -1,9 +1,5 @@
 #define  _XOPEN_SOURCE 500	/* needed for nftw() */
 #define __BSD_VISIBLE 1	/* needed for asprintf() */
-#if 0
-#define __ISO_C_VISIBLE 2011 /* should make snprintf visible */ 
-#endif
-
 /* Parse event JSON files */
 
 /*
