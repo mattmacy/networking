@@ -38,7 +38,7 @@
 #include <libpmcstat.h>
 
 #define	DEFAULT_SAMPLE_COUNT		65536
-#define	DEFAULT_WAIT_INTERVAL		5.0
+#define	DEFAULT_WAIT_INTERVAL		2.5
 #define	DEFAULT_DISPLAY_HEIGHT		256		/* file virtual height */
 #define	DEFAULT_DISPLAY_WIDTH		1024		/* file virtual width */
 #define	DEFAULT_BUFFER_SIZE		4096
