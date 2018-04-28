@@ -113,7 +113,7 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 	 ((L) & 0xFFFF))
 
 /* reserve LEN bytes of space and initialize the entry header */
-#define	_PMCLOG_RESERVE(PO,TYPE,LEN,ACTION) do {			\
+#define	_PMCLOG_RESERVE_SAFE(PO,TYPE,LEN,ACTION) do {			\
 		uint32_t *_le;						\
 		int _len = roundup((LEN), sizeof(uint32_t));	\
 		if ((_le = pmclog_reserve((PO), _len)) == NULL) {	\
@@ -122,6 +122,20 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 		*_le = _PMCLOG_TO_HEADER(TYPE,_len);			\
 		_le += 3	/* skip over timestamp */
 
+/* reserve LEN bytes of space and initialize the entry header */
+#define	_PMCLOG_RESERVE(PO,TYPE,LEN,ACTION) do {			\
+		uint32_t *_le;						\
+		int _len = roundup((LEN), sizeof(uint32_t));		\
+		spinlock_enter();									\
+		if ((_le = pmclog_reserve((PO), _len)) == NULL) {	\
+			spinlock_exit();								\
+			ACTION;											\
+		}												\
+		*_le = _PMCLOG_TO_HEADER(TYPE,_len);			\
+		_le += 3	/* skip over timestamp */
+
+
+#define	PMCLOG_RESERVE_SAFE(P,T,L)		_PMCLOG_RESERVE_SAFE(P,T,L,return)
 #define	PMCLOG_RESERVE(P,T,L)		_PMCLOG_RESERVE(P,T,L,return)
 #define	PMCLOG_RESERVE_WITH_ERROR(P,T,L) _PMCLOG_RESERVE(P,T,L,		\
 	error=ENOMEM;goto error)
@@ -137,13 +151,19 @@ static struct mtx pmc_kthread_mtx;	/* sleep lock */
 #define	PMCLOG_EMITSTRING(S,L)	do { bcopy((S), _le, (L)); } while (0)
 #define	PMCLOG_EMITNULLSTRING(L) do { bzero(_le, (L)); } while (0)
 
-#define	PMCLOG_DESPATCH(PO)						\
+#define	PMCLOG_DESPATCH_SAFE(PO)						\
 	    pmclog_release((PO));						\
 	} while (0)
 
-#define	PMCLOG_DESPATCH_SYNC(PO)							\
-	    pmclog_schedule_io((PO));						\
+#define	PMCLOG_DESPATCH(PO)							\
+	    pmclog_release((PO));						\
+		spinlock_exit();							\
 	} while (0)
+
+#define	PMCLOG_DESPATCH_SYNC(PO)						\
+	    pmclog_schedule_io((PO));						\
+		spinlock_exit();								\
+		} while (0)
 
 
 /*
@@ -880,13 +900,13 @@ pmclog_process_callchain(struct pmc *pm, struct pmc_sample *ps)
 	    ps->ps_nsamples * sizeof(uintfptr_t);
 	po = pm->pm_owner;
 	flags = PMC_CALLCHAIN_TO_CPUFLAGS(ps->ps_cpu,ps->ps_flags);
-	PMCLOG_RESERVE(po, CALLCHAIN, recordlen);
+	PMCLOG_RESERVE_SAFE(po, CALLCHAIN, recordlen);
 	PMCLOG_EMIT32(ps->ps_pid);
 	PMCLOG_EMIT32(pm->pm_id);
 	PMCLOG_EMIT32(flags);
 	for (n = 0; n < ps->ps_nsamples; n++)
 		PMCLOG_EMITADDR(ps->ps_pc[n]);
-	PMCLOG_DESPATCH(po);
+	PMCLOG_DESPATCH_SAFE(po);
 }
 
 void
