@@ -119,15 +119,18 @@ void
 epoch_free(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
+	int domain;
+#ifdef INVARIANTS
 	int cpu;
-
 	CPU_FOREACH(cpu) {
 		if (CPU_ABSENT(cpu))
 			continue;
 		eps = epoch->e_pcpu[cpu];
 		MPASS(eps->eps_critnest == 0);
-		free(eps, M_EPOCH);
 	}
+#endif
+	for (domain = 0; domain < vm_ndomains; domain++)
+		free(epoch->e_pcpu_dom[domain], M_EPOCH);
 	free(epoch, M_EPOCH);
 }
 
