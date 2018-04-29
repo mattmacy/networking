@@ -30,6 +30,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/counter.h>
 #include <sys/epoch.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -37,7 +38,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/turnstile.h>
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_kern.h>
@@ -46,9 +49,23 @@ __FBSDID("$FreeBSD$");
 
 MALLOC_DEFINE(M_EPOCH, "epoch", "epoch based reclamation");
 
+
+SYSCTL_NODE(_kern, OID_AUTO, epoch, CTLFLAG_RW, 0, "epoch information");
+SYSCTL_NODE(_kern_epoch, OID_AUTO, stats, CTLFLAG_RW, 0, "epoch stats");
+
+
+/* Stats. */
+static counter_u64_t wait_count;
+SYSCTL_COUNTER_U64(_kern_epoch_stats, OID_AUTO, preemption_waits, CTLFLAG_RW,
+				   &wait_count, "# of times waited due to preemption");
+static counter_u64_t yield_count;
+SYSCTL_COUNTER_U64(_kern_epoch_stats, OID_AUTO, yields, CTLFLAG_RW,
+				   &yield_count, "# of times yielded to other cpu");
+
 struct epoch_pcpu_state {
 	ck_epoch_record_t eps_record;
 	volatile int eps_critnest;
+	volatile int eps_waiters;
 } __aligned(CACHE_LINE_SIZE);
 
 struct epoch {
@@ -60,6 +77,9 @@ struct epoch {
 static __read_mostly int domcount[MAXMEMDOM];
 static __read_mostly int domoffsets[MAXMEMDOM];
 static __read_mostly int inited;
+static __read_mostly struct lock_object epoch_ts = {
+	.lo_name = "epochts",
+};
 
 static void
 epoch_init(void *arg __unused)
@@ -84,6 +104,8 @@ epoch_init(void *arg __unused)
 			MPASS(domcount[domain] <= mp_ncpus);
 	}
 #endif
+	wait_count = counter_u64_alloc(M_WAITOK);
+	yield_count = counter_u64_alloc(M_WAITOK);
 	inited = 1;
 }
 SYSINIT(epoch, SI_SUB_CPU + 1, SI_ORDER_FIRST, epoch_init, NULL);
@@ -139,6 +161,26 @@ epoch_free(epoch_t epoch)
 			return;									\
 	} while (0)
 
+static void
+epoch_turnstile_exit(epoch_t epoch)
+{
+	struct turnstile *ts;
+	struct epoch_pcpu_state *eps;
+
+	INIT_CHECK(epoch);
+	MPASS(curthread->td_critnest);
+	eps = epoch->e_pcpu[curcpu];
+	if (__predict_true(eps->eps_waiters == 0))
+		return;
+	turnstile_chain_lock(&epoch_ts);
+	ts = turnstile_lookup(&epoch_ts);
+	if (ts != NULL) {
+		turnstile_broadcast(ts, TS_SHARED_QUEUE);
+		turnstile_unpend(ts, TS_SHARED_LOCK);
+	}
+	turnstile_chain_unlock(&epoch_ts);
+}
+
 void
 epoch_enter(epoch_t epoch)
 {
@@ -176,6 +218,7 @@ epoch_exit(epoch_t epoch)
 	sched_unpin();
 	eps->eps_critnest--;
 	ck_epoch_end(&eps->eps_record, NULL);
+	epoch_turnstile_exit(epoch);
 	critical_exit();
 }
 
@@ -191,29 +234,48 @@ epoch_exit_nopreempt(epoch_t epoch)
 	critical_exit();
 }
 
-
 static void
 epoch_block_handler(struct ck_epoch *global __unused, struct ck_epoch_record *cr __unused,
 					void *arg)
 {
 	struct epoch_pcpu_state *eps = arg;
+	struct turnstile *ts;
+	int yielded;
 
-	kern_yield(PRI_UNCHANGED);
-	while (eps->eps_critnest)
+	yielded = 0;
+	while (eps->eps_critnest) {
+		counter_u64_add(wait_count, 1);
+		ts = turnstile_trywait(&epoch_ts);
+		turnstile_wait(ts, NULL, TS_SHARED_QUEUE);
+		yielded = 1;
+	}
+	if (!yielded) {
+		counter_u64_add(yield_count, 1);
 		kern_yield(PRI_UNCHANGED);
+	}
 }
 
 void
 epoch_wait(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
+	struct turnstile *ts;
 
 	INIT_CHECK(epoch);
+	critical_enter();
 	sched_pin();
 	eps = epoch->e_pcpu[curcpu];
-	while (eps->eps_critnest) {
-		kern_yield(PRI_UNCHANGED);
+	eps->eps_waiters++;
+	critical_exit();
+	while (eps->eps_critnest)  {
+		counter_u64_add(wait_count, 1);
+		ts = turnstile_trywait(&epoch_ts);
+		turnstile_wait(ts, NULL, TS_SHARED_QUEUE);
 	}
 	ck_epoch_synchronize_wait(&epoch->e_epoch, epoch_block_handler, eps);
+
+	critical_enter();
 	sched_unpin();
+	eps->eps_waiters--;
+	critical_exit();
 }
