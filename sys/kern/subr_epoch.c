@@ -95,7 +95,8 @@ epoch_alloc(void)
 	epoch_t epoch;
 	struct epoch_pcpu_state *eps;
 
-	MPASS(inited);
+	if (__predict_false(!inited))
+		panic("%s called too early in boot", __func__);
 	epoch = malloc(sizeof(struct epoch) + mp_ncpus*sizeof(void*),
 				   M_EPOCH, M_ZERO|M_WAITOK);
 	ck_epoch_init(&epoch->e_epoch);
@@ -132,9 +133,9 @@ epoch_free(epoch_t epoch)
 	free(epoch, M_EPOCH);
 }
 
-#define INIT_CHECK()								\
+#define INIT_CHECK(epoch)								\
 	do {											\
-	    if (__predict_false(!inited))				\
+		if (__predict_false((epoch) == NULL))		\
 			return;									\
 	} while (0)
 
@@ -143,7 +144,7 @@ epoch_enter(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
-	INIT_CHECK();
+	INIT_CHECK(epoch);
 	critical_enter();
 	sched_pin();
 	eps = epoch->e_pcpu[curcpu];
@@ -157,7 +158,7 @@ epoch_enter_nopreempt(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
-	INIT_CHECK();
+	INIT_CHECK(epoch);
 	critical_enter();
 	eps = epoch->e_pcpu[curcpu];
 	ck_epoch_begin(&eps->eps_record, NULL);
@@ -168,7 +169,7 @@ epoch_exit(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
-	INIT_CHECK();
+	INIT_CHECK(epoch);
 	critical_enter();
 	eps = epoch->e_pcpu[curcpu];
 	MPASS(eps->eps_critnest);
@@ -183,7 +184,7 @@ epoch_exit_nopreempt(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
-	INIT_CHECK();
+	INIT_CHECK(epoch);
 	MPASS(curthread->td_critnest);
 	eps = epoch->e_pcpu[curcpu];
 	ck_epoch_end(&eps->eps_record, NULL);
@@ -207,7 +208,7 @@ epoch_wait(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
-	INIT_CHECK();
+	INIT_CHECK(epoch);
 	sched_pin();
 	eps = epoch->e_pcpu[curcpu];
 	while (eps->eps_critnest) {
