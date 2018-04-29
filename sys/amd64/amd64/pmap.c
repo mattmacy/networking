@@ -494,6 +494,7 @@ pmap_delayed_invl_started(void)
 	mtx_unlock(&invl_gen_mtx);
 #endif
 	epoch_enter(pmap_epoch);
+	curthread->td_md.md_invl_gen.gen = 1;
 }
 
 /*
@@ -537,6 +538,7 @@ pmap_delayed_invl_finished(void)
 	mtx_unlock(&invl_gen_mtx);
 	invl_gen->gen = 0;
 #endif
+	curthread->td_md.md_invl_gen.gen = 0;
 	epoch_exit(pmap_epoch);
 }
 
