@@ -114,6 +114,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bitstring.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
+#include <sys/epoch.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
@@ -349,6 +350,7 @@ static int ndmpdp;
 vm_paddr_t dmaplimit;
 vm_offset_t kernel_vm_end = VM_MIN_KERNEL_ADDRESS;
 pt_entry_t pg_nx;
+static epoch_t pmap_epoch;
 
 static SYSCTL_NODE(_vm, OID_AUTO, pmap, CTLFLAG_RD, 0, "VM/pmap parameters");
 
@@ -437,15 +439,23 @@ pmap_pcid_save_cnt_proc(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_vm_pmap, OID_AUTO, pcid_save_cnt, CTLTYPE_U64 | CTLFLAG_RW |
     CTLFLAG_MPSAFE, NULL, 0, pmap_pcid_save_cnt_proc, "QU",
     "Count of saved TLB context on switch");
-
+static struct mtx invl_gen_mtx;
+#if 0
 static LIST_HEAD(, pmap_invl_gen) pmap_invl_gen_tracker =
     LIST_HEAD_INITIALIZER(&pmap_invl_gen_tracker);
-static struct mtx invl_gen_mtx;
 static u_long pmap_invl_gen = 0;
 /* Fake lock object to satisfy turnstiles interface. */
 static struct lock_object invl_gen_ts = {
 	.lo_name = "invlts",
 };
+#endif
+
+static void
+pmap_epoch_init(void *arg __unused)
+{
+	pmap_epoch = epoch_alloc(EPOCH_PREEMPT);
+}
+SYSINIT(epoch, SI_SUB_TASKQ + 1, SI_ORDER_ANY, pmap_epoch_init, NULL);
 
 static bool
 pmap_not_in_di(void)
@@ -468,6 +478,7 @@ pmap_not_in_di(void)
 static void
 pmap_delayed_invl_started(void)
 {
+#if 0
 	struct pmap_invl_gen *invl_gen;
 	u_long currgen;
 
@@ -481,6 +492,9 @@ pmap_delayed_invl_started(void)
 	invl_gen->gen = currgen + 1;
 	LIST_INSERT_HEAD(&pmap_invl_gen_tracker, invl_gen, link);
 	mtx_unlock(&invl_gen_mtx);
+#endif
+	epoch_enter_preempt(pmap_epoch);
+	curthread->td_md.md_invl_gen.gen = 1;
 }
 
 /*
@@ -500,6 +514,7 @@ pmap_delayed_invl_started(void)
 static void
 pmap_delayed_invl_finished(void)
 {
+#if 0
 	struct pmap_invl_gen *invl_gen, *next;
 	struct turnstile *ts;
 
@@ -522,6 +537,9 @@ pmap_delayed_invl_finished(void)
 	LIST_REMOVE(invl_gen, link);
 	mtx_unlock(&invl_gen_mtx);
 	invl_gen->gen = 0;
+#endif
+	curthread->td_md.md_invl_gen.gen = 0;
+	epoch_exit_preempt(pmap_epoch);
 }
 
 #ifdef PV_STATS
@@ -554,6 +572,7 @@ pmap_delayed_invl_genp(vm_page_t m)
 static void
 pmap_delayed_invl_wait(vm_page_t m)
 {
+#if 0
 	struct turnstile *ts;
 	u_long *m_gen;
 #ifdef PV_STATS
@@ -574,6 +593,8 @@ pmap_delayed_invl_wait(vm_page_t m)
 		else
 			turnstile_cancel(ts);
 	}
+#endif
+	epoch_wait_preempt(pmap_epoch);
 }
 
 /*
