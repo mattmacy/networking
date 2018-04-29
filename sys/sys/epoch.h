@@ -31,8 +31,6 @@
 struct epoch;
 typedef struct epoch *epoch_t;
 
-void epoch_init(void);
-
 epoch_t epoch_alloc(void);
 
 void epoch_free(epoch_t epoch);

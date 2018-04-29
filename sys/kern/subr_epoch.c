@@ -57,29 +57,36 @@ struct epoch {
 	struct epoch_pcpu_state *e_pcpu[0];
 };
 
-static int domcount[MAXMEMDOM];
-static int domoffsets[MAXMEMDOM];
+static __read_mostly int domcount[MAXMEMDOM];
+static __read_mostly int domoffsets[MAXMEMDOM];
+static __read_mostly int inited;
 
-void
-epoch_init(void)
+static void
+epoch_init(void *arg __unused)
 {
-	int cpu, domain;
-	struct pcpu *pc;
+	int domain, count;
 
-	domain = 0;
+	count = domain = 0;
 	domoffsets[0] = 0;
-	CPU_FOREACH(cpu) {
-		if (CPU_ABSENT(cpu))
-			continue;
-		pc = pcpu_find(cpu);
-		/* assumes cpus aren't somehow interleaved */
-		if (domain != pc->pc_domain) {
-			domoffsets[pc->pc_domain] = cpu;
-			domain = pc->pc_domain;
-		}
-		domcount[pc->pc_domain] = cpu + 1;
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		domcount[domain] = CPU_COUNT(&cpuset_domain[domain]);
+		printf("domcount[%d] %d\n", domain, domcount[domain]);;
 	}
+	for (domain = 1; domain < vm_ndomains; domain++)
+		domoffsets[domain] = domoffsets[domain-1] + domcount[domain-1];
+
+#ifdef INVARIANTS
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		KASSERT(domcount[domain], ("domcount[%d] is zero", domain));
+		if (vm_ndomains > 1)
+			MPASS(domcount[domain] < mp_ncpus);
+		else
+			MPASS(domcount[domain] <= mp_ncpus);
+	}
+#endif
+	inited = 1;
 }
+SYSINIT(epoch, SI_SUB_CPU + 1, SI_ORDER_FIRST, epoch_init, NULL);
 
 epoch_t
 epoch_alloc(void)
@@ -88,23 +95,14 @@ epoch_alloc(void)
 	epoch_t epoch;
 	struct epoch_pcpu_state *eps;
 
-	if (cold) {
-		epoch = (void*)kmem_malloc(kernel_arena, sizeof(struct epoch) + mp_ncpus*sizeof(void*),
-					M_ZERO|M_WAITOK);
-	} else {
-		epoch = malloc(sizeof(struct epoch) + mp_ncpus*sizeof(void*),
-					M_EPOCH, M_ZERO|M_WAITOK);
-	}
+	MPASS(inited);
+	epoch = malloc(sizeof(struct epoch) + mp_ncpus*sizeof(void*),
+				   M_EPOCH, M_ZERO|M_WAITOK);
 	ck_epoch_init(&epoch->e_epoch);
 
 	for (domain = 0; domain < vm_ndomains; domain++) {
-		if (cold) {
-			eps = (void*)kmem_malloc_domain(domain, sizeof(*eps)*domcount[domain],
-										   M_ZERO|M_WAITOK);
-		} else {
-			eps = malloc_domain(sizeof(*eps)*domcount[domain], M_EPOCH,
-								domain, M_ZERO|M_WAITOK);
-		} 
+		eps = malloc_domain(sizeof(*eps)*domcount[domain], M_EPOCH,
+							domain, M_ZERO|M_WAITOK);
 		epoch->e_pcpu_dom[domain] = eps;
 		cpu_offset = domoffsets[domain];
 		for (int i = 0; i < domcount[domain]; i++) {
@@ -118,9 +116,9 @@ epoch_alloc(void)
 void
 epoch_free(epoch_t epoch)
 {
-	struct epoch_pcpu_state *eps;
 	int domain;
 #ifdef INVARIANTS
+	struct epoch_pcpu_state *eps;
 	int cpu;
 	CPU_FOREACH(cpu) {
 		if (CPU_ABSENT(cpu))
@@ -134,11 +132,18 @@ epoch_free(epoch_t epoch)
 	free(epoch, M_EPOCH);
 }
 
+#define INIT_CHECK()								\
+	do {											\
+	    if (__predict_false(!inited))				\
+			return;									\
+	} while (0)
+
 void
 epoch_enter(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
+	INIT_CHECK();
 	critical_enter();
 	sched_pin();
 	eps = epoch->e_pcpu[curcpu];
@@ -152,6 +157,7 @@ epoch_enter_nopreempt(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
+	INIT_CHECK();
 	critical_enter();
 	eps = epoch->e_pcpu[curcpu];
 	ck_epoch_begin(&eps->eps_record, NULL);
@@ -162,6 +168,7 @@ epoch_exit(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
+	INIT_CHECK();
 	critical_enter();
 	eps = epoch->e_pcpu[curcpu];
 	MPASS(eps->eps_critnest);
@@ -176,6 +183,7 @@ epoch_exit_nopreempt(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
+	INIT_CHECK();
 	MPASS(curthread->td_critnest);
 	eps = epoch->e_pcpu[curcpu];
 	ck_epoch_end(&eps->eps_record, NULL);
@@ -199,6 +207,7 @@ epoch_wait(epoch_t epoch)
 {
 	struct epoch_pcpu_state *eps;
 
+	INIT_CHECK();
 	sched_pin();
 	eps = epoch->e_pcpu[curcpu];
 	while (eps->eps_critnest) {
