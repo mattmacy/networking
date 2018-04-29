@@ -114,6 +114,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bitstring.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
+#include <sys/epoch.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
@@ -349,6 +350,7 @@ static int ndmpdp;
 vm_paddr_t dmaplimit;
 vm_offset_t kernel_vm_end = VM_MIN_KERNEL_ADDRESS;
 pt_entry_t pg_nx;
+static epoch_t pmap_epoch;
 
 static SYSCTL_NODE(_vm, OID_AUTO, pmap, CTLFLAG_RD, 0, "VM/pmap parameters");
 
@@ -437,15 +439,14 @@ pmap_pcid_save_cnt_proc(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_vm_pmap, OID_AUTO, pcid_save_cnt, CTLTYPE_U64 | CTLFLAG_RW |
     CTLFLAG_MPSAFE, NULL, 0, pmap_pcid_save_cnt_proc, "QU",
     "Count of saved TLB context on switch");
-
-static LIST_HEAD(, pmap_invl_gen) pmap_invl_gen_tracker =
-    LIST_HEAD_INITIALIZER(&pmap_invl_gen_tracker);
 static struct mtx invl_gen_mtx;
-static u_long pmap_invl_gen = 0;
-/* Fake lock object to satisfy turnstiles interface. */
-static struct lock_object invl_gen_ts = {
-	.lo_name = "invlts",
-};
+
+static void
+pmap_epoch_init(void *arg __unused)
+{
+	pmap_epoch = epoch_alloc(EPOCH_PREEMPT|EPOCH_LOCKED);
+}
+SYSINIT(epoch, SI_SUB_TASKQ + 1, SI_ORDER_ANY, pmap_epoch_init, NULL);
 
 static bool
 pmap_not_in_di(void)
@@ -466,21 +467,10 @@ pmap_not_in_di(void)
  * pmap active.
  */
 static void
-pmap_delayed_invl_started(void)
+pmap_delayed_invl_started(epoch_tracker_t et)
 {
-	struct pmap_invl_gen *invl_gen;
-	u_long currgen;
-
-	invl_gen = &curthread->td_md.md_invl_gen;
-	PMAP_ASSERT_NOT_IN_DI();
-	mtx_lock(&invl_gen_mtx);
-	if (LIST_EMPTY(&pmap_invl_gen_tracker))
-		currgen = pmap_invl_gen;
-	else
-		currgen = LIST_FIRST(&pmap_invl_gen_tracker)->gen;
-	invl_gen->gen = currgen + 1;
-	LIST_INSERT_HEAD(&pmap_invl_gen_tracker, invl_gen, link);
-	mtx_unlock(&invl_gen_mtx);
+	epoch_enter_preempt(pmap_epoch, et);
+	curthread->td_md.md_invl_gen.gen = 1;
 }
 
 /*
@@ -489,39 +479,15 @@ pmap_delayed_invl_started(void)
  * pmap_delayed_invl_page() must be finished before this function is
  * called.
  *
- * This function works by bumping the global DI generation number to
- * the generation number of the current thread's DI, unless there is a
- * pending DI that started earlier.  In the latter case, bumping the
- * global DI generation number would incorrectly signal that the
- * earlier DI had finished.  Instead, this function bumps the earlier
- * DI's generation number to match the generation number of the
- * current thread's DI.
+ * This function works by checking that there are either no callers
+ * within a DI block or if there are that a grace period elapses for
+ * any callers in an epoch section when it is initially called.
  */
 static void
-pmap_delayed_invl_finished(void)
+pmap_delayed_invl_finished(epoch_tracker_t et)
 {
-	struct pmap_invl_gen *invl_gen, *next;
-	struct turnstile *ts;
-
-	invl_gen = &curthread->td_md.md_invl_gen;
-	KASSERT(invl_gen->gen != 0, ("missed invl_started"));
-	mtx_lock(&invl_gen_mtx);
-	next = LIST_NEXT(invl_gen, link);
-	if (next == NULL) {
-		turnstile_chain_lock(&invl_gen_ts);
-		ts = turnstile_lookup(&invl_gen_ts);
-		pmap_invl_gen = invl_gen->gen;
-		if (ts != NULL) {
-			turnstile_broadcast(ts, TS_SHARED_QUEUE);
-			turnstile_unpend(ts);
-		}
-		turnstile_chain_unlock(&invl_gen_ts);
-	} else {
-		next->gen = invl_gen->gen;
-	}
-	LIST_REMOVE(invl_gen, link);
-	mtx_unlock(&invl_gen_mtx);
-	invl_gen->gen = 0;
+	curthread->td_md.md_invl_gen.gen = 0;
+	epoch_exit_preempt(pmap_epoch, et);
 }
 
 #ifdef PV_STATS
@@ -554,26 +520,7 @@ pmap_delayed_invl_genp(vm_page_t m)
 static void
 pmap_delayed_invl_wait(vm_page_t m)
 {
-	struct turnstile *ts;
-	u_long *m_gen;
-#ifdef PV_STATS
-	bool accounted = false;
-#endif
-
-	m_gen = pmap_delayed_invl_genp(m);
-	while (*m_gen > pmap_invl_gen) {
-#ifdef PV_STATS
-		if (!accounted) {
-			atomic_add_long(&invl_wait, 1);
-			accounted = true;
-		}
-#endif
-		ts = turnstile_trywait(&invl_gen_ts);
-		if (*m_gen > pmap_invl_gen)
-			turnstile_wait(ts, NULL, TS_SHARED_QUEUE);
-		else
-			turnstile_cancel(ts);
-	}
+	epoch_wait_preempt(pmap_epoch);
 }
 
 /*
@@ -3159,7 +3106,7 @@ SYSCTL_INT(_vm_pmap, OID_AUTO, pv_entry_spare, CTLFLAG_RD, &pv_entry_spare, 0,
 #endif
 
 static void
-reclaim_pv_chunk_leave_pmap(pmap_t pmap, pmap_t locked_pmap, bool start_di)
+reclaim_pv_chunk_leave_pmap(pmap_t pmap, pmap_t locked_pmap, bool start_di, epoch_tracker_t et)
 {
 
 	if (pmap == NULL)
@@ -3168,7 +3115,7 @@ reclaim_pv_chunk_leave_pmap(pmap_t pmap, pmap_t locked_pmap, bool start_di)
 	if (pmap != locked_pmap)
 		PMAP_UNLOCK(pmap);
 	if (start_di)
-		pmap_delayed_invl_finished();
+		pmap_delayed_invl_finished(et);
 }
 
 /*
@@ -3200,6 +3147,7 @@ reclaim_pv_chunk(pmap_t locked_pmap, struct rwlock **lockp)
 	int bit, field, freed;
 	bool start_di;
 	static int active_reclaims = 0;
+	struct epoch_tracker et;
 
 	PMAP_LOCK_ASSERT(locked_pmap, MA_OWNED);
 	KASSERT(lockp != NULL, ("reclaim_pv_chunk: lockp is NULL"));
@@ -3244,20 +3192,20 @@ reclaim_pv_chunk(pmap_t locked_pmap, struct rwlock **lockp)
 		 */
 		if (pmap != next_pmap) {
 			reclaim_pv_chunk_leave_pmap(pmap, locked_pmap,
-			    start_di);
+				start_di, &et);
 			pmap = next_pmap;
 			/* Avoid deadlock and lock recursion. */
 			if (pmap > locked_pmap) {
 				RELEASE_PV_LIST_LOCK(lockp);
 				PMAP_LOCK(pmap);
 				if (start_di)
-					pmap_delayed_invl_started();
+					pmap_delayed_invl_started(&et);
 				mtx_lock(&pv_chunks_mutex);
 				continue;
 			} else if (pmap != locked_pmap) {
 				if (PMAP_TRYLOCK(pmap)) {
 					if (start_di)
-						pmap_delayed_invl_started();
+						pmap_delayed_invl_started(&et);
 					mtx_lock(&pv_chunks_mutex);
 					continue;
 				} else {
@@ -3270,7 +3218,7 @@ reclaim_pv_chunk(pmap_t locked_pmap, struct rwlock **lockp)
 					goto next_chunk;
 				}
 			} else if (start_di)
-				pmap_delayed_invl_started();
+				pmap_delayed_invl_started(&et);
 			PG_G = pmap_global_bit(pmap);
 			PG_A = pmap_accessed_bit(pmap);
 			PG_M = pmap_modified_bit(pmap);
@@ -3367,7 +3315,7 @@ next_chunk:
 	TAILQ_REMOVE(&pv_chunks, pc_marker_end, pc_lru);
 	active_reclaims--;
 	mtx_unlock(&pv_chunks_mutex);
-	reclaim_pv_chunk_leave_pmap(pmap, locked_pmap, start_di);
+	reclaim_pv_chunk_leave_pmap(pmap, locked_pmap, start_di, &et);
 	if (m_pc == NULL && !SLIST_EMPTY(&free)) {
 		m_pc = SLIST_FIRST(&free);
 		SLIST_REMOVE_HEAD(&free, plinks.s.ss);
@@ -4174,6 +4122,7 @@ pmap_remove(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 	pd_entry_t ptpaddr, *pde;
 	pt_entry_t PG_G, PG_V;
 	struct spglist free;
+	struct epoch_tracker et;
 	int anyvalid;
 
 	PG_G = pmap_global_bit(pmap);
@@ -4188,7 +4137,7 @@ pmap_remove(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 	anyvalid = 0;
 	SLIST_INIT(&free);
 
-	pmap_delayed_invl_started();
+	pmap_delayed_invl_started(&et);
 	PMAP_LOCK(pmap);
 
 	/*
@@ -4284,7 +4233,7 @@ out:
 	if (anyvalid)
 		pmap_invalidate_all(pmap);
 	PMAP_UNLOCK(pmap);
-	pmap_delayed_invl_finished();
+	pmap_delayed_invl_finished(&et);
 	vm_page_free_pages_toq(&free, true);
 }
 
@@ -5031,6 +4980,7 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	pd_entry_t oldpde, *pde;
 	pt_entry_t PG_G, PG_RW, PG_V;
 	vm_page_t mt, pdpg;
+	struct epoch_tracker et;
 
 	PG_G = pmap_global_bit(pmap);
 	PG_RW = pmap_rw_bit(pmap);
@@ -5070,11 +5020,11 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 			if ((oldpde & PG_G) == 0)
 				pmap_invalidate_pde_page(pmap, va, oldpde);
 		} else {
-			pmap_delayed_invl_started();
+			pmap_delayed_invl_started(&et);
 			if (pmap_remove_ptes(pmap, va, va + NBPDR, pde, &free,
 			    lockp))
 		               pmap_invalidate_all(pmap);
-			pmap_delayed_invl_finished();
+			pmap_delayed_invl_finished(&et);
 		}
 		vm_page_free_pages_toq(&free, true);
 		if (va >= VM_MAXUSER_ADDRESS) {
@@ -6588,6 +6538,7 @@ pmap_advise(pmap_t pmap, vm_offset_t sva, vm_offset_t eva, int advice)
 	vm_offset_t va, va_next;
 	vm_page_t m;
 	boolean_t anychanged;
+	struct epoch_tracker et;
 
 	if (advice != MADV_DONTNEED && advice != MADV_FREE)
 		return;
@@ -6607,7 +6558,7 @@ pmap_advise(pmap_t pmap, vm_offset_t sva, vm_offset_t eva, int advice)
 	PG_V = pmap_valid_bit(pmap);
 	PG_RW = pmap_rw_bit(pmap);
 	anychanged = FALSE;
-	pmap_delayed_invl_started();
+	pmap_delayed_invl_started(&et);
 	PMAP_LOCK(pmap);
 	for (; sva < eva; sva = va_next) {
 		pml4e = pmap_pml4e(pmap, sva);
@@ -6704,7 +6655,7 @@ maybe_invlrng:
 	if (anychanged)
 		pmap_invalidate_all(pmap);
 	PMAP_UNLOCK(pmap);
-	pmap_delayed_invl_finished();
+	pmap_delayed_invl_finished(&et);
 }
 
 /*
