@@ -1808,7 +1808,7 @@ do_fw4_ack(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 
 		if (tp->snd_una != snd_una) {
 			tp->snd_una = snd_una;
-			tp->ts_recent_age = tcp_ts_getticks();
+			tp->ts_recent_age = tcp_ts_getsbintime();
 		}
 	}
 
