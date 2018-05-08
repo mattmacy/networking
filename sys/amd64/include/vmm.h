@@ -215,6 +215,7 @@ int vm_get_memseg(struct vm *vm, int ident, size_t *len, bool *sysmem,
 void *vm_gpa_hold(struct vm *, int vcpuid, vm_paddr_t gpa, size_t len,
     int prot, void **cookie);
 void vm_gpa_release(void *cookie);
+vm_offset_t vm_gpa_to_kva(struct vm *vm, vm_paddr_t gpa, int len, uint16_t *hint);
 bool vm_mem_allocated(struct vm *vm, int vcpuid, vm_paddr_t gpa);
 
 int vm_get_register(struct vm *vm, int vcpu, int reg, uint64_t *retval);
@@ -343,6 +344,8 @@ struct vatpic *vm_atpic(struct vm *vm);
 struct vatpit *vm_atpit(struct vm *vm);
 struct vpmtmr *vm_pmtmr(struct vm *vm);
 struct vrtc *vm_rtc(struct vm *vm);
+struct vtnet_be *vm_vtnet_be(struct vm *vm);
+void *vm_ioport(struct vm *vm);
 
 /*
  * Inject exception 'vector' into the guest vcpu. This function returns 0 on

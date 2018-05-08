@@ -46,6 +46,7 @@ struct vm_memmap {
 };
 #define	VM_MEMMAP_F_WIRED	0x01
 #define	VM_MEMMAP_F_IOMMU	0x02
+#define	VM_MEMMAP_F_WIRED_KERNEL	0x04
 
 #define	VM_MEMSEG_NAME(m)	((m)->name[0] != '\0' ? (m)->name : NULL)
 struct vm_memseg {
