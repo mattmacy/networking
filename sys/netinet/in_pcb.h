@@ -51,6 +51,8 @@
 #include <sys/lock.h>
 #include <sys/rwlock.h>
 #include <net/vnet.h>
+#include <net/if.h>
+#include <net/if_var.h>
 #include <vm/uma.h>
 #endif
 
@@ -625,18 +627,18 @@ int	inp_so_options(const struct inpcb *inp);
 #define INP_INFO_LOCK_INIT(ipi, d) \
 	rw_init_flags(&(ipi)->ipi_lock, (d), RW_RECURSE)
 #define INP_INFO_LOCK_DESTROY(ipi)  rw_destroy(&(ipi)->ipi_lock)
-#define INP_INFO_RLOCK(ipi)	rw_rlock(&(ipi)->ipi_lock)
+#define INP_INFO_RLOCK(ipi)	epoch_enter_preempt(net_epoch_preempt)
 #define INP_INFO_WLOCK(ipi)	rw_wlock(&(ipi)->ipi_lock)
-#define INP_INFO_TRY_RLOCK(ipi)	rw_try_rlock(&(ipi)->ipi_lock)
+#define INP_INFO_TRY_RLOCK(ipi) ({epoch_enter_preempt(net_epoch_preempt); 1;})
 #define INP_INFO_TRY_WLOCK(ipi)	rw_try_wlock(&(ipi)->ipi_lock)
 #define INP_INFO_TRY_UPGRADE(ipi)	rw_try_upgrade(&(ipi)->ipi_lock)
 #define INP_INFO_WLOCKED(ipi)	rw_wowned(&(ipi)->ipi_lock)
-#define INP_INFO_RUNLOCK(ipi)	rw_runlock(&(ipi)->ipi_lock)
+#define INP_INFO_RUNLOCK(ipi)	epoch_exit_preempt(net_epoch_preempt)
 #define INP_INFO_WUNLOCK(ipi)	rw_wunlock(&(ipi)->ipi_lock)
-#define	INP_INFO_LOCK_ASSERT(ipi)	rw_assert(&(ipi)->ipi_lock, RA_LOCKED)
-#define INP_INFO_RLOCK_ASSERT(ipi)	rw_assert(&(ipi)->ipi_lock, RA_RLOCKED)
+#define	INP_INFO_LOCK_ASSERT(ipi)	MPASS(in_epoch() || rw_wowned(&(ipi)->ipi_lock))
+#define INP_INFO_RLOCK_ASSERT(ipi)	MPASS(in_epoch())
 #define INP_INFO_WLOCK_ASSERT(ipi)	rw_assert(&(ipi)->ipi_lock, RA_WLOCKED)
-#define INP_INFO_UNLOCK_ASSERT(ipi)	rw_assert(&(ipi)->ipi_lock, RA_UNLOCKED)
+#define INP_INFO_UNLOCK_ASSERT(ipi)	MPASS(!in_epoch() && !rw_wowned(&(ipi)->ipi_lock))
 
 #define INP_LIST_LOCK_INIT(ipi, d) \
         rw_init_flags(&(ipi)->ipi_list_lock, (d), 0)
