@@ -67,8 +67,8 @@
  * numbers, and pointers up (to a socket structure) and down (to a
  * protocol-specific control block) are stored here.
  */
-LIST_HEAD(inpcbhead, inpcb);
-LIST_HEAD(inpcbporthead, inpcbport);
+CK_LIST_HEAD(inpcbhead, inpcb);
+CK_LIST_HEAD(inpcbporthead, inpcbport);
 typedef	uint64_t	inp_gen_t;
 
 /*
@@ -232,8 +232,8 @@ struct inpcbpolicy;
 struct m_snd_tag;
 struct inpcb {
 	/* Cache line #1 (amd64) */
-	LIST_ENTRY(inpcb) inp_hash;	/* (h/i) hash list */
-	LIST_ENTRY(inpcb) inp_pcbgrouphash;	/* (g/i) hash list */
+	CK_LIST_ENTRY(inpcb) inp_hash;	/* (h/i) hash list */
+	CK_LIST_ENTRY(inpcb) inp_pcbgrouphash;	/* (g/i) hash list */
 	struct rwlock	inp_lock;
 	/* Cache line #2 (amd64) */
 #define	inp_start_zero	inp_hpts
@@ -402,7 +402,8 @@ void	in_pcbtoxinpcb(const struct inpcb *, struct xinpcb *);
 #endif /* _SYS_SOCKETVAR_H_ */
 
 struct inpcbport {
-	LIST_ENTRY(inpcbport) phd_hash;
+	struct epoch_context phd_epoch_ctx;
+	CK_LIST_ENTRY(inpcbport) phd_hash;
 	struct inpcbhead phd_pcblist;
 	u_short phd_port;
 };

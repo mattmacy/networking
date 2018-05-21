@@ -726,7 +726,7 @@ in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
 		head = &pcbinfo->ipi_hashbase[INP_PCBHASH(
 		    INP6_PCBHASHKEY(&in6addr_any), lport, 0,
 		    pcbinfo->ipi_hashmask)];
-		LIST_FOREACH(inp, head, inp_hash) {
+		CK_LIST_FOREACH(inp, head, inp_hash) {
 			/* XXX inp locking */
 			if ((inp->inp_vflag & INP_IPV6) == 0)
 				continue;
@@ -756,7 +756,7 @@ in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
 		 */
 		porthash = &pcbinfo->ipi_porthashbase[INP_PCBPORTHASH(lport,
 		    pcbinfo->ipi_porthashmask)];
-		LIST_FOREACH(phd, porthash, phd_hash) {
+		CK_LIST_FOREACH(phd, porthash, phd_hash) {
 			if (phd->phd_port == lport)
 				break;
 		}
@@ -1149,7 +1149,7 @@ in6_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 	tmpinp = NULL;
 	head = &pcbinfo->ipi_hashbase[INP_PCBHASH(
 	    INP6_PCBHASHKEY(faddr), lport, fport, pcbinfo->ipi_hashmask)];
-	LIST_FOREACH(inp, head, inp_hash) {
+	CK_LIST_FOREACH(inp, head, inp_hash) {
 		/* XXX inp locking */
 		if ((inp->inp_vflag & INP_IPV6) == 0)
 			continue;
@@ -1201,7 +1201,7 @@ in6_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 		head = &pcbinfo->ipi_hashbase[INP_PCBHASH(
 		    INP6_PCBHASHKEY(&in6addr_any), lport, 0,
 		    pcbinfo->ipi_hashmask)];
-		LIST_FOREACH(inp, head, inp_hash) {
+		CK_LIST_FOREACH(inp, head, inp_hash) {
 			/* XXX inp locking */
 			if ((inp->inp_vflag & INP_IPV6) == 0)
 				continue;
