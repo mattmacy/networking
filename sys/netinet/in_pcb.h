@@ -663,12 +663,11 @@ int	inp_so_options(const struct inpcb *inp);
 #define	INP_HASH_LOCK_INIT(ipi, d) \
 	rw_init_flags(&(ipi)->ipi_hash_lock, (d), 0)
 #define	INP_HASH_LOCK_DESTROY(ipi)	rw_destroy(&(ipi)->ipi_hash_lock)
-#define	INP_HASH_RLOCK(ipi)		rw_rlock(&(ipi)->ipi_hash_lock)
+#define	INP_HASH_RLOCK(ipi)		NET_EPOCH_ENTER()
 #define	INP_HASH_WLOCK(ipi)		rw_wlock(&(ipi)->ipi_hash_lock)
-#define	INP_HASH_RUNLOCK(ipi)		rw_runlock(&(ipi)->ipi_hash_lock)
+#define	INP_HASH_RUNLOCK(ipi)		NET_EPOCH_EXIT()
 #define	INP_HASH_WUNLOCK(ipi)		rw_wunlock(&(ipi)->ipi_hash_lock)
-#define	INP_HASH_LOCK_ASSERT(ipi)	rw_assert(&(ipi)->ipi_hash_lock, \
-					    RA_LOCKED)
+#define	INP_HASH_LOCK_ASSERT(ipi)	MPASS(in_epoch() || rw_wowned(&(ipi)->ipi_hash_lock))
 #define	INP_HASH_WLOCK_ASSERT(ipi)	rw_assert(&(ipi)->ipi_hash_lock, \
 					    RA_WLOCKED)
 
