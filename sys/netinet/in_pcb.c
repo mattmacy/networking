@@ -1569,6 +1569,43 @@ in_pcblist_rele_rlocked(epoch_context_t ctx)
 	free(il, M_TEMP);
 }
 
+static void
+inpcbport_free(epoch_context_t ctx)
+{
+	struct inpcbport *phd;
+
+	phd = __containerof(ctx, struct inpcbport, phd_epoch_ctx);
+	free(phd, M_PCB);
+}
+
+static void
+in_pcbfree_deferred(epoch_context_t ctx)
+{
+	struct inpcb *inp;
+	struct inpcbinfo *pcbinfo;
+
+	inp = __containerof(ctx, struct inpcb, inp_epoch_ctx);
+	pcbinfo = inp->inp_pcbinfo;
+
+	INP_WLOCK(inp);	
+	/* XXXRW: Do as much as possible here. */
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
+	if (inp->inp_sp != NULL)
+		ipsec_delete_pcbpolicy(inp);
+#endif
+	if (inp->inp_options)
+		(void)m_free(inp->inp_options);
+
+	inp->inp_vflag = 0;
+	inp->inp_flags2 |= INP_FREED;
+	crfree(inp->inp_cred);
+#ifdef MAC
+	mac_inpcb_destroy(inp);
+#endif
+	if (!in_pcbrele_wlocked(inp))
+		INP_WUNLOCK(inp);
+}
+
 /*
  * Unconditionally schedule an inpcb to be freed by decrementing its
  * reference count, which should occur only after the inpcb has been detached
@@ -1677,11 +1714,11 @@ in_pcbdrop(struct inpcb *inp)
 
 		INP_HASH_WLOCK(inp->inp_pcbinfo);
 		in_pcbremlbgrouphash(inp);
-		LIST_REMOVE(inp, inp_hash);
-		LIST_REMOVE(inp, inp_portlist);
-		if (LIST_FIRST(&phd->phd_pcblist) == NULL) {
-			LIST_REMOVE(phd, phd_hash);
-			free(phd, M_PCB);
+		CK_LIST_REMOVE(inp, inp_hash);
+		CK_LIST_REMOVE(inp, inp_portlist);
+		if (CK_LIST_FIRST(&phd->phd_pcblist) == NULL) {
+			CK_LIST_REMOVE(phd, phd_hash);
+			epoch_call(net_epoch_preempt, &phd->phd_epoch_ctx, inpcbport_free);
 		}
 		INP_HASH_WUNLOCK(inp->inp_pcbinfo);
 		inp->inp_flags &= ~INP_INHASHLIST;
@@ -1847,7 +1884,7 @@ in_pcblookup_local(struct inpcbinfo *pcbinfo, struct in_addr laddr,
 		 */
 		head = &pcbinfo->ipi_hashbase[INP_PCBHASH(INADDR_ANY, lport,
 		    0, pcbinfo->ipi_hashmask)];
-		LIST_FOREACH(inp, head, inp_hash) {
+		CK_LIST_FOREACH(inp, head, inp_hash) {
 #ifdef INET6
 			/* XXX inp locking */
 			if ((inp->inp_vflag & INP_IPV4) == 0)
@@ -1881,7 +1918,7 @@ in_pcblookup_local(struct inpcbinfo *pcbinfo, struct in_addr laddr,
 		 */
 		porthash = &pcbinfo->ipi_porthashbase[INP_PCBPORTHASH(lport,
 		    pcbinfo->ipi_porthashmask)];
-		LIST_FOREACH(phd, porthash, phd_hash) {
+		CK_LIST_FOREACH(phd, porthash, phd_hash) {
 			if (phd->phd_port == lport)
 				break;
 		}
@@ -2249,7 +2286,7 @@ in_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 	tmpinp = NULL;
 	head = &pcbinfo->ipi_hashbase[INP_PCBHASH(faddr.s_addr, lport, fport,
 	    pcbinfo->ipi_hashmask)];
-	LIST_FOREACH(inp, head, inp_hash) {
+	CK_LIST_FOREACH(inp, head, inp_hash) {
 #ifdef INET6
 		/* XXX inp locking */
 		if ((inp->inp_vflag & INP_IPV4) == 0)
@@ -2306,7 +2343,7 @@ in_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 
 		head = &pcbinfo->ipi_hashbase[INP_PCBHASH(INADDR_ANY, lport,
 		    0, pcbinfo->ipi_hashmask)];
-		LIST_FOREACH(inp, head, inp_hash) {
+		CK_LIST_FOREACH(inp, head, inp_hash) {
 #ifdef INET6
 			/* XXX inp locking */
 			if ((inp->inp_vflag & INP_IPV4) == 0)
@@ -2539,7 +2576,7 @@ in_pcbinshash_internal(struct inpcb *inp, int do_pcbgroup_update)
 	/*
 	 * Go through port list and look for a head for this lport.
 	 */
-	LIST_FOREACH(phd, pcbporthash, phd_hash) {
+	CK_LIST_FOREACH(phd, pcbporthash, phd_hash) {
 		if (phd->phd_port == inp->inp_lport)
 			break;
 	}
@@ -2547,17 +2584,17 @@ in_pcbinshash_internal(struct inpcb *inp, int do_pcbgroup_update)
 	 * If none exists, malloc one and tack it on.
 	 */
 	if (phd == NULL) {
-		phd = malloc(sizeof(struct inpcbport), M_PCB, M_NOWAIT);
+		phd = malloc(sizeof(struct inpcbport), M_PCB, M_NOWAIT|M_ZERO);
 		if (phd == NULL) {
 			return (ENOBUFS); /* XXX */
 		}
 		phd->phd_port = inp->inp_lport;
-		LIST_INIT(&phd->phd_pcblist);
-		LIST_INSERT_HEAD(pcbporthash, phd, phd_hash);
+		CK_LIST_INIT(&phd->phd_pcblist);
+		CK_LIST_INSERT_HEAD(pcbporthash, phd, phd_hash);
 	}
 	inp->inp_phd = phd;
-	LIST_INSERT_HEAD(&phd->phd_pcblist, inp, inp_portlist);
-	LIST_INSERT_HEAD(pcbhash, inp, inp_hash);
+	CK_LIST_INSERT_HEAD(&phd->phd_pcblist, inp, inp_portlist);
+	CK_LIST_INSERT_HEAD(pcbhash, inp, inp_hash);
 	inp->inp_flags |= INP_INHASHLIST;
 #ifdef PCBGROUP
 	if (do_pcbgroup_update)
@@ -2620,8 +2657,8 @@ in_pcbrehash_mbuf(struct inpcb *inp, struct mbuf *m)
 	head = &pcbinfo->ipi_hashbase[INP_PCBHASH(hashkey_faddr,
 		inp->inp_lport, inp->inp_fport, pcbinfo->ipi_hashmask)];
 
-	LIST_REMOVE(inp, inp_hash);
-	LIST_INSERT_HEAD(head, inp, inp_hash);
+	CK_LIST_REMOVE(inp, inp_hash);
+	CK_LIST_INSERT_HEAD(head, inp, inp_hash);
 
 #ifdef PCBGROUP
 	if (m != NULL)
@@ -2637,6 +2674,7 @@ in_pcbrehash(struct inpcb *inp)
 
 	in_pcbrehash_mbuf(inp, NULL);
 }
+
 
 /*
  * Remove PCB from various lists.
@@ -2662,20 +2700,18 @@ in_pcbremlists(struct inpcb *inp)
 		struct inpcbport *phd = inp->inp_phd;
 
 		INP_HASH_WLOCK(pcbinfo);
-
 		/* XXX: Only do if SO_REUSEPORT_LB set? */
 		in_pcbremlbgrouphash(inp);
-
-		LIST_REMOVE(inp, inp_hash);
-		LIST_REMOVE(inp, inp_portlist);
-		if (LIST_FIRST(&phd->phd_pcblist) == NULL) {
-			LIST_REMOVE(phd, phd_hash);
-			free(phd, M_PCB);
+		CK_LIST_REMOVE(inp, inp_hash);
+		CK_LIST_REMOVE(inp, inp_portlist);
+		if (CK_LIST_FIRST(&phd->phd_pcblist) == NULL) {
+			CK_LIST_REMOVE(phd, phd_hash);
+			epoch_call(net_epoch_preempt, &phd->phd_epoch_ctx, inpcbport_free);
 		}
 		INP_HASH_WUNLOCK(pcbinfo);
 		inp->inp_flags &= ~INP_INHASHLIST;
 	}
-	LIST_REMOVE(inp, inp_list);
+	CK_LIST_REMOVE(inp, inp_list);
 	pcbinfo->ipi_count--;
 #ifdef PCBGROUP
 	in_pcbgroup_remove(inp);
