@@ -2392,11 +2392,12 @@ in_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 			locked = INP_TRY_RLOCK(inp);
 		else
 			panic("%s: locking bug", __func__);
-		if (locked && (inp->inp_flags2 & INP_FREED)) {
+		if (__predict_false(locked && (inp->inp_flags2 & INP_FREED))) {
 			if (lookupflags & INPLOOKUP_WLOCKPCB)
-				in_pcbrele_wlocked(inp);
+				INP_WUNLOCK(inp);
 			else
-				in_pcbrele_rlocked(inp);
+				INP_RUNLOCK(inp);
+			return (NULL);
 		} else if (!locked)
 			in_pcbref(inp);
 		INP_HASH_RUNLOCK(pcbinfo);
