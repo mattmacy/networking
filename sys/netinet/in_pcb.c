@@ -2397,6 +2397,7 @@ in_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 				INP_WUNLOCK(inp);
 			else
 				INP_RUNLOCK(inp);
+			INP_HASH_RUNLOCK(pcbinfo);
 			return (NULL);
 		} else if (!locked)
 			in_pcbref(inp);
