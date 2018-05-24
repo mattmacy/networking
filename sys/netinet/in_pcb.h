@@ -55,6 +55,7 @@
 #include <net/if_var.h>
 #include <vm/uma.h>
 #endif
+#include <sys/ck.h>
 
 #define	in6pcb		inpcb	/* for KAME src sync over BSD*'s */
 #define	in6p_sp		inp_sp	/* for KAME src sync over BSD*'s */
