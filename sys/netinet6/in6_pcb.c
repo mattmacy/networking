@@ -649,7 +649,7 @@ in6_pcbnotify(struct inpcbinfo *pcbinfo, struct sockaddr *dst,
 	}
 	errno = inet6ctlerrmap[cmd];
 	INP_INFO_WLOCK(pcbinfo);
-	LIST_FOREACH_SAFE(inp, pcbinfo->ipi_listhead, inp_list, inp_temp) {
+	CK_LIST_FOREACH_SAFE(inp, pcbinfo->ipi_listhead, inp_list, inp_temp) {
 		INP_WLOCK(inp);
 		if ((inp->inp_vflag & INP_IPV6) == 0) {
 			INP_WUNLOCK(inp);
@@ -765,7 +765,7 @@ in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
 			 * Port is in use by one or more PCBs. Look for best
 			 * fit.
 			 */
-			LIST_FOREACH(inp, &phd->phd_pcblist, inp_portlist) {
+			CK_LIST_FOREACH(inp, &phd->phd_pcblist, inp_portlist) {
 				wildcard = 0;
 				if (cred != NULL &&
 				    !prison_equal_ip6(cred->cr_prison,
@@ -807,7 +807,7 @@ in6_pcbpurgeif0(struct inpcbinfo *pcbinfo, struct ifnet *ifp)
 	int i, gap;
 
 	INP_INFO_WLOCK(pcbinfo);
-	LIST_FOREACH(in6p, pcbinfo->ipi_listhead, inp_list) {
+	CK_LIST_FOREACH(in6p, pcbinfo->ipi_listhead, inp_list) {
 		INP_WLOCK(in6p);
 		im6o = in6p->in6p_moptions;
 		if ((in6p->inp_vflag & INP_IPV6) && im6o != NULL) {

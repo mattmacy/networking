@@ -456,7 +456,7 @@ in_pcbinfo_init(struct inpcbinfo *pcbinfo, const char *name,
 	pcbinfo->ipi_vnet = curvnet;
 #endif
 	pcbinfo->ipi_listhead = listhead;
-	LIST_INIT(pcbinfo->ipi_listhead);
+	CK_LIST_INIT(pcbinfo->ipi_listhead);
 	pcbinfo->ipi_count = 0;
 	pcbinfo->ipi_hashbase = hashinit(hash_nelements, M_PCB,
 	    &pcbinfo->ipi_hashmask);
@@ -549,7 +549,7 @@ in_pcballoc(struct socket *so, struct inpcbinfo *pcbinfo)
 #endif
 	INP_WLOCK(inp);
 	INP_LIST_WLOCK(pcbinfo);
-	LIST_INSERT_HEAD(pcbinfo->ipi_listhead, inp, inp_list);
+	CK_LIST_INSERT_HEAD(pcbinfo->ipi_listhead, inp, inp_list);
 	pcbinfo->ipi_count++;
 	so->so_pcb = (caddr_t)inp;
 #ifdef INET6
@@ -1765,7 +1765,7 @@ in_pcbnotifyall(struct inpcbinfo *pcbinfo, struct in_addr faddr, int errno,
 	struct inpcb *inp, *inp_temp;
 
 	INP_INFO_WLOCK(pcbinfo);
-	LIST_FOREACH_SAFE(inp, pcbinfo->ipi_listhead, inp_list, inp_temp) {
+	CK_LIST_FOREACH_SAFE(inp, pcbinfo->ipi_listhead, inp_list, inp_temp) {
 		INP_WLOCK(inp);
 #ifdef INET6
 		if ((inp->inp_vflag & INP_IPV4) == 0) {
@@ -1792,7 +1792,7 @@ in_pcbpurgeif0(struct inpcbinfo *pcbinfo, struct ifnet *ifp)
 	int i, gap;
 
 	INP_INFO_WLOCK(pcbinfo);
-	LIST_FOREACH(inp, pcbinfo->ipi_listhead, inp_list) {
+	CK_LIST_FOREACH(inp, pcbinfo->ipi_listhead, inp_list) {
 		INP_WLOCK(inp);
 		imo = inp->inp_moptions;
 		if ((inp->inp_vflag & INP_IPV4) &&
@@ -1900,7 +1900,7 @@ in_pcblookup_local(struct inpcbinfo *pcbinfo, struct in_addr laddr,
 			 * Port is in use by one or more PCBs. Look for best
 			 * fit.
 			 */
-			LIST_FOREACH(inp, &phd->phd_pcblist, inp_portlist) {
+			CK_LIST_FOREACH(inp, &phd->phd_pcblist, inp_portlist) {
 				wildcard = 0;
 				if (cred != NULL &&
 				    !prison_equal_ip4(inp->inp_cred->cr_prison,
@@ -2835,7 +2835,7 @@ inp_apply_all(void (*func)(struct inpcb *, void *), void *arg)
 	struct inpcb *inp;
 
 	INP_INFO_WLOCK(&V_tcbinfo);
-	LIST_FOREACH(inp, V_tcbinfo.ipi_listhead, inp_list) {
+	CK_LIST_FOREACH(inp, V_tcbinfo.ipi_listhead, inp_list) {
 		INP_WLOCK(inp);
 		func(inp, arg);
 		INP_WUNLOCK(inp);

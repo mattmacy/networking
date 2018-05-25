@@ -1060,8 +1060,8 @@ rip_pcblist(SYSCTL_HANDLER_ARGS)
 	inp_list = il->il_inp_list;
 
 	INP_INFO_RLOCK(&V_ripcbinfo);
-	for (inp = LIST_FIRST(V_ripcbinfo.ipi_listhead), i = 0; inp && i < n;
-	     inp = LIST_NEXT(inp, inp_list)) {
+	for (inp = CK_LIST_FIRST(V_ripcbinfo.ipi_listhead), i = 0; inp && i < n;
+	     inp = CK_LIST_NEXT(inp, inp_list)) {
 		INP_WLOCK(inp);
 		if (inp->inp_gencnt <= gencnt &&
 		    cr_canseeinpcb(req->td->td_ucred, inp) == 0) {

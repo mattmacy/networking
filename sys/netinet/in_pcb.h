@@ -316,7 +316,7 @@ struct inpcb {
 		int	in6p_cksum;
 		short	in6p_hops;
 	};
-	LIST_ENTRY(inpcb) inp_portlist;	/* (i/h) */
+	CK_LIST_ENTRY(inpcb) inp_portlist;	/* (i/h) */
 	struct	inpcbport *inp_phd;	/* (i/h) head of this list */
 	inp_gen_t	inp_gencnt;	/* (c) generation count */
 	struct llentry	*inp_lle;	/* cached L2 information */
@@ -325,7 +325,7 @@ struct inpcb {
 		struct route inp_route;
 		struct route_in6 inp_route6;
 	};
-	LIST_ENTRY(inpcb) inp_list;	/* (p/l) list for all PCBs for proto */
+	CK_LIST_ENTRY(inpcb) inp_list;	/* (p/l) list for all PCBs for proto */
 	                                /* (p[w]) for list iteration */
 	                                /* (p[r]/l) for addition/removal */
 	struct epoch_context inp_epoch_ctx;
