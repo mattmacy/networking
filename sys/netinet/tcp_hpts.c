@@ -514,40 +514,6 @@ SYSCTL_PROC(_net_inet_tcp_hpts, OID_AUTO, log, CTLTYPE_STRING | CTLFLAG_RD | CTL
 static int
 tcp_hptsi_lock_inpinfo(struct inpcb *inp, struct tcpcb **tpp)
 {
-	struct tcp_function_block *tfb;
-	struct tcpcb *tp;
-	void *ptr;
-
-	/* Try the easy way. */
-	if (INP_INFO_TRY_RLOCK(&V_tcbinfo))
-		return (0);
-
-	/*
-	 * OK, let's try the hard way. We'll save the function pointer block
-	 * to make sure that doesn't change while we aren't holding the
-	 * lock.
-	 */
-	tp = *tpp;
-	tfb = tp->t_fb;
-	ptr = tp->t_fb_ptr;
-	INP_WUNLOCK(inp);
-	INP_INFO_RLOCK(&V_tcbinfo);
-	INP_WLOCK(inp);
-	/* If the session went away, return an error. */
-	if ((inp->inp_flags & (INP_TIMEWAIT | INP_DROPPED)) ||
-	    (inp->inp_flags2 & INP_FREED)) {
-		*tpp = NULL;
-		return (1);
-	}
-	/*
-	 * If the function block or stack-specific data block changed,
-	 * report an error.
-	 */
-	tp = intotcpcb(inp);
-	if ((tp->t_fb != tfb) && (tp->t_fb_ptr != ptr)) {
-		*tpp = NULL;
-		return (1);
-	}
 	return (0);
 }
 
