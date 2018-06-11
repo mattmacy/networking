@@ -2223,7 +2223,6 @@ restart:
 
 	/* Abort if socket has reported problems. */
 	if (so->so_error) {
-		printf("socket error %d\n", so->so_error);
 		SOCKBUF_LOCK(sb);
 		sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
@@ -2238,7 +2237,6 @@ restart:
 
 	/* Door is closed.  Deliver what is left, if any. */
 	if (sb->sb_state & SBS_CANTRCVMORE) {
-		printf("can't receive more\n");
 		SOCKBUF_LOCK(sb);
 		sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
@@ -2254,7 +2252,6 @@ restart:
 		SOCKBUF_LOCK(sb);
 		count = sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
-		printf("moved %d bytes for nonblocking\n", count);
 		if (sbstreamavail(sb) > 0)
 			goto restart;
 		error = EAGAIN;
@@ -2262,7 +2259,7 @@ restart:
 	}
 
 	/* Socket buffer got some data that we shall deliver now. */
-	if (sbavail(sb) > 0 && ((so->so_state & SS_NBIO) ||
+	if (sbstreamavail(sb) > 0 && ((so->so_state & SS_NBIO) ||
 	     (flags & (MSG_DONTWAIT|MSG_NBIO)) ||
 	     sbstreamavail(sb) >= sb->sb_lowat ||
 	     sbstreamavail(sb) >= uio->uio_resid ||
@@ -2286,10 +2283,8 @@ restart:
 	}
 	error = sbwait(sb);
 	SOCKBUF_UNLOCK(sb);
-	if (error) {
-		printf("sbwait returned %d\n", error);
+	if (error)
 		goto out;
-	}
 	goto restart;
 
 deliver:
@@ -2303,7 +2298,6 @@ deliver:
 	/* Fill uio until full or current end of socket buffer is reached. */
 	len = min(uio->uio_resid, sbstreamavail(sb));
 	if (mp0 != NULL) {
-		printf("Dequeue as many mbufs as possible\n");
 		/* Dequeue as many mbufs as possible. */
 		if (len >= sb->sb_mb->m_len) {
 			if (*mp0 == NULL)
