@@ -2362,10 +2362,8 @@ deliver:
 
 	/* Notify protocol that we drained some data. */
 	if ((so->so_proto->pr_flags & PR_WANTRCVD) && !(flags & MSG_SOCALLBCK)) {
-		SOCKBUF_UNLOCK(sb);
 		VNET_SO_ASSERT(so);
 		(*so->so_proto->pr_usrreqs->pru_rcvd)(so, flags);
-		SOCKBUF_LOCK(sb);
 	}
 
 out:
