@@ -2177,12 +2177,16 @@ soreceive_stream(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		return (EINVAL);
 	if (psa != NULL)
 		*psa = NULL;
-	if (controlp != NULL)
-		return (EINVAL);
 	if (flagsp != NULL)
 		flags = *flagsp &~ MSG_EOR;
 	else
 		flags = 0;
+	if (flags & (MSG_PEEK|MSG_WAITALL)) {
+		/* XXX put back */
+		return (soreceive_generic(so, psa, uio, mp0, controlp, flagsp));
+	}
+	if (controlp != NULL)
+		*controlp = NULL;
 	if (flags & MSG_OOB)
 		return (soreceive_rcvoob(so, uio, flags));
 	if (mp0 != NULL)
@@ -2234,7 +2238,6 @@ restart:
 
 	/* Door is closed.  Deliver what is left, if any. */
 	if (sb->sb_state & SBS_CANTRCVMORE) {
-		printf("can't receive more\n");
 		SOCKBUF_LOCK(sb);
 		sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
@@ -2250,7 +2253,6 @@ restart:
 		SOCKBUF_LOCK(sb);
 		count = sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
-		printf("moved %d bytes for nonblocking\n", count);
 		if (sbstreamavail(sb) > 0)
 			goto restart;
 		error = EAGAIN;
@@ -2300,7 +2302,6 @@ deliver:
 	/* Fill uio until full or current end of socket buffer is reached. */
 	len = min(uio->uio_resid, sbstreamavail(sb));
 	if (mp0 != NULL) {
-		printf("Dequeue as many mbufs as possible\n");
 		/* Dequeue as many mbufs as possible. */
 		if (!(flags & MSG_PEEK) && len >= sb->sb_mb->m_len) {
 			if (*mp0 == NULL)
