@@ -204,7 +204,7 @@ sbavail(struct sockbuf *sb)
 #if 0
 	SOCKBUF_LOCK_ASSERT(sb);
 #endif
-	return (sb->sb_acc);
+	return (sb->sb_acc + sb->sb_stream_acc);
 }
 
 
@@ -212,9 +212,6 @@ static inline u_int
 sbstreamavail(struct sockbuf *sb)
 {
 
-#if 0
-	SOCKBUF_LOCK_ASSERT(sb);
-#endif
 	return (sb->sb_stream_acc);
 }
 
@@ -226,10 +223,7 @@ static inline u_int
 sbused(struct sockbuf *sb)
 {
 
-#if 0
-	SOCKBUF_LOCK_ASSERT(sb);
-#endif
-	return (sb->sb_ccc);
+	return (sb->sb_ccc + sb->sb_stream_ccc);
 }
 
 /*
@@ -249,7 +243,7 @@ sbspace(struct sockbuf *sb)
 	if (sb->sb_flags & SB_STOP)
 		return(0);
 
-	bleft = sb->sb_hiwat - sb->sb_ccc;
+	bleft = sb->sb_hiwat - (sb->sb_ccc + sb->sb_stream_ccc);
 	mleft = sb->sb_mbmax - sb->sb_mbcnt;
 
 	return ((bleft < mleft) ? bleft : mleft);

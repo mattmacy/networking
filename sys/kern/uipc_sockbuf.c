@@ -215,6 +215,7 @@ sbstreamfree(struct sockbuf *sb, struct mbuf *m)
 #endif
 
 	sb->sb_stream_ccc -= m->m_len;
+	sb->sb_stream_acc -= m->m_len;
 
 	/* rx only */
 	MPASS((m->m_flags & M_NOTAVAIL) == 0);
@@ -1380,14 +1381,19 @@ sbstreammove_locked(struct sockbuf *sb)
 	if (sb->sb_acc == 0)
 		return (0);
 	moved = sb->sb_acc;
+	MPASS(sb->sb_acc == sb->sb_ccc);
 	sb->sb_stream_acc += sb->sb_acc;
 	sb->sb_stream_ccc += sb->sb_ccc;
+	MPASS(sb->sb_stream_acc == sb->sb_stream_ccc);
 	sb->sb_stream_mcnt += sb->sb_mcnt;
 	sb->sb_stream_mbcnt += sb->sb_mbcnt;
 	sb->sb_stream_ccnt += sb->sb_ccnt;
-
-	sb->sb_stream_mbtail->m_next = sb->sb_mb;
+	if (sb->sb_stream_mbtail)
+		sb->sb_stream_mbtail->m_next = sb->sb_mb;
+	else
+		sb->sb_stream_mb = sb->sb_mb;
 	sb->sb_stream_mbtail = sb->sb_mbtail;
+	sb->sb_stream_lastrecord = sb->sb_lastrecord;
 
 	sb->sb_lastrecord = sb->sb_mbtail = sb->sb_mb = NULL;
 	sb->sb_ccc = sb->sb_acc = sb->sb_mbcnt = sb->sb_ccnt = 0;

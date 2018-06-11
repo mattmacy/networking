@@ -2168,7 +2168,7 @@ int
 soreceive_stream(struct socket *so, struct sockaddr **psa, struct uio *uio,
     struct mbuf **mp0, struct mbuf **controlp, int *flagsp)
 {
-	int len = 0, error = 0, flags, oresid;
+	int len = 0, error = 0, flags, oresid, count;
 	struct sockbuf *sb;
 	struct mbuf *m, *n = NULL;
 
@@ -2207,12 +2207,18 @@ soreceive_stream(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		error = ENOTCONN;
 		goto out;
 	}
+	if (oresid > sbstreamavail(sb)) {
+		SOCKBUF_LOCK(sb);
+		count = sbstreammove_locked(sb);
+		SOCKBUF_UNLOCK(sb);
+	}
 
 restart:
 	SOCKBUF_UNLOCK_ASSERT(&so->so_rcv);
 
 	/* Abort if socket has reported problems. */
 	if (so->so_error) {
+		printf("socket error %d\n", so->so_error);
 		SOCKBUF_LOCK(sb);
 		sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
@@ -2228,6 +2234,7 @@ restart:
 
 	/* Door is closed.  Deliver what is left, if any. */
 	if (sb->sb_state & SBS_CANTRCVMORE) {
+		printf("can't receive more\n");
 		SOCKBUF_LOCK(sb);
 		sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
@@ -2241,8 +2248,9 @@ restart:
 	if (sbstreamavail(sb) == 0 &&
 	    ((so->so_state & SS_NBIO) || (flags & (MSG_DONTWAIT|MSG_NBIO)))) {
 		SOCKBUF_LOCK(sb);
-		sbstreammove_locked(sb);
+		count = sbstreammove_locked(sb);
 		SOCKBUF_UNLOCK(sb);
+		printf("moved %d bytes for nonblocking\n", count);
 		if (sbstreamavail(sb) > 0)
 			goto restart;
 		error = EAGAIN;
@@ -2269,13 +2277,16 @@ restart:
 	 * NB: Drops the sockbuf lock during wait.
 	 */
 	SOCKBUF_LOCK(sb);
-	if (sbstreammove_locked(sb)) {
+	if ((count = sbstreammove_locked(sb))) {
 		SOCKBUF_UNLOCK(sb);
 		goto restart;
 	}
 	error = sbwait(sb);
-	if (error)
+	SOCKBUF_UNLOCK(sb);
+	if (error) {
+		printf("sbwait returned %d\n", error);
 		goto out;
+	}
 	goto restart;
 
 deliver:
@@ -2289,6 +2300,7 @@ deliver:
 	/* Fill uio until full or current end of socket buffer is reached. */
 	len = min(uio->uio_resid, sbstreamavail(sb));
 	if (mp0 != NULL) {
+		printf("Dequeue as many mbufs as possible\n");
 		/* Dequeue as many mbufs as possible. */
 		if (!(flags & MSG_PEEK) && len >= sb->sb_mb->m_len) {
 			if (*mp0 == NULL)
@@ -2330,9 +2342,10 @@ deliver:
 			}
 		}
 	} else {
-		error = m_mbuftouio(uio, sb->sb_mb, len);
-		if (error)
+		error = m_mbuftouio(uio, sb->sb_stream_mb, len);
+		if (error) {
 			goto out;
+		}
 	}
 	SBSTREAMLASTRECORDCHK(sb);
 	SBSTREAMLASTMBUFCHK(sb);
