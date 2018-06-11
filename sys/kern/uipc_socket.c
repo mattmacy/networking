@@ -2194,7 +2194,6 @@ soreceive_stream(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	error = sblock(sb, SBLOCKWAIT(flags));
 	if (error)
 		goto out;
-	SOCKBUF_LOCK(sb);
 
 	/* Easy one, no space to copyout anything. */
 	if (uio->uio_resid == 0) {
@@ -2210,11 +2209,14 @@ soreceive_stream(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	}
 
 restart:
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCKBUF_UNLOCK_ASSERT(&so->so_rcv);
 
 	/* Abort if socket has reported problems. */
 	if (so->so_error) {
-		if (sbavail(sb) > 0)
+		SOCKBUF_LOCK(sb);
+		sbstreammove_locked(sb);
+		SOCKBUF_UNLOCK(sb);
+		if (sbstreamavail(sb) > 0)
 			goto deliver;
 		if (oresid > uio->uio_resid)
 			goto out;
@@ -2226,83 +2228,94 @@ restart:
 
 	/* Door is closed.  Deliver what is left, if any. */
 	if (sb->sb_state & SBS_CANTRCVMORE) {
-		if (sbavail(sb) > 0)
+		SOCKBUF_LOCK(sb);
+		sbstreammove_locked(sb);
+		SOCKBUF_UNLOCK(sb);
+		if (sbstreamavail(sb) > 0)
 			goto deliver;
 		else
 			goto out;
 	}
 
 	/* Socket buffer is empty and we shall not block. */
-	if (sbavail(sb) == 0 &&
+	if (sbstreamavail(sb) == 0 &&
 	    ((so->so_state & SS_NBIO) || (flags & (MSG_DONTWAIT|MSG_NBIO)))) {
+		SOCKBUF_LOCK(sb);
+		sbstreammove_locked(sb);
+		SOCKBUF_UNLOCK(sb);
+		if (sbstreamavail(sb) > 0)
+			goto restart;
 		error = EAGAIN;
 		goto out;
 	}
 
 	/* Socket buffer got some data that we shall deliver now. */
-	if (sbavail(sb) > 0 && !(flags & MSG_WAITALL) &&
+	if (sbstreamavail(sb) > 0 && !(flags & MSG_WAITALL) &&
 	    ((so->so_state & SS_NBIO) ||
 	     (flags & (MSG_DONTWAIT|MSG_NBIO)) ||
-	     sbavail(sb) >= sb->sb_lowat ||
-	     sbavail(sb) >= uio->uio_resid ||
-	     sbavail(sb) >= sb->sb_hiwat) ) {
+	     sbstreamavail(sb) >= sb->sb_lowat ||
+	     sbstreamavail(sb) >= uio->uio_resid ||
+	     sbstreamavail(sb) >= sb->sb_hiwat) ) {
 		goto deliver;
 	}
 
 	/* On MSG_WAITALL we must wait until all data or error arrives. */
 	if ((flags & MSG_WAITALL) &&
-	    (sbavail(sb) >= uio->uio_resid || sbavail(sb) >= sb->sb_hiwat))
+	    (sbstreamavail(sb) >= uio->uio_resid || sbstreamavail(sb) >= sb->sb_hiwat))
 		goto deliver;
 
 	/*
 	 * Wait and block until (more) data comes in.
 	 * NB: Drops the sockbuf lock during wait.
 	 */
+	SOCKBUF_LOCK(sb);
+	if (sbstreammove_locked(sb)) {
+		SOCKBUF_UNLOCK(sb);
+		goto restart;
+	}
 	error = sbwait(sb);
 	if (error)
 		goto out;
 	goto restart;
 
 deliver:
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
-	KASSERT(sbavail(sb) > 0, ("%s: sockbuf empty", __func__));
-	KASSERT(sb->sb_mb != NULL, ("%s: sb_mb == NULL", __func__));
+	KASSERT(sbstreamavail(sb) > 0, ("%s: sockbuf empty", __func__));
+	KASSERT(sb->sb_stream_mb != NULL, ("%s: sb_mb == NULL", __func__));
 
 	/* Statistics. */
 	if (uio->uio_td)
 		uio->uio_td->td_ru.ru_msgrcv++;
 
 	/* Fill uio until full or current end of socket buffer is reached. */
-	len = min(uio->uio_resid, sbavail(sb));
+	len = min(uio->uio_resid, sbstreamavail(sb));
 	if (mp0 != NULL) {
 		/* Dequeue as many mbufs as possible. */
 		if (!(flags & MSG_PEEK) && len >= sb->sb_mb->m_len) {
 			if (*mp0 == NULL)
-				*mp0 = sb->sb_mb;
+				*mp0 = sb->sb_stream_mb;
 			else
-				m_cat(*mp0, sb->sb_mb);
-			for (m = sb->sb_mb;
+				m_cat(*mp0, sb->sb_stream_mb);
+			for (m = sb->sb_stream_mb;
 			     m != NULL && m->m_len <= len;
 			     m = m->m_next) {
 				KASSERT(!(m->m_flags & M_NOTAVAIL),
 				    ("%s: m %p not available", __func__, m));
 				len -= m->m_len;
 				uio->uio_resid -= m->m_len;
-				sbfree(sb, m);
+				sbstreamfree(sb, m);
 				n = m;
 			}
 			n->m_next = NULL;
-			sb->sb_mb = m;
-			sb->sb_lastrecord = sb->sb_mb;
-			if (sb->sb_mb == NULL)
-				SB_EMPTY_FIXUP(sb);
+			sb->sb_stream_mb = m;
+			if (sb->sb_stream_mb == NULL)
+				SB_STREAM_EMPTY_FIXUP(sb);
 		}
 		/* Copy the remainder. */
 		if (len > 0) {
-			KASSERT(sb->sb_mb != NULL,
+			KASSERT(sb->sb_stream_mb != NULL,
 			    ("%s: len > 0 && sb->sb_mb empty", __func__));
 
-			m = m_copym(sb->sb_mb, 0, len, M_NOWAIT);
+			m = m_copym(sb->sb_stream_mb, 0, len, M_NOWAIT);
 			if (m == NULL)
 				len = 0;	/* Don't flush data from sockbuf. */
 			else
@@ -2317,15 +2330,12 @@ deliver:
 			}
 		}
 	} else {
-		/* NB: Must unlock socket buffer as uiomove may sleep. */
-		SOCKBUF_UNLOCK(sb);
 		error = m_mbuftouio(uio, sb->sb_mb, len);
-		SOCKBUF_LOCK(sb);
 		if (error)
 			goto out;
 	}
-	SBLASTRECORDCHK(sb);
-	SBLASTMBUFCHK(sb);
+	SBSTREAMLASTRECORDCHK(sb);
+	SBSTREAMLASTMBUFCHK(sb);
 
 	/*
 	 * Remove the delivered data from the socket buffer unless we
@@ -2333,16 +2343,14 @@ deliver:
 	 */
 	if (!(flags & MSG_PEEK)) {
 		if (len > 0)
-			sbdrop_locked(sb, len);
+			sbstreamdrop_locked(sb, len);
 
 		/* Notify protocol that we drained some data. */
 		if ((so->so_proto->pr_flags & PR_WANTRCVD) &&
 		    (((flags & MSG_WAITALL) && uio->uio_resid > 0) ||
 		     !(flags & MSG_SOCALLBCK))) {
-			SOCKBUF_UNLOCK(sb);
 			VNET_SO_ASSERT(so);
 			(*so->so_proto->pr_usrreqs->pru_rcvd)(so, flags);
-			SOCKBUF_LOCK(sb);
 		}
 	}
 
@@ -2353,10 +2361,8 @@ deliver:
 	if ((flags & MSG_WAITALL) && uio->uio_resid > 0)
 		goto restart;
 out:
-	SOCKBUF_LOCK_ASSERT(sb);
-	SBLASTRECORDCHK(sb);
-	SBLASTMBUFCHK(sb);
-	SOCKBUF_UNLOCK(sb);
+	SBSTREAMLASTRECORDCHK(sb);
+	SBSTREAMLASTMBUFCHK(sb);
 	sbunlock(sb);
 	return (error);
 }

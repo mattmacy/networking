@@ -74,6 +74,7 @@ struct selinfo;
  *
  * Locking key to struct sockbuf:
  * (a) locked by SOCKBUF_LOCK().
+ * (s) locked by sb_sx.
  */
 struct	sockbuf {
 	struct	mtx sb_mtx;		/* sockbuf lock */
@@ -85,15 +86,25 @@ struct	sockbuf {
 	struct	mbuf *sb_mbtail; /* (a) the last mbuf in the chain */
 	struct	mbuf *sb_lastrecord;	/* (a) first mbuf of last
 					 * record in socket buffer */
+	struct	mbuf *sb_stream_mb;	/* (s) the mbuf chain */
+	struct	mbuf *sb_stream_mbtail; /* (s) the last mbuf in the chain */
+	struct	mbuf *sb_stream_lastrecord;	/* (a) first mbuf of last
+					 * record in socket buffer */
 	struct	mbuf *sb_sndptr; /* (a) pointer into mbuf chain */
 	struct	mbuf *sb_fnrdy;	/* (a) pointer to first not ready buffer */
 	u_int	sb_sndptroff;	/* (a) byte offset of ptr into chain */
 	u_int	sb_acc;		/* (a) available chars in buffer */
 	u_int	sb_ccc;		/* (a) claimed chars in buffer */
-	u_int	sb_hiwat;	/* (a) max actual char count */
-	u_int	sb_mbcnt;	/* (a) chars of mbufs used */
 	u_int   sb_mcnt;        /* (a) number of mbufs in buffer */
+	u_int	sb_mbcnt;	/* (a) chars of mbufs used */
 	u_int   sb_ccnt;        /* (a) number of clusters in buffer */
+	u_int	sb_stream_acc;		/* (s) available chars in buffer */
+	u_int	sb_stream_ccc;		/* (s) claimed chars in buffer */
+	u_int   sb_stream_mcnt;        /* (s) number of mbufs in buffer */
+	u_int   sb_stream_mbcnt;        /* (s) number of mbufs used */
+	u_int   sb_stream_ccnt;        /* (s) number of clusters in buffer */
+
+	u_int	sb_hiwat;	/* (a) max actual char count */
 	u_int	sb_mbmax;	/* (a) max chars of mbufs to use */
 	u_int	sb_ctl;		/* (a) non-data chars in buffer */
 	int	sb_lowat;	/* (a) low water mark */
@@ -178,6 +189,10 @@ void	sballoc(struct sockbuf *, struct mbuf *);
 void	sbfree(struct sockbuf *, struct mbuf *);
 int	sbready(struct sockbuf *, struct mbuf *, int);
 
+void	sbstreamfree(struct sockbuf *sb, struct mbuf *m);
+u_int	sbstreammove_locked(struct sockbuf *sb);
+void	sbstreamdrop_locked(struct sockbuf *sb, int len);
+
 /*
  * Return how much data is available to be taken out of socket
  * buffer right now.
@@ -190,6 +205,17 @@ sbavail(struct sockbuf *sb)
 	SOCKBUF_LOCK_ASSERT(sb);
 #endif
 	return (sb->sb_acc);
+}
+
+
+static inline u_int
+sbstreamavail(struct sockbuf *sb)
+{
+
+#if 0
+	SOCKBUF_LOCK_ASSERT(sb);
+#endif
+	return (sb->sb_stream_acc);
 }
 
 /*
@@ -236,16 +262,29 @@ sbspace(struct sockbuf *sb)
 	}								\
 } while (/*CONSTCOND*/0)
 
+#define SB_STREAM_EMPTY_FIXUP(sb) do {						\
+	if ((sb)->sb_stream_mb == NULL) {					\
+		(sb)->sb_stream_mbtail = NULL;					\
+		(sb)->sb_stream_lastrecord = NULL;				\
+	}								\
+} while (/*CONSTCOND*/0)
+
 #ifdef SOCKBUF_DEBUG
 void	sblastrecordchk(struct sockbuf *, const char *, int);
 void	sblastmbufchk(struct sockbuf *, const char *, int);
+void	sbstreamlastrecordchk(struct sockbuf *, const char *, int);
+void	sbstreamlastmbufchk(struct sockbuf *, const char *, int);
 void	sbcheck(struct sockbuf *, const char *, int);
 #define	SBLASTRECORDCHK(sb)	sblastrecordchk((sb), __FILE__, __LINE__)
 #define	SBLASTMBUFCHK(sb)	sblastmbufchk((sb), __FILE__, __LINE__)
+#define	SBSTREAMLASTRECORDCHK(sb)	sblastrecordchk((sb), __FILE__, __LINE__)
+#define	SBSTREAMLASTMBUFCHK(sb)	sblastmbufchk((sb), __FILE__, __LINE__)
 #define	SBCHECK(sb)		sbcheck((sb), __FILE__, __LINE__)
 #else
 #define	SBLASTRECORDCHK(sb)	do {} while (0)
 #define	SBLASTMBUFCHK(sb)	do {} while (0)
+#define	SBSTREAMLASTRECORDCHK(sb)	do {} while (0)
+#define	SBSTREAMLASTMBUFCHK(sb)	do {} while (0)
 #define	SBCHECK(sb)		do {} while (0)
 #endif /* SOCKBUF_DEBUG */
 
