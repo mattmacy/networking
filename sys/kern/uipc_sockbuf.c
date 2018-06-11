@@ -1404,7 +1404,7 @@ void
 sbstreamrestore_locked(struct sockbuf *sb)
 {
 
-	MPASS(sb->sb_stream);
+	MPASS(sb->sb_stream_mb);
 	MPASS(sb->sb_stream_acc == sb->sb_stream_ccc);
 	sb->sb_acc += sb->sb_stream_acc;
 	sb->sb_ccc += sb->sb_stream_ccc;
