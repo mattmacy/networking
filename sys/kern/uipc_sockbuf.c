@@ -807,7 +807,8 @@ sbappendstream_locked(struct sockbuf *sb, struct mbuf *m, int flags)
 	SBLASTMBUFCHK(sb);
 
 	/* Remove all packet headers and mbuf tags to get a pure data chain. */
-	m_demote(m, 1, flags & PRUS_NOTREADY ? M_NOTREADY : 0);
+	if (__predict_false((flags & PRUS_DEMOTED) == 0))
+		m_demote(m, 1, flags & PRUS_NOTREADY ? M_NOTREADY : 0);
 
 	sbcompress(sb, m, sb->sb_mbtail);
 
