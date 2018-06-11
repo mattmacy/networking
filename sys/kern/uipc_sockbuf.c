@@ -205,6 +205,35 @@ sbfree(struct sockbuf *sb, struct mbuf *m)
 		sb->sb_sndptroff -= m->m_len;
 }
 
+
+void
+sbstreamfree(struct sockbuf *sb, struct mbuf *m)
+{
+
+#if 0	/* XXX: not yet: soclose() call path comes here w/o lock. */
+	SOCKBUF_LOCK_ASSERT(sb);
+#endif
+
+	sb->sb_stream_ccc -= m->m_len;
+	sb->sb_stream_acc -= m->m_len;
+
+	/* rx only */
+	MPASS((m->m_flags & M_NOTAVAIL) == 0);
+	/* stream data only */
+	MPASS(m->m_type == MT_DATA || m->m_type == MT_OOBDATA);
+
+	sb->sb_stream_mbcnt -= MSIZE;
+	sb->sb_stream_mcnt -= 1;
+	if (m->m_flags & M_EXT) {
+		sb->sb_stream_mbcnt -= m->m_ext.ext_size;
+		sb->sb_stream_ccnt -= 1;
+	}
+
+	/* rx only */
+	MPASS(sb->sb_sndptr == NULL);
+	MPASS(sb->sb_sndptroff == 0);
+}
+
 /*
  * Socantsendmore indicates that no more data will be sent on the socket; it
  * would normally be applied to a socket when the user informs the system
@@ -637,6 +666,55 @@ sblastmbufchk(struct sockbuf *sb, const char *file, int line)
 		panic("%s from %s:%u", __func__, file, line);
 	}
 }
+
+void
+sbstreamlastrecordchk(struct sockbuf *sb, const char *file, int line)
+{
+	struct mbuf *m = sb->sb_stream_mb;
+
+	SOCKBUF_LOCK_ASSERT(sb);
+
+	while (m && m->m_nextpkt)
+		m = m->m_nextpkt;
+
+	if (m != sb->sb_stream_lastrecord) {
+		printf("%s: sb_mb %p sb_lastrecord %p last %p\n",
+			__func__, sb->sb_stream_mb, sb->sb_stream_lastrecord, m);
+		printf("packet chain:\n");
+		for (m = sb->sb_stream_mb; m != NULL; m = m->m_nextpkt)
+			printf("\t%p\n", m);
+		panic("%s from %s:%u", __func__, file, line);
+	}
+}
+
+void
+sbstreamlastmbufchk(struct sockbuf *sb, const char *file, int line)
+{
+	struct mbuf *m = sb->sb_stream_mb;
+	struct mbuf *n;
+
+	SOCKBUF_LOCK_ASSERT(sb);
+
+	while (m && m->m_nextpkt)
+		m = m->m_nextpkt;
+
+	while (m && m->m_next)
+		m = m->m_next;
+
+	if (m != sb->sb_stream_mbtail) {
+		printf("%s: sb_mb %p sb_mbtail %p last %p\n",
+			__func__, sb->sb_stream_mb, sb->sb_stream_mbtail, m);
+		printf("packet tree:\n");
+		for (m = sb->sb_stream_mb; m != NULL; m = m->m_nextpkt) {
+			printf("\t");
+			for (n = m; n != NULL; n = n->m_next)
+				printf("%p ", n);
+			printf("\n");
+		}
+		panic("%s from %s:%u", __func__, file, line);
+	}
+}
+
 #endif /* SOCKBUF_DEBUG */
 
 #define SBLINKRECORD(sb, m0) do {					\
@@ -1201,6 +1279,87 @@ sbcut_internal(struct sockbuf *sb, int len)
 	return (mfree);
 }
 
+static struct mbuf *
+sbstreamcut_internal(struct sockbuf *sb, int len)
+{
+	struct mbuf *n, *m, *next, *mfree;
+
+	KASSERT(len >= 0, ("%s: len is %d but it is supposed to be >= 0",
+	    __func__, len));
+	KASSERT(len <= sb->sb_stream_ccc, ("%s: len: %d is > ccc: %u",
+	    __func__, len, sb->sb_stream_ccc));
+
+	next = (m = sb->sb_stream_mb) ? m->m_nextpkt : 0;
+	mfree = NULL;
+
+	while (len > 0) {
+		if (m == NULL) {
+			KASSERT(next, ("%s: no next, len %d", __func__, len));
+			m = next;
+			next = m->m_nextpkt;
+		}
+		if (m->m_len > len) {
+			KASSERT(!(m->m_flags & M_NOTAVAIL),
+			    ("%s: m %p M_NOTAVAIL", __func__, m));
+			m->m_len -= len;
+			m->m_data += len;
+			sb->sb_stream_ccc -= len;
+			sb->sb_stream_acc -= len;
+			/* rx only */
+			MPASS(sb->sb_sndptroff == 0);
+			/* stream data only */
+			MPASS(m->m_type == MT_DATA || m->m_type == MT_OOBDATA);
+			break;
+		}
+		len -= m->m_len;
+		sbstreamfree(sb, m);
+
+		/* rx only */
+		MPASS((m->m_flags & M_NOTREADY) == 0);
+		/*
+		 * Do not put M_NOTREADY buffers to the free list, they
+		 * are referenced from outside.
+		 */
+		n = m->m_next;
+		m->m_next = mfree;
+		mfree = m;
+		m = n;
+	}
+	/*
+	 * Free any zero-length mbufs from the buffer.
+	 * For SOCK_DGRAM sockets such mbufs represent empty records.
+	 * XXX: For SOCK_STREAM sockets such mbufs can appear in the buffer,
+	 * when sosend_generic() needs to send only control data.
+	 */
+	while (m && m->m_len == 0) {
+		struct mbuf *n;
+
+		sbstreamfree(sb, m);
+		n = m->m_next;
+		m->m_next = mfree;
+		mfree = m;
+		m = n;
+	}
+	if (m) {
+		sb->sb_stream_mb = m;
+		m->m_nextpkt = next;
+	} else
+		sb->sb_stream_mb = next;
+	/*
+	 * First part is an inline SB_EMPTY_FIXUP().  Second part makes sure
+	 * sb_lastrecord is up-to-date if we dropped part of the last record.
+	 */
+	m = sb->sb_stream_mb;
+	if (m == NULL) {
+		sb->sb_stream_mbtail = NULL;
+		sb->sb_stream_lastrecord = NULL;
+	} else if (m->m_nextpkt == NULL) {
+		sb->sb_stream_lastrecord = m;
+	}
+
+	return (mfree);
+}
+
 /*
  * Drop data from (the front of) a sockbuf.
  */
@@ -1210,6 +1369,71 @@ sbdrop_locked(struct sockbuf *sb, int len)
 
 	SOCKBUF_LOCK_ASSERT(sb);
 	m_freem(sbcut_internal(sb, len));
+}
+
+u_int
+sbstreammove_locked(struct sockbuf *sb)
+{
+	u_int moved;
+
+	SOCKBUF_LOCK_ASSERT(sb);
+	if (sb->sb_acc == 0)
+		return (0);
+	moved = sb->sb_acc;
+	MPASS(sb->sb_acc == sb->sb_ccc);
+	sb->sb_stream_acc += sb->sb_acc;
+	sb->sb_stream_ccc += sb->sb_ccc;
+	MPASS(sb->sb_stream_acc == sb->sb_stream_ccc);
+	sb->sb_stream_mcnt += sb->sb_mcnt;
+	sb->sb_stream_mbcnt += sb->sb_mbcnt;
+	sb->sb_stream_ccnt += sb->sb_ccnt;
+	if (sb->sb_stream_mbtail)
+		sb->sb_stream_mbtail->m_next = sb->sb_mb;
+	else
+		sb->sb_stream_mb = sb->sb_mb;
+	sb->sb_stream_mbtail = sb->sb_mbtail;
+	sb->sb_stream_lastrecord = sb->sb_lastrecord;
+
+	sb->sb_lastrecord = sb->sb_mbtail = sb->sb_mb = NULL;
+	sb->sb_ccc = sb->sb_acc = sb->sb_mbcnt = sb->sb_ccnt = 0;
+	return (moved);
+}
+
+void
+sbstreamrestore_locked(struct sockbuf *sb)
+{
+
+	MPASS(sb->sb_stream);
+	MPASS(sb->sb_stream_acc == sb->sb_stream_ccc);
+	sb->sb_acc += sb->sb_stream_acc;
+	sb->sb_ccc += sb->sb_stream_ccc;
+	MPASS(sb->sb_acc == sb->sb_ccc);
+
+	sb->sb_mcnt += sb->sb_stream_mcnt;
+	sb->sb_mbcnt += sb->sb_stream_mbcnt;
+	sb->sb_ccnt += sb->sb_stream_ccnt;
+
+	sb->sb_stream_mbtail->m_next = sb->sb_mb;
+	sb->sb_mb = sb->sb_stream_mb;
+	if (sb->sb_lastrecord == NULL)
+		sb->sb_lastrecord = sb->sb_stream_lastrecord;
+	if (sb->sb_mbtail == NULL)
+		sb->sb_mbtail = sb->sb_stream_mbtail;
+
+	sb->sb_stream_lastrecord = sb->sb_stream_mbtail =
+		sb->sb_stream_mb = NULL;
+	sb->sb_stream_ccc = sb->sb_stream_acc = sb->sb_stream_mbcnt =
+		sb->sb_stream_ccnt = 0;
+}
+
+/*
+ * Drop data from (the front of) a sockbuf.
+ */
+void
+sbstreamdrop_locked(struct sockbuf *sb, int len)
+{
+
+	m_freem(sbstreamcut_internal(sb, len));
 }
 
 /*
