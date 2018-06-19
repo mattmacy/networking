@@ -151,11 +151,11 @@ extern int old_mlock;
 extern int vm_ndomains;
 
 struct ucred;
-int swap_reserve(vm_ooffset_t incr);
-int swap_reserve_by_cred(vm_ooffset_t incr, struct ucred *cred);
-void swap_reserve_force(vm_ooffset_t incr);
-void swap_release(vm_ooffset_t decr);
-void swap_release_by_cred(vm_ooffset_t decr, struct ucred *cred);
+int swap_reserve(vm_offset_t incr);
+int swap_reserve_by_cred(vm_offset_t incr, struct ucred *cred);
+void swap_reserve_force(vm_offset_t incr);
+void swap_release(vm_offset_t decr);
+void swap_release_by_cred(vm_offset_t decr, struct ucred *cred);
 void swapper(void);
 
 #endif				/* VM_H */
