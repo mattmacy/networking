@@ -98,6 +98,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysproto.h>
 #include <sys/blist.h>
 #include <sys/lock.h>
+#include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/vmmeter.h>
 
@@ -154,9 +155,14 @@ static struct sx swdev_syscall_lock;	/* serialize swap(on|off) */
 static vm_ooffset_t swap_total;
 SYSCTL_QUAD(_vm, OID_AUTO, swap_total, CTLFLAG_RD, &swap_total, 0,
     "Total amount of available swap storage.");
-static vm_ooffset_t swap_reserved;
+static vm_offset_t swap_reserved;
+#ifdef __LP64__
 SYSCTL_QUAD(_vm, OID_AUTO, swap_reserved, CTLFLAG_RD, &swap_reserved, 0,
     "Amount of swap storage needed to back all allocated anonymous memory.");
+#else
+SYSCTL_INT(_vm, OID_AUTO, swap_reserved, CTLFLAG_RD, &swap_reserved, 0,
+    "Amount of swap storage needed to back all allocated anonymous memory.");
+#endif
 static int overcommit = 0;
 SYSCTL_INT(_vm, VM_OVERCOMMIT, overcommit, CTLFLAG_RW, &overcommit, 0,
     "Configure virtual memory overcommit behavior. See tuning(7) "
@@ -174,16 +180,117 @@ SYSCTL_ULONG(_vm, OID_AUTO, swap_maxpages, CTLFLAG_RD, &swap_maxpages, 0,
 #define	SWAP_RESERVE_ALLOW_NONWIRED	(1 << 2)
 
 int
-swap_reserve(vm_ooffset_t incr)
+swap_reserve(vm_offset_t incr)
 {
 
 	return (swap_reserve_by_cred(incr, curthread->td_ucred));
 }
 
-int
-swap_reserve_by_cred(vm_ooffset_t incr, struct ucred *cred)
+static counter_u64_t swap_reserve_cache;
+
+static void
+swap_alloc_init(void *arg __unused)
 {
-	vm_ooffset_t r, s;
+	swap_reserve_cache = counter_u64_alloc(M_WAITOK);
+}
+SYSINIT(swap_alloc_init, SI_SUB_VM_CONF, SI_ORDER_ANY, swap_alloc_init, NULL);
+
+static int
+swap_alloc_slow(vm_offset_t incr)
+{
+	vm_offset_t r, s, new;
+	int res;
+
+	res = 0;
+	new = atomic_fetchadd_long(&swap_reserved, incr);
+	r = new + incr;
+	if (overcommit & SWAP_RESERVE_ALLOW_NONWIRED) {
+		s = vm_cnt.v_page_count - vm_cnt.v_free_reserved -
+			vm_wire_count();
+		s *= PAGE_SIZE;
+	} else
+		s = 0;
+	s += swap_total;
+	if ((overcommit & SWAP_RESERVE_FORCE_ON) == 0 || r <= s ||
+		priv_check(curthread, PRIV_VM_SWAP_NOQUOTA) == 0) {
+		res = 1;
+	} else
+		atomic_subtract_long(&swap_reserved, incr);
+	return (res);
+}
+
+#define SWAP_CACHE_GET() ((uint64_t *)((char *)swap_reserve_cache + sizeof(struct pcpu) * curcpu))
+
+static void
+swap_cache_flush(void *arg __unused)
+{
+	uint64_t *p;
+	uintptr_t value;
+
+	critical_enter();
+	p = SWAP_CACHE_GET();
+	value = *p;
+	*p = 0;
+	critical_exit();
+	if (value)
+		atomic_add_long(&swap_reserved, value);
+}
+
+static vm_offset_t
+swap_alloc_cache_max(void)
+{
+	return 4*1024*1024;
+}
+
+static int
+swap_alloc(vm_offset_t incr)
+{
+	uint64_t *p;
+	uintptr_t max_cache;
+
+	critical_enter();
+	p = SWAP_CACHE_GET();
+	if (*p >= incr) {
+		*p -= incr;
+		critical_exit();
+		return (1);
+	}
+	max_cache = swap_alloc_cache_max();
+	if (swap_alloc_slow(incr + max_cache - *p) == 0) {
+		critical_exit();
+		/* IPI all cpus to flush pcpu caches back to swap_reserved */
+		smp_rendezvous(smp_no_rendezvous_barrier, swap_cache_flush,
+		    smp_no_rendezvous_barrier, NULL);
+		return (swap_alloc_slow(incr));
+	}
+	*p = max_cache;
+	critical_exit();
+	return (1);
+}
+
+static void
+swap_free(vm_offset_t decr)
+{
+	uint64_t *p;
+	uintptr_t max_cache;
+
+	critical_enter();
+	max_cache = swap_alloc_cache_max();
+	p = SWAP_CACHE_GET();
+	if (*p + decr <= max_cache) {
+		*p += decr;
+		critical_exit();
+		return;
+	}
+	decr -= (max_cache - *p);
+	*p = max_cache;
+	atomic_subtract_long(&swap_reserved, decr);
+	critical_exit();
+}
+
+int
+swap_reserve_by_cred(vm_offset_t incr, struct ucred *cred)
+{
 	int res, error;
 	static int curfail;
 	static struct timeval lastfail;
@@ -204,23 +311,7 @@ swap_reserve_by_cred(vm_ooffset_t incr, struct ucred *cred)
 	}
 #endif
 
-	res = 0;
-	mtx_lock(&sw_dev_mtx);
-	r = swap_reserved + incr;
-	if (overcommit & SWAP_RESERVE_ALLOW_NONWIRED) {
-		s = vm_cnt.v_page_count - vm_cnt.v_free_reserved -
-		    vm_wire_count();
-		s *= PAGE_SIZE;
-	} else
-		s = 0;
-	s += swap_total;
-	if ((overcommit & SWAP_RESERVE_FORCE_ON) == 0 || r <= s ||
-	    (error = priv_check(curthread, PRIV_VM_SWAP_NOQUOTA)) == 0) {
-		res = 1;
-		swap_reserved = r;
-	}
-	mtx_unlock(&sw_dev_mtx);
-
+	res = swap_alloc(incr);
 	if (res) {
 		UIDINFO_VMSIZE_LOCK(uip);
 		if ((overcommit & SWAP_RESERVE_RLIMIT_ON) != 0 &&
@@ -230,11 +321,8 @@ swap_reserve_by_cred(vm_ooffset_t incr, struct ucred *cred)
 		else
 			uip->ui_vmsize += incr;
 		UIDINFO_VMSIZE_UNLOCK(uip);
-		if (!res) {
-			mtx_lock(&sw_dev_mtx);
-			swap_reserved -= incr;
-			mtx_unlock(&sw_dev_mtx);
-		}
+		if (!res)
+			swap_free(incr);
 	}
 	if (!res && ppsratecheck(&lastfail, &curfail, 1)) {
 		printf("uid %d, pid %d: swap reservation for %jd bytes failed\n",
@@ -242,7 +330,7 @@ swap_reserve_by_cred(vm_ooffset_t incr, struct ucred *cred)
 	}
 
 #ifdef RACCT
-	if (!res) {
+	if (racct_enable && !res) {
 		PROC_LOCK(curproc);
 		racct_sub(curproc, RACCT_SWAP, incr);
 		PROC_UNLOCK(curproc);
@@ -253,18 +341,19 @@ swap_reserve_by_cred(vm_ooffset_t incr, struct ucred *cred)
 }
 
 void
-swap_reserve_force(vm_ooffset_t incr)
+swap_reserve_force(vm_offset_t incr)
 {
 	struct uidinfo *uip;
 
-	mtx_lock(&sw_dev_mtx);
-	swap_reserved += incr;
-	mtx_unlock(&sw_dev_mtx);
+	if (swap_alloc(incr) == 0)
+		atomic_add_long(&swap_reserved, incr);
 
 #ifdef RACCT
-	PROC_LOCK(curproc);
-	racct_add_force(curproc, RACCT_SWAP, incr);
-	PROC_UNLOCK(curproc);
+	if (racct_enable) {
+		PROC_LOCK(curproc);
+		racct_add_force(curproc, RACCT_SWAP, incr);
+		PROC_UNLOCK(curproc);
+	}
 #endif
 
 	uip = curthread->td_ucred->cr_ruidinfo;
@@ -276,18 +365,16 @@ swap_reserve_force(vm_ooffset_t incr)
 }
 
 void
-swap_release(vm_ooffset_t decr)
+swap_release(vm_offset_t decr)
 {
 	struct ucred *cred;
 
-	PROC_LOCK(curproc);
 	cred = curthread->td_ucred;
 	swap_release_by_cred(decr, cred);
-	PROC_UNLOCK(curproc);
 }
 
 void
-swap_release_by_cred(vm_ooffset_t decr, struct ucred *cred)
+swap_release_by_cred(vm_offset_t decr, struct ucred *cred)
 {
  	struct uidinfo *uip;
 
@@ -296,19 +383,17 @@ swap_release_by_cred(vm_ooffset_t decr, struct ucred *cred)
 	if (decr & PAGE_MASK)
 		panic("swap_release: & PAGE_MASK");
 
-	mtx_lock(&sw_dev_mtx);
 	if (swap_reserved < decr)
 		panic("swap_reserved < decr");
-	swap_reserved -= decr;
-	mtx_unlock(&sw_dev_mtx);
+	swap_free(decr);
 
 	UIDINFO_VMSIZE_LOCK(uip);
 	if (uip->ui_vmsize < decr)
 		printf("negative vmsize for uid = %d\n", uip->ui_uid);
 	uip->ui_vmsize -= decr;
 	UIDINFO_VMSIZE_UNLOCK(uip);
-
-	racct_sub_cred(cred, RACCT_SWAP, decr);
+	if (racct_enable)
+		racct_sub_cred(cred, RACCT_SWAP, decr);
 }
 
 #define SWM_POP		0x01	/* pop out			*/
