@@ -41,18 +41,18 @@ __FBSDID("$FreeBSD$");
 static MALLOC_DEFINE(M_PCPU_QUOTA, "Per-cpu", "Per-cpu resource accouting.");
 
 #define PCPU_QUOTA_SLOP_GET(p) ((uint64_t *)((char *)(p)->pq_slop + sizeof(struct pcpu) * curcpu))
+#define PCPU_QUOTA_CAN_CACHE 0x1
 
 struct pcpu_quota {
 	void *pq_context;
 	counter_u64_t pq_slop;
 	unsigned long *pq_global;
 	unsigned long pq_pcpu_slop;
-	int (*pq_alloc)(void *context, unsigned long incr);
-	int (*pq_can_cache)(void *context);
+	int (*pq_alloc)(void *context, unsigned long incr, unsigned long *slop);
 	int pq_flags;
 } __aligned(CACHE_LINE_SIZE);
 
-void
+static void
 pcpu_quota_flush(struct pcpu_quota *pq)
 {
 	uint64_t *p;
@@ -67,19 +67,27 @@ pcpu_quota_flush(struct pcpu_quota *pq)
 		atomic_add_long(pq->pq_global, value);
 }
 
+void
+pcpu_quota_cache_set(struct pcpu_quota *pq, int enable)
+{
+	if (!enable && (pq->pq_flags & PCPU_QUOTA_CAN_CACHE)) {
+		if (atomic_testandclear_int(&pq->pq_flags, PCPU_QUOTA_CAN_CACHE) == 0)
+			pcpu_quota_flush(pq);
+	} else if (enable && (pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0) {
+		atomic_testandset_int(&pq->pq_flags,  PCPU_QUOTA_CAN_CACHE);
+	}
+}
+
 struct pcpu_quota *
 pcpu_quota_alloc(unsigned long *global, unsigned long pcpu_slop,
-    int (*alloc)(void *, unsigned long), int (*can_cache)(void *),
-	void *context, int flags)
+    int (*alloc)(void *, unsigned long, unsigned long*), void *context, int flags)
 {
 	struct pcpu_quota *pq;
-	int mflags;
 
-	mflags = (flags & PCPU_QUOTA_WAITOK) ? M_WAITOK : M_NOWAIT;
-	
-	if ((pq = malloc(sizeof(*pq), M_PCPU_QUOTA, mflags)) == NULL)
+	flags &= ~M_ZERO;
+	if ((pq = malloc(sizeof(*pq), M_PCPU_QUOTA, flags)) == NULL)
 		return (NULL);
-	if ((pq->pq_slop = counter_u64_alloc(mflags)) == NULL) {
+	if ((pq->pq_slop = counter_u64_alloc(flags)) == NULL) {
 		free(pq, M_PCPU_QUOTA);
 		return (NULL);
 	}
@@ -87,8 +95,7 @@ pcpu_quota_alloc(unsigned long *global, unsigned long pcpu_slop,
 	pq->pq_context = context;
 	pq->pq_global = global;
 	pq->pq_alloc = alloc;
-	pq->pq_can_cache = can_cache;
-	pq->pq_flags = flags & ~PCPU_QUOTA_WAITOK;
+	pq->pq_flags = PCPU_QUOTA_CAN_CACHE;
 	return (pq);
 }
 
@@ -99,19 +106,11 @@ pcpu_quota_free(struct pcpu_quota *pq)
 	free(pq, M_PCPU_QUOTA);
 }
 
-void
-pcpu_quota_enforce(struct pcpu_quota *pq, int enforce)
-{
-	if (enforce)
-		pq->pq_flags |= PCPU_QUOTA_ENFORCING;
-	else
-		pq->pq_flags &= ~PCPU_QUOTA_ENFORCING;
-}
-
 int
 pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 {
 	uint64_t *p;
+	int rc;
 
 	critical_enter();
 	p = PCPU_QUOTA_SLOP_GET(pq);
@@ -120,20 +119,14 @@ pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 		critical_exit();
 		return (1);
 	}
-	if ((pq->pq_flags & PCPU_QUOTA_ENFORCING) &&
-		pq->pq_can_cache(pq->pq_context) == 0) {
-		critical_exit();
-		return (pq->pq_alloc(pq->pq_context, incr));
-	}
 	incr -= *p;
 	*p = 0;
-	if (pq->pq_alloc(pq->pq_context, incr + (pq->pq_pcpu_slop >> 1)) == 0) {
-		critical_exit();
-		return (pq->pq_alloc(pq->pq_context, incr));
-	}
-	*p = pq->pq_pcpu_slop >> 1;
+	rc = pq->pq_alloc(pq->pq_context, incr, p);
+	if (__predict_true(*p > 0) && __predict_false((pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0))
+		pcpu_quota_cache_set(pq, 1);
+
 	critical_exit();
-	return (1);
+	return (rc);
 }
 
 void
@@ -144,23 +137,21 @@ pcpu_quota_decr(struct pcpu_quota *pq, unsigned long decr)
 
 	critical_enter();
 	p = PCPU_QUOTA_SLOP_GET(pq);
-	if ((pq->pq_flags & PCPU_QUOTA_ENFORCING) &&
-		pq->pq_can_cache(pq->pq_context) == 0) {
-		value = *p + decr;
-		*p = 0;
-		atomic_subtract_long(pq->pq_global, value);
+	if (__predict_true(pq->pq_flags & PCPU_QUOTA_CAN_CACHE)) {
+		if (*p + decr <= pq->pq_pcpu_slop) {
+			*p += decr;
+			critical_exit();
+			return;
+		}
+		decr += (*p - (pq->pq_pcpu_slop >> 1));
+		*p = pq->pq_pcpu_slop >> 1;
+		atomic_subtract_long(pq->pq_global, decr);
 		critical_exit();
 		return;
 	}
-		
-	if (*p + decr <= pq->pq_pcpu_slop) {
-		*p += decr;
-		critical_exit();
-		return;
-	}
-	decr += (*p - (pq->pq_pcpu_slop >> 1));
-	*p = pq->pq_pcpu_slop >> 1;
-	atomic_subtract_long(pq->pq_global, decr);
+	value = *p + decr;
+	*p = 0;
+	atomic_subtract_long(pq->pq_global, value);
 	critical_exit();
 }
 
