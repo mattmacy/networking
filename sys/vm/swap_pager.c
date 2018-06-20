@@ -156,6 +156,7 @@ static struct sx swdev_syscall_lock;	/* serialize swap(on|off) */
 static vm_ooffset_t swap_total;
 SYSCTL_QUAD(_vm, OID_AUTO, swap_total, CTLFLAG_RD, &swap_total, 0,
     "Total amount of available swap storage.");
+static vm_offset_t swap_max_pcpu_slop;
 static vm_offset_t swap_max_slop;
 static vm_offset_t swap_reserved;
 #ifdef __LP64__
@@ -170,9 +171,7 @@ SYSCTL_INT(_vm, OID_AUTO, swap_reserved, CTLFLAG_RD, &swap_reserved, 0,
     "Amount of swap storage needed to back all allocated anonymous memory.");
 #endif
 static int overcommit = 0;
-static int sysctl_overcommit(SYSCTL_HANDLER_ARGS);
-SYSCTL_PROC(_vm, VM_OVERCOMMIT, overcommit, CTLTYPE_INT|CTLFLAG_RW, NULL, 0,
-	sysctl_overcommit, "I",
+SYSCTL_INT(_vm, VM_OVERCOMMIT, overcommit, CTLFLAG_RW, &overcommit, 0,
     "Configure virtual memory overcommit behavior. See tuning(7) "
     "for details.");
 static unsigned long swzone;
@@ -191,24 +190,6 @@ SYSCTL_ULONG(_vm, OID_AUTO, swap_maxpages, CTLFLAG_RD, &swap_maxpages, 0,
 #define SWAP_MAX_PCPU_SLOP_DEFAULT 128*1024*1024
 struct pcpu_quota *swap_reserve_pq;
 
-static int
-sysctl_overcommit(SYSCTL_HANDLER_ARGS)
-{
-	int error, v;
-
-	v = overcommit;
-	error = sysctl_handle_int(oidp, &v, v, req);
-	if (error)
-		return (error);
-	if (req->newptr == NULL)
-		return (error);
-	if (v == overcommit)
-		return (0);
-	pcpu_quota_enforce(swap_reserve_pq, v & 0x1);
-	overcommit = v;
-
-	return (0);
-}
 
 int
 swap_reserve(vm_offset_t incr)
@@ -218,7 +199,7 @@ swap_reserve(vm_offset_t incr)
 }
 
 static int
-swap_alloc_can_cache(void *arg __unused)
+swap_alloc_can_cache(void)
 {
 	vm_offset_t s;
 
@@ -231,17 +212,23 @@ swap_alloc_can_cache(void *arg __unused)
 	} else
 		s = 0;
 	s += swap_total;
-	if (__predict_true(2*swap_max_slop < swap_total))
+	if (__predict_true(2*swap_max_slop < swap_total - swap_reserved))
 		return (1);
 
 	return (0);
 }
 
 static int
-swap_alloc_slow(void *arg __unused, vm_offset_t incr)
+swap_alloc_slow(void *arg __unused, vm_offset_t incr, vm_offset_t *slop)
 {
 	vm_offset_t r, s, new;
-	int res;
+	int res, can_cache;
+
+	can_cache = swap_alloc_can_cache();
+	if (can_cache)
+		incr += (swap_max_pcpu_slop - *slop);
+	else if (__predict_false(swap_max_slop > swap_total - swap_reserved))
+		pcpu_quota_cache_set(swap_reserve_pq, 0);
 
 	res = 0;
 	new = atomic_fetchadd_long(&swap_reserved, incr);
@@ -256,21 +243,23 @@ swap_alloc_slow(void *arg __unused, vm_offset_t incr)
 	if ((overcommit & SWAP_RESERVE_FORCE_ON) == 0 || r <= s ||
 		priv_check(curthread, PRIV_VM_SWAP_NOQUOTA) == 0) {
 		res = 1;
+		if (can_cache)
+			*slop = swap_max_pcpu_slop;
 	} else
 		atomic_subtract_long(&swap_reserved, incr);
+
 	return (res);
 }
 
 static void
 swap_alloc_init(void *arg __unused)
 {
-	vm_offset_t swap_max_pcpu_slop;
 
 	swap_max_pcpu_slop = ((physmem / (mp_ncpus*8)) + (PAGE_SIZE-1)) & ~PAGE_MASK;
 	swap_max_pcpu_slop = min(SWAP_MAX_PCPU_SLOP_DEFAULT, swap_max_pcpu_slop);
 	swap_max_slop = swap_max_pcpu_slop * mp_ncpus;
 	swap_reserve_pq = pcpu_quota_alloc(&swap_reserved, swap_max_pcpu_slop,
-		swap_alloc_slow, swap_alloc_can_cache, NULL, PCPU_QUOTA_WAITOK);
+		swap_alloc_slow, NULL, M_WAITOK);
 }
 SYSINIT(swap_alloc_init, SI_SUB_VM_CONF, SI_ORDER_ANY, swap_alloc_init, NULL);
 
