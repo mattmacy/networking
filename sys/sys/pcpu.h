@@ -208,14 +208,16 @@ static inline void *
 zpcpu_get(void *base)
 {
 
-	return ((char *)(base) + sizeof(struct pcpu) * curcpu);
+	/* UMA_PCPU_ZONE_SIZE == PAGE_SIZE */
+	return ((char *)(base) + PAGE_SIZE * curcpu);
 }
 
 static inline void *
 zpcpu_get_cpu(void *base, int cpu)
 {
 
-	return ((char *)(base) + sizeof(struct pcpu) * cpu);
+	/* UMA_PCPU_ZONE_SIZE == PAGE_SIZE */
+	return ((char *)(base) + PAGE_SIZE * cpu);
 }
 
 /*
