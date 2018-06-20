@@ -36,11 +36,12 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/pcpu_quota.h>
 #include <sys/smp.h>
+#include <vm/uma.h>
 
 
-static MALLOC_DEFINE(M_PCPU_QUOTA, "Per-cpu", "Per-cpu resource accouting.");
+static MALLOC_DEFINE(M_PCPU_QUOTA, "Per-cpu", "Per-cpu resource accounting.");
 
-#define PCPU_QUOTA_SLOP_GET(p) ((uint64_t *)((char *)(p)->pq_slop + sizeof(struct pcpu) * curcpu))
+#define PCPU_QUOTA_SLOP_GET(p) zpcpu_get((p)->pq_slop)
 #define PCPU_QUOTA_CAN_CACHE 0x1
 
 struct pcpu_quota {
