@@ -523,6 +523,7 @@ srat_set_cpus(void *dummy)
 
 	if (srat_physaddr == 0)
 		return;
+#ifdef NUMA
 	for (i = 0; i < MAXCPU; i++) {
 		if (CPU_ABSENT(i))
 			continue;
@@ -538,7 +539,7 @@ srat_set_cpus(void *dummy)
 			printf("SRAT: CPU %u has memory domain %d\n", i,
 			    cpu->domain);
 	}
-
+#endif
 	/* Last usage of the cpus array, unmap it. */
 	pmap_unmapbios((vm_offset_t)cpus, sizeof(*cpus) * (max_apic_id + 1));
 	cpus = NULL;
