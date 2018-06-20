@@ -88,6 +88,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/namei.h>
 #include <sys/vnode.h>
 #include <sys/malloc.h>
+#include <sys/pcpu_quota.h>
 #include <sys/pctrie.h>
 #include <sys/racct.h>
 #include <sys/resource.h>
@@ -155,16 +156,23 @@ static struct sx swdev_syscall_lock;	/* serialize swap(on|off) */
 static vm_ooffset_t swap_total;
 SYSCTL_QUAD(_vm, OID_AUTO, swap_total, CTLFLAG_RD, &swap_total, 0,
     "Total amount of available swap storage.");
+static vm_offset_t swap_max_slop;
 static vm_offset_t swap_reserved;
 #ifdef __LP64__
+SYSCTL_QUAD(_vm, OID_AUTO, swap_max_slop, CTLFLAG_RD, &swap_max_slop, 0,
+    "maximum amount of slop in swap accounting.");
 SYSCTL_QUAD(_vm, OID_AUTO, swap_reserved, CTLFLAG_RD, &swap_reserved, 0,
     "Amount of swap storage needed to back all allocated anonymous memory.");
 #else
+SYSCTL_INT(_vm, OID_AUTO, swap_max_slop, CTLFLAG_RD, &swap_max_slop, 0,
+    "maximum amount of slop in swap accounting.");
 SYSCTL_INT(_vm, OID_AUTO, swap_reserved, CTLFLAG_RD, &swap_reserved, 0,
     "Amount of swap storage needed to back all allocated anonymous memory.");
 #endif
 static int overcommit = 0;
-SYSCTL_INT(_vm, VM_OVERCOMMIT, overcommit, CTLFLAG_RW, &overcommit, 0,
+static int sysctl_overcommit(SYSCTL_HANDLER_ARGS);
+SYSCTL_PROC(_vm, VM_OVERCOMMIT, overcommit, CTLTYPE_INT|CTLFLAG_RW, NULL, 0,
+	sysctl_overcommit, "I",
     "Configure virtual memory overcommit behavior. See tuning(7) "
     "for details.");
 static unsigned long swzone;
@@ -179,6 +187,29 @@ SYSCTL_ULONG(_vm, OID_AUTO, swap_maxpages, CTLFLAG_RD, &swap_maxpages, 0,
 #define	SWAP_RESERVE_RLIMIT_ON		(1 << 1)
 #define	SWAP_RESERVE_ALLOW_NONWIRED	(1 << 2)
 
+
+#define SWAP_MAX_PCPU_SLOP_DEFAULT 128*1024*1024
+struct pcpu_quota *swap_reserve_pq;
+
+static int
+sysctl_overcommit(SYSCTL_HANDLER_ARGS)
+{
+	int error, v;
+
+	v = overcommit;
+	error = sysctl_handle_int(oidp, &v, v, req);
+	if (error)
+		return (error);
+	if (req->newptr == NULL)
+		return (error);
+	if (v == overcommit)
+		return (0);
+	pcpu_quota_enforce(swap_reserve_pq, v & 0x1);
+	overcommit = v;
+
+	return (0);
+}
+
 int
 swap_reserve(vm_offset_t incr)
 {
@@ -186,17 +217,28 @@ swap_reserve(vm_offset_t incr)
 	return (swap_reserve_by_cred(incr, curthread->td_ucred));
 }
 
-static counter_u64_t swap_reserve_cache;
-
-static void
-swap_alloc_init(void *arg __unused)
+static int
+swap_alloc_can_cache(void *arg __unused)
 {
-	swap_reserve_cache = counter_u64_alloc(M_WAITOK);
+	vm_offset_t s;
+
+	if ((overcommit & SWAP_RESERVE_FORCE_ON) == 0)
+		return (1);
+	if (overcommit & SWAP_RESERVE_ALLOW_NONWIRED) {
+		s = vm_cnt.v_page_count - vm_cnt.v_free_reserved -
+			vm_wire_count();
+		s *= PAGE_SIZE;
+	} else
+		s = 0;
+	s += swap_total;
+	if (__predict_true(2*swap_max_slop < swap_total))
+		return (1);
+
+	return (0);
 }
-SYSINIT(swap_alloc_init, SI_SUB_VM_CONF, SI_ORDER_ANY, swap_alloc_init, NULL);
 
 static int
-swap_alloc_slow(vm_offset_t incr)
+swap_alloc_slow(void *arg __unused, vm_offset_t incr)
 {
 	vm_offset_t r, s, new;
 	int res;
@@ -219,73 +261,29 @@ swap_alloc_slow(vm_offset_t incr)
 	return (res);
 }
 
-#define SWAP_CACHE_GET() ((uint64_t *)((char *)swap_reserve_cache + sizeof(struct pcpu) * curcpu))
-
 static void
-swap_cache_flush(void *arg __unused)
+swap_alloc_init(void *arg __unused)
 {
-	uint64_t *p;
-	uintptr_t value;
+	vm_offset_t swap_max_pcpu_slop;
 
-	critical_enter();
-	p = SWAP_CACHE_GET();
-	value = *p;
-	*p = 0;
-	critical_exit();
-	if (value)
-		atomic_add_long(&swap_reserved, value);
+	swap_max_pcpu_slop = ((physmem / (mp_ncpus*8)) + (PAGE_SIZE-1)) & ~PAGE_MASK;
+	swap_max_pcpu_slop = min(SWAP_MAX_PCPU_SLOP_DEFAULT, swap_max_pcpu_slop);
+	swap_max_slop = swap_max_pcpu_slop * mp_ncpus;
+	swap_reserve_pq = pcpu_quota_alloc(&swap_reserved, swap_max_pcpu_slop,
+		swap_alloc_slow, swap_alloc_can_cache, NULL, PCPU_QUOTA_WAITOK);
 }
-
-static vm_offset_t
-swap_alloc_cache_max(void)
-{
-	return 4*1024*1024;
-}
+SYSINIT(swap_alloc_init, SI_SUB_VM_CONF, SI_ORDER_ANY, swap_alloc_init, NULL);
 
 static int
 swap_alloc(vm_offset_t incr)
 {
-	uint64_t *p;
-	uintptr_t max_cache;
-
-	critical_enter();
-	p = SWAP_CACHE_GET();
-	if (*p >= incr) {
-		*p -= incr;
-		critical_exit();
-		return (1);
-	}
-	max_cache = swap_alloc_cache_max();
-	if (swap_alloc_slow(incr + max_cache - *p) == 0) {
-		critical_exit();
-		/* IPI all cpus to flush pcpu caches back to swap_reserved */
-		smp_rendezvous(smp_no_rendezvous_barrier, swap_cache_flush,
-		    smp_no_rendezvous_barrier, NULL);
-		return (swap_alloc_slow(incr));
-	}
-	*p = max_cache;
-	critical_exit();
-	return (1);
+	return (pcpu_quota_incr(swap_reserve_pq, incr));
 }
 
 static void
 swap_free(vm_offset_t decr)
 {
-	uint64_t *p;
-	uintptr_t max_cache;
-
-	critical_enter();
-	max_cache = swap_alloc_cache_max();
-	p = SWAP_CACHE_GET();
-	if (*p + decr <= max_cache) {
-		*p += decr;
-		critical_exit();
-		return;
-	}
-	decr -= (max_cache - *p);
-	*p = max_cache;
-	atomic_subtract_long(&swap_reserved, decr);
-	critical_exit();
+	return (pcpu_quota_decr(swap_reserve_pq, decr));
 }
 
 int
