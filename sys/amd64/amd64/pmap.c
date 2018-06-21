@@ -453,9 +453,9 @@ static struct lock_object invl_gen_ts = {
 static void
 pmap_epoch_init(void *arg __unused)
 {
-	pmap_epoch = epoch_alloc();
+	pmap_epoch = epoch_alloc(EPOCH_PREEMPT);
 }
-SYSINIT(epoch, SI_SUB_CPU + 1, SI_ORDER_ANY, pmap_epoch_init, NULL);
+SYSINIT(epoch, SI_SUB_TASKQ + 1, SI_ORDER_ANY, pmap_epoch_init, NULL);
 
 static bool
 pmap_not_in_di(void)
@@ -493,7 +493,7 @@ pmap_delayed_invl_started(void)
 	LIST_INSERT_HEAD(&pmap_invl_gen_tracker, invl_gen, link);
 	mtx_unlock(&invl_gen_mtx);
 #endif
-	epoch_enter(pmap_epoch);
+	epoch_enter_preempt(pmap_epoch);
 	curthread->td_md.md_invl_gen.gen = 1;
 }
 
@@ -539,7 +539,7 @@ pmap_delayed_invl_finished(void)
 	invl_gen->gen = 0;
 #endif
 	curthread->td_md.md_invl_gen.gen = 0;
-	epoch_exit(pmap_epoch);
+	epoch_exit_preempt(pmap_epoch);
 }
 
 #ifdef PV_STATS
@@ -594,7 +594,7 @@ pmap_delayed_invl_wait(vm_page_t m)
 			turnstile_cancel(ts);
 	}
 #endif
-	epoch_wait(pmap_epoch);
+	epoch_wait_preempt(pmap_epoch);
 }
 
 /*
