@@ -76,6 +76,8 @@ struct swdevt {
 #ifdef _KERNEL
 
 extern int swap_pager_avail;
+extern vm_offset_t vmsize_max_pcpu_slop;
+extern vm_offset_t vmsize_max_slop;
 
 struct xswdev;
 int swap_dev_info(int name, struct xswdev *xs, char *devname, size_t len);
@@ -86,6 +88,7 @@ void swap_pager_swap_init(void);
 int swap_pager_nswapdev(void);
 int swap_pager_reserve(vm_object_t, vm_pindex_t, vm_size_t);
 void swap_pager_status(int *total, int *used);
+int swap_pager_vmsize_alloc(void *arg, vm_offset_t incr, vm_offset_t *slop);
 void swapoff_all(void);
 
 #endif				/* _KERNEL */
