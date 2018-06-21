@@ -258,9 +258,10 @@ static void
 swap_alloc_init(void *arg __unused)
 {
 
-	swap_max_pcpu_slop = ((physmem / (mp_ncpus*8)) + (PAGE_SIZE-1)) & ~PAGE_MASK;
-	swap_max_pcpu_slop = min(SWAP_MAX_PCPU_SLOP_DEFAULT, swap_max_pcpu_slop);
+	swap_max_pcpu_slop = min(SWAP_MAX_PCPU_SLOP_DEFAULT, physmem/8);
+	swap_max_pcpu_slop = roundup2(swap_max_pcpu_slop, PAGE_SIZE);
 	vmsize_max_pcpu_slop = swap_max_pcpu_slop >> 2;
+	vmsize_max_pcpu_slop = roundup2(vmsize_max_pcpu_slop, PAGE_SIZE);
 	swap_max_slop = swap_max_pcpu_slop * mp_ncpus;
 	vmsize_max_slop = vmsize_max_pcpu_slop*mp_ncpus;
 	swap_reserve_pq = pcpu_quota_alloc(&swap_reserved, swap_max_pcpu_slop,
