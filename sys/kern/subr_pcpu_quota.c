@@ -30,9 +30,11 @@
 __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/epoch.h>
 #include <sys/systm.h>
 #include <sys/counter.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/pcpu_quota.h>
 #include <sys/smp.h>
@@ -43,6 +45,7 @@ static MALLOC_DEFINE(M_PCPU_QUOTA, "Per-cpu", "Per-cpu resource accounting.");
 
 #define PCPU_QUOTA_SLOP_GET(p) zpcpu_get((p)->pq_slop)
 #define PCPU_QUOTA_CAN_CACHE 0x1
+#define PCPU_QUOTA_FLUSHING 0x2
 
 struct pcpu_quota {
 	void *pq_context;
@@ -50,31 +53,42 @@ struct pcpu_quota {
 	unsigned long *pq_global;
 	unsigned long pq_pcpu_slop;
 	int (*pq_alloc)(void *context, unsigned long incr, unsigned long *slop);
-	int pq_flags;
+	volatile int pq_flags;
 } __aligned(CACHE_LINE_SIZE);
 
 static void
 pcpu_quota_flush(struct pcpu_quota *pq)
 {
-	uint64_t *p;
+	int64_t *p;
 	uintptr_t value;
+	int cpu;
 
-	critical_enter();
-   	p = PCPU_QUOTA_SLOP_GET(pq);
-	value = *p;
-	*p = 0;
-	critical_exit();
+	value = 0;
+	epoch_enter(global_epoch);
+	CPU_FOREACH(cpu) {
+		p = zpcpu_get_cpu(pq->pq_slop, cpu);
+		MPASS(*p > 0);
+		value += *p;
+		*p = 0;
+	}
 	if (value)
-		atomic_add_long(pq->pq_global, value);
+		atomic_subtract_long(pq->pq_global, value);
+	epoch_exit(global_epoch);
 }
 
 void
 pcpu_quota_cache_set(struct pcpu_quota *pq, int enable)
 {
 	if (!enable && (pq->pq_flags & PCPU_QUOTA_CAN_CACHE)) {
-		if (atomic_testandclear_int(&pq->pq_flags, PCPU_QUOTA_CAN_CACHE) == 0)
+		if (atomic_testandclear_int(&pq->pq_flags, PCPU_QUOTA_CAN_CACHE) == 0 &&
+			atomic_testandset_int(&pq->pq_flags, PCPU_QUOTA_FLUSHING) == 0) {
+			epoch_wait(global_epoch);
 			pcpu_quota_flush(pq);
+			atomic_clear_int(&pq->pq_flags, PCPU_QUOTA_FLUSHING);
+		}
 	} else if (enable && (pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0) {
+		while (pq->pq_flags & PCPU_QUOTA_FLUSHING)
+			cpu_spinwait();
 		atomic_testandset_int(&pq->pq_flags,  PCPU_QUOTA_CAN_CACHE);
 	}
 }
@@ -110,14 +124,14 @@ pcpu_quota_free(struct pcpu_quota *pq)
 int
 pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 {
-	uint64_t *p;
+	int64_t *p;
 	int rc;
 
-	critical_enter();
+	epoch_enter(global_epoch);
 	p = PCPU_QUOTA_SLOP_GET(pq);
 	if (*p >= incr) {
 		*p -= incr;
-		critical_exit();
+		epoch_exit(global_epoch);
 		return (1);
 	}
 	incr -= *p;
@@ -126,33 +140,34 @@ pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 	if ( __predict_false((pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0) && *p > 0)
 		pcpu_quota_cache_set(pq, 1);
 
-	critical_exit();
+	epoch_exit(global_epoch);
 	return (rc);
 }
 
 void
 pcpu_quota_decr(struct pcpu_quota *pq, unsigned long decr)
 {
-	uint64_t *p;
-	uintptr_t value;
+	int64_t *p;
+	int64_t value;
+	long adj;
 
-	critical_enter();
+	epoch_enter(global_epoch);
 	p = PCPU_QUOTA_SLOP_GET(pq);
 	if (__predict_true(pq->pq_flags & PCPU_QUOTA_CAN_CACHE)) {
 		if (*p + decr <= pq->pq_pcpu_slop) {
 			*p += decr;
-			critical_exit();
+			epoch_exit(global_epoch);
 			return;
 		}
-		decr += (*p - (pq->pq_pcpu_slop >> 1));
-		*p = pq->pq_pcpu_slop >> 1;
-		atomic_subtract_long(pq->pq_global, decr);
-		critical_exit();
-		return;
+		adj = (pq->pq_pcpu_slop >> 1);
+		value = decr + (*p - adj);
+	} else {
+		adj = 0;
+		value = *p + decr;
 	}
-	value = *p + decr;
-	*p = 0;
-	atomic_subtract_long(pq->pq_global, value);
-	critical_exit();
+	MPASS(value > 0);
+	*p = adj;
+	atomic_subtract_long(pq->pq_global, (unsigned long)value);
+	epoch_exit(global_epoch);
 }
 
