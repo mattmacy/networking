@@ -123,7 +123,7 @@ pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 	incr -= *p;
 	*p = 0;
 	rc = pq->pq_alloc(pq->pq_context, incr, p);
-	if (__predict_true(*p > 0) && __predict_false((pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0))
+	if ( __predict_false((pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0) && *p > 0)
 		pcpu_quota_cache_set(pq, 1);
 
 	critical_exit();

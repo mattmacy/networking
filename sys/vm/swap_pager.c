@@ -158,6 +158,8 @@ SYSCTL_QUAD(_vm, OID_AUTO, swap_total, CTLFLAG_RD, &swap_total, 0,
     "Total amount of available swap storage.");
 static vm_offset_t swap_max_pcpu_slop;
 static vm_offset_t swap_max_slop;
+vm_offset_t vmsize_max_pcpu_slop;
+vm_offset_t vmsize_max_slop;
 static vm_offset_t swap_reserved;
 #ifdef __LP64__
 SYSCTL_QUAD(_vm, OID_AUTO, swap_max_slop, CTLFLAG_RD, &swap_max_slop, 0,
@@ -221,13 +223,15 @@ swap_alloc_can_cache(void)
 static int
 swap_alloc_slow(void *arg __unused, vm_offset_t incr, vm_offset_t *slop)
 {
-	vm_offset_t r, s, new;
+	vm_offset_t r, s, new, adj;
 	int res, can_cache;
 
 	can_cache = swap_alloc_can_cache();
-	if (can_cache)
-		incr += (swap_max_pcpu_slop - *slop);
-	else if (__predict_false(swap_max_slop > swap_total - swap_reserved))
+	adj = (swap_max_pcpu_slop>>1);
+	MPASS(*slop == 0);
+	if (can_cache) {
+		incr += adj;
+	} else if (__predict_false(swap_max_slop > swap_total - swap_reserved))
 		pcpu_quota_cache_set(swap_reserve_pq, 0);
 
 	res = 0;
@@ -243,8 +247,7 @@ swap_alloc_slow(void *arg __unused, vm_offset_t incr, vm_offset_t *slop)
 	if ((overcommit & SWAP_RESERVE_FORCE_ON) == 0 || r <= s ||
 		priv_check(curthread, PRIV_VM_SWAP_NOQUOTA) == 0) {
 		res = 1;
-		if (can_cache)
-			*slop = swap_max_pcpu_slop;
+		*slop = can_cache*adj;
 	} else
 		atomic_subtract_long(&swap_reserved, incr);
 
@@ -257,7 +260,9 @@ swap_alloc_init(void *arg __unused)
 
 	swap_max_pcpu_slop = ((physmem / (mp_ncpus*8)) + (PAGE_SIZE-1)) & ~PAGE_MASK;
 	swap_max_pcpu_slop = min(SWAP_MAX_PCPU_SLOP_DEFAULT, swap_max_pcpu_slop);
+	vmsize_max_pcpu_slop = swap_max_pcpu_slop >> 2;
 	swap_max_slop = swap_max_pcpu_slop * mp_ncpus;
+	vmsize_max_slop = vmsize_max_pcpu_slop*mp_ncpus;
 	swap_reserve_pq = pcpu_quota_alloc(&swap_reserved, swap_max_pcpu_slop,
 		swap_alloc_slow, NULL, M_WAITOK);
 }
@@ -273,6 +278,46 @@ static void
 swap_free(vm_offset_t decr)
 {
 	return (pcpu_quota_decr(swap_reserve_pq, decr));
+}
+
+int
+swap_pager_vmsize_alloc(void *arg, vm_offset_t incr, vm_offset_t *slop)
+{
+	struct uidinfo *uip;
+	int can_cache;
+	vm_offset_t new, adj;
+
+	uip = arg;
+	MPASS(*slop == 0);
+	adj = (vmsize_max_pcpu_slop >> 1);
+	if ((overcommit & SWAP_RESERVE_RLIMIT_ON) == 0) {
+		*slop = adj;
+		incr += adj;
+		atomic_add_long(&uip->ui_vmsize, incr);
+		return (1);
+	}
+
+	if (__predict_false((overcommit & SWAP_RESERVE_RLIMIT_ON) &&
+		uip->ui_vmsize + swap_max_slop >  lim_cur(curthread, RLIMIT_SWAP)))
+		pcpu_quota_cache_set(uip->ui_vmsize_pq, 0);
+	if ((overcommit & SWAP_RESERVE_RLIMIT_ON) != 0 &&
+		uip->ui_vmsize + incr > lim_cur(curthread, RLIMIT_SWAP) &&
+		priv_check(curthread, PRIV_VM_SWAP_NORLIMIT))
+		return (0);
+	can_cache = 0;
+	if ((overcommit & SWAP_RESERVE_RLIMIT_ON) == 0 ||
+		uip->ui_vmsize + 2*swap_max_slop < lim_cur(curthread, RLIMIT_SWAP))
+		can_cache = 1;
+
+	incr += can_cache*adj;
+	new = atomic_fetchadd_long(&uip->ui_vmsize, incr);
+	if ((overcommit & SWAP_RESERVE_RLIMIT_ON) != 0 &&
+		new + incr > lim_cur(curthread, RLIMIT_SWAP)) {
+		atomic_subtract_long(&uip->ui_vmsize, incr);
+		return (0);
+	}
+	*slop = can_cache*adj;
+	return (1);
 }
 
 int
@@ -300,14 +345,7 @@ swap_reserve_by_cred(vm_offset_t incr, struct ucred *cred)
 
 	res = swap_alloc(incr);
 	if (res) {
-		UIDINFO_VMSIZE_LOCK(uip);
-		if ((overcommit & SWAP_RESERVE_RLIMIT_ON) != 0 &&
-		    uip->ui_vmsize + incr > lim_cur(curthread, RLIMIT_SWAP) &&
-		    priv_check(curthread, PRIV_VM_SWAP_NORLIMIT))
-			res = 0;
-		else
-			uip->ui_vmsize += incr;
-		UIDINFO_VMSIZE_UNLOCK(uip);
+		res = pcpu_quota_incr(uip->ui_vmsize_pq, incr);
 		if (!res)
 			swap_free(incr);
 	}
@@ -344,11 +382,7 @@ swap_reserve_force(vm_offset_t incr)
 #endif
 
 	uip = curthread->td_ucred->cr_ruidinfo;
-	PROC_LOCK(curproc);
-	UIDINFO_VMSIZE_LOCK(uip);
-	uip->ui_vmsize += incr;
-	UIDINFO_VMSIZE_UNLOCK(uip);
-	PROC_UNLOCK(curproc);
+	atomic_add_long(&uip->ui_vmsize, incr);
 }
 
 void
@@ -374,11 +408,9 @@ swap_release_by_cred(vm_offset_t decr, struct ucred *cred)
 		panic("swap_reserved < decr");
 	swap_free(decr);
 
-	UIDINFO_VMSIZE_LOCK(uip);
 	if (uip->ui_vmsize < decr)
 		printf("negative vmsize for uid = %d\n", uip->ui_uid);
-	uip->ui_vmsize -= decr;
-	UIDINFO_VMSIZE_UNLOCK(uip);
+	pcpu_quota_decr(uip->ui_vmsize_pq, decr);
 	if (racct_enable)
 		racct_sub_cred(cred, RACCT_SWAP, decr);
 }
