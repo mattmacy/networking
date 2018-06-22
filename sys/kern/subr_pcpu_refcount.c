@@ -89,15 +89,15 @@ pcpu_ref_incr(pcpu_ref_t pr, int incr)
 	epoch_enter(global_epoch);
 #ifdef INVARIANTS
 	int64_t sum = 0;
-	int count, cpu;
+	int refcount, cpu;
 
-	if (__predict_true((pr->pr_flags & PR_DYING) == 0))
+	refcount = pr->pr_refcnt;
+	if (__predict_true((pr->pr_flags & PR_DYING) == 0)) {
 		CPU_FOREACH(cpu)
 			sum += *(int64_t*)zpcpu_get_cpu(pr->pr_pcpu_refs, cpu);
-	KASSERT(sum + pr->pr_refcnt > 0, ("sum: %jd + pr_refcnt: %d <= 0", sum, pr->pr_refcnt));
-	count = sum + pr->pr_refcnt + 1 - OWNER_REFCOUNT;
-	if (count < -2048)
-		count += OWNER_REFCOUNT;
+		refcount -= OWNER_REFCOUNT-1;
+	}
+	KASSERT(sum + refcount > 0, ("sum: %jd + refcount: %d <= 0", sum, refcount));
 #endif	
 	if (__predict_false(pr->pr_flags & PR_DYING))
 		atomic_add_int(&pr->pr_refcnt, incr);
@@ -113,15 +113,17 @@ pcpu_ref_decr(pcpu_ref_t pr, int decr)
 	epoch_enter(global_epoch);
 #ifdef INVARIANTS
 	int64_t sum = 0;
-	int cpu, count;
-	if (__predict_true((pr->pr_flags & PR_DYING) == 0))
+	int cpu, refcount;
+
+	refcount = pr->pr_refcnt;
+	if (__predict_true((pr->pr_flags & PR_DYING) == 0)) {
 		CPU_FOREACH(cpu)
 			sum += *(int64_t*)zpcpu_get_cpu(pr->pr_pcpu_refs, cpu);
-	KASSERT(sum + pr->pr_refcnt >= decr, ("sum: %jd + pr_refcnt: %d < decr: %d",
-										  sum, pr->pr_refcnt, decr));
-	count = sum + pr->pr_refcnt + 1 - OWNER_REFCOUNT;
-	if (count < -2048)
-		count += OWNER_REFCOUNT;
+		refcount -= OWNER_REFCOUNT-1;
+	}
+
+	KASSERT(sum + refcount >= decr, ("sum: %jd + refcount: %d < decr: %d",
+										  sum, refcount, decr));
 #endif
 	rc = 0;
 	if (__predict_true((pr->pr_flags & PR_DYING) == 0))
