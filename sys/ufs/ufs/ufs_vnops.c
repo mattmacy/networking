@@ -1846,7 +1846,7 @@ ufs_mkdir(ap)
 				 * XXX This seems to never be accessed out of
 				 * our context so a stack variable is ok.
 				 */
-				refcount_init(&ucred.cr_ref, 1);
+				ucred.cr_flags  = CRED_FLAG_ONSTACK;
 				ucred.cr_uid = ip->i_uid;
 				ucred.cr_ngroups = 1;
 				ucred.cr_groups = &ucred_group;
@@ -2610,7 +2610,7 @@ ufs_makeinode(mode, dvp, vpp, cnp, callfunc)
 			 * XXX This seems to never be accessed out of our
 			 * context so a stack variable is ok.
 			 */
-			refcount_init(&ucred.cr_ref, 1);
+			ucred.cr_flags  = CRED_FLAG_ONSTACK;
 			ucred.cr_uid = ip->i_uid;
 			ucred.cr_ngroups = 1;
 			ucred.cr_groups = &ucred_group;

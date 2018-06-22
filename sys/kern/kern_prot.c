@@ -1829,7 +1829,8 @@ crget(void)
 	struct ucred *cr;
 
 	cr = malloc(sizeof(*cr), M_CRED, M_WAITOK | M_ZERO);
-	refcount_init(&cr->cr_ref, 1);
+	cr->cr_pref = pcpu_ref_alloc(M_WAITOK);
+
 #ifdef AUDIT
 	audit_cred_init(cr);
 #endif
@@ -1848,9 +1849,17 @@ crget(void)
 struct ucred *
 crhold(struct ucred *cr)
 {
+	if (cr->cr_flags & CRED_FLAG_ONSTACK)
+		return (cr);
 
-	refcount_acquire(&cr->cr_ref);
+	pcpu_ref_acquire(cr->cr_pref);
 	return (cr);
+}
+
+void
+crdrop_owner(struct ucred *cr)
+{
+	pcpu_ref_kill(cr->cr_pref);
 }
 
 /*
@@ -1860,9 +1869,12 @@ void
 crfree(struct ucred *cr)
 {
 
-	KASSERT(cr->cr_ref > 0, ("bad ucred refcount: %d", cr->cr_ref));
-	KASSERT(cr->cr_ref != 0xdeadc0de, ("dangling reference to ucred"));
-	if (refcount_release(&cr->cr_ref)) {
+	KASSERT((unsigned int)cr->cr_pref != 0xdeadc0de, ("cr: %p dangling reference to ucred", cr));
+	if (cr->cr_flags & CRED_FLAG_ONSTACK)
+		return;
+
+	if (pcpu_ref_release(cr->cr_pref)) {
+		pcpu_ref_free(cr->cr_pref);
 		/*
 		 * Some callers of crget(), such as nfs_statfs(),
 		 * allocate a temporary credential, but don't
@@ -1898,7 +1910,7 @@ void
 crcopy(struct ucred *dest, struct ucred *src)
 {
 
-	KASSERT(dest->cr_ref == 1, ("crcopy of shared ucred"));
+	//KASSERT(dest->cr_ref == 1, ("crcopy of shared ucred"));
 	bcopy(&src->cr_startcopy, &dest->cr_startcopy,
 	    (unsigned)((caddr_t)&src->cr_endcopy -
 		(caddr_t)&src->cr_startcopy));
@@ -1913,6 +1925,7 @@ crcopy(struct ucred *dest, struct ucred *src)
 #ifdef MAC
 	mac_cred_copy(src, dest);
 #endif
+	dest->cr_flags &= ~(CRED_FLAG_ONSTACK|CRED_FLAG_OWNED);
 }
 
 /*
@@ -1954,6 +1967,9 @@ void
 proc_set_cred_init(struct proc *p, struct ucred *newcred)
 {
 
+	if (newcred->cr_flags & CRED_FLAG_OWNED)
+		newcred = crdup(newcred);
+	newcred->cr_flags |= CRED_FLAG_OWNED;
 	p->p_ucred = newcred;
 }
 
@@ -1975,10 +1991,16 @@ proc_set_cred(struct proc *p, struct ucred *newcred)
 	MPASS(p->p_ucred != NULL);
 	if (newcred == NULL)
 		MPASS(p->p_state == PRS_ZOMBIE);
-	else
+	else {
+		if (newcred->cr_flags & CRED_FLAG_OWNED) {
+			newcred = crdup(newcred);
+			newcred->cr_flags |= CRED_FLAG_OWNED;
+		}
 		PROC_LOCK_ASSERT(p, MA_OWNED);
-
+	}
 	oldcred = p->p_ucred;
+	crdrop_owner(oldcred);
+
 	p->p_ucred = newcred;
 	if (newcred != NULL)
 		PROC_UPDATE_COW(p);
@@ -2002,7 +2024,6 @@ crcopysafe(struct proc *p, struct ucred *cr)
 		oldcred = p->p_ucred;
 	}
 	crcopy(cr, oldcred);
-
 	return (oldcred);
 }
 

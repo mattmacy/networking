@@ -48,8 +48,9 @@ struct loginclass;
  * priv(9) interface should be used to check for privilege.
  */
 #if defined(_KERNEL) || defined(_WANT_UCRED)
+#include <sys/pcpu_refcount.h>
 struct ucred {
-	u_int	cr_ref;			/* reference count */
+	pcpu_ref_t cr_pref;			/* pcpu reference count */
 #define	cr_startcopy cr_uid
 	uid_t	cr_uid;			/* effective user id */
 	uid_t	cr_ruid;		/* real user id */
@@ -78,6 +79,8 @@ struct ucred {
  * Flags for cr_flags.
  */
 #define	CRED_FLAG_CAPMODE	0x00000001	/* In capability mode. */
+#define	CRED_FLAG_ONSTACK	0x00000002	/* Stack allocated */
+#define	CRED_FLAG_OWNED	0x00000004	/* Has an owner */
 
 /*
  * This is the external representation of struct ucred.
@@ -111,6 +114,7 @@ void	crextend(struct ucred *cr, int n);
 void	proc_set_cred_init(struct proc *p, struct ucred *cr);
 struct ucred	*proc_set_cred(struct proc *p, struct ucred *cr);
 void	crfree(struct ucred *cr);
+void	crdrop_owner(struct ucred *cr);
 struct ucred	*crget(void);
 struct ucred	*crhold(struct ucred *cr);
 void	cru2x(struct ucred *cr, struct xucred *xcr);
