@@ -67,7 +67,7 @@ pcpu_quota_flush(struct pcpu_quota *pq)
 	epoch_enter(global_epoch);
 	CPU_FOREACH(cpu) {
 		p = zpcpu_get_cpu(pq->pq_slop, cpu);
-		MPASS(*p > 0);
+		MPASS(*p >= 0);
 		value += *p;
 		*p = 0;
 	}
