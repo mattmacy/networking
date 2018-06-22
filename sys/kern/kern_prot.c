@@ -1966,9 +1966,15 @@ cru2x(struct ucred *cr, struct xucred *xcr)
 void
 proc_set_cred_init(struct proc *p, struct ucred *newcred)
 {
-
-	if (newcred->cr_flags & CRED_FLAG_OWNED)
-		newcred = crdup(newcred);
+	struct ucred *dupcred;
+#ifdef notyet
+	if (newcred->cr_flags & CRED_FLAG_OWNED) 
+#endif
+	{
+		dupcred = crdup(newcred);
+		crfree(newcred);
+		newcred = dupcred;
+	}
 	newcred->cr_flags |= CRED_FLAG_OWNED;
 	p->p_ucred = newcred;
 }
@@ -1992,10 +1998,17 @@ proc_set_cred(struct proc *p, struct ucred *newcred)
 	if (newcred == NULL)
 		MPASS(p->p_state == PRS_ZOMBIE);
 	else {
-		if (newcred->cr_flags & CRED_FLAG_OWNED) {
-			newcred = crdup(newcred);
+#ifdef notyet
+		if (newcred->cr_flags & CRED_FLAG_OWNED)
+		{
+			oldcred = crdup(newcred);
+			crfree(newcred);
+			newcred = oldcred;
 			newcred->cr_flags |= CRED_FLAG_OWNED;
 		}
+#endif
+		MPASS((newcred->cr_flags & CRED_FLAG_OWNED) == 0);
+		newcred->cr_flags |= CRED_FLAG_OWNED;
 		PROC_LOCK_ASSERT(p, MA_OWNED);
 	}
 	oldcred = p->p_ucred;
