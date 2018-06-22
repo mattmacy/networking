@@ -33,6 +33,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/epoch.h>
 #include <sys/systm.h>
 #include <sys/counter.h>
+#include <sys/kdb.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
@@ -97,7 +98,11 @@ pcpu_ref_incr(pcpu_ref_t pr, int incr)
 			sum += *(int64_t*)zpcpu_get_cpu(pr->pr_pcpu_refs, cpu);
 		refcount -= OWNER_REFCOUNT-1;
 	}
-	KASSERT(sum + refcount > 0, ("sum: %jd + refcount: %d <= 0", sum, refcount));
+	KASSERT(sum + refcount > -2, ("sum: %jd + refcount: %d <= 0", sum, refcount));
+	if (sum + refcount <= 0) {
+		printf("sum: %jd + refcount: %d <= 0", sum, refcount);
+		kdb_backtrace();
+	}
 #endif	
 	if (__predict_false(pr->pr_flags & PR_DYING))
 		atomic_add_int(&pr->pr_refcnt, incr);
