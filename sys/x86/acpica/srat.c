@@ -517,9 +517,11 @@ srat_walk_table(acpi_subtable_handler *handler, void *arg)
 static void
 srat_set_cpus(void *dummy)
 {
+#ifdef NUMA
 	struct cpu_info *cpu;
 	struct pcpu *pc;
 	u_int i;
+#endif
 
 	if (srat_physaddr == 0)
 		return;
