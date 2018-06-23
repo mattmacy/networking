@@ -189,10 +189,7 @@ SYSCTL_ULONG(_vm, OID_AUTO, swap_maxpages, CTLFLAG_RD, &swap_maxpages, 0,
 #define	SWAP_RESERVE_ALLOW_NONWIRED	(1 << 2)
 
 
-#define SWAP_MAX_PCPU_SLOP_DEFAULT 128*1024*1024
 struct pcpu_quota *swap_reserve_pq;
-
-
 int
 swap_reserve(vm_offset_t incr)
 {
@@ -257,12 +254,12 @@ swap_alloc_slow(void *arg __unused, vm_offset_t incr, vm_offset_t *slop)
 static void
 swap_alloc_init(void *arg __unused)
 {
+	uint64_t slop_pages_pcpu;
 
-	swap_max_pcpu_slop = min(SWAP_MAX_PCPU_SLOP_DEFAULT, physmem/8);
-	swap_max_pcpu_slop = roundup2(swap_max_pcpu_slop, PAGE_SIZE);
-	vmsize_max_pcpu_slop = swap_max_pcpu_slop >> 2;
-	vmsize_max_pcpu_slop = roundup2(vmsize_max_pcpu_slop, PAGE_SIZE);
-	swap_max_slop = swap_max_pcpu_slop * mp_ncpus;
+	slop_pages_pcpu = physmem / (8*mp_ncpus);
+	swap_max_pcpu_slop = slop_pages_pcpu*PAGE_SIZE;
+	swap_max_slop = swap_max_pcpu_slop*mp_ncpus;
+	vmsize_max_pcpu_slop = (slop_pages_pcpu >> 1)*PAGE_SIZE;
 	vmsize_max_slop = vmsize_max_pcpu_slop*mp_ncpus;
 	swap_reserve_pq = pcpu_quota_alloc(&swap_reserved, swap_max_pcpu_slop,
 		swap_alloc_slow, NULL, M_WAITOK);
