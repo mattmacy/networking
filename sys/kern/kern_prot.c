@@ -1869,7 +1869,7 @@ void
 crfree(struct ucred *cr)
 {
 
-	KASSERT((unsigned int)cr->cr_pref != 0xdeadc0de, ("cr: %p dangling reference to ucred", cr));
+	KASSERT((unsigned int)((uintptr_t)cr->cr_pref) != 0xdeadc0de, ("cr: %p dangling reference to ucred", cr));
 	if (cr->cr_flags & CRED_FLAG_ONSTACK)
 		return;
 
