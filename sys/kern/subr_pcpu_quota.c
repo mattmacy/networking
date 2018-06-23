@@ -40,6 +40,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/smp.h>
 #include <vm/uma.h>
 
+#include <ck_pr.h>
 
 static MALLOC_DEFINE(M_PCPU_QUOTA, "Per-cpu", "Per-cpu resource accounting.");
 
@@ -79,17 +80,20 @@ pcpu_quota_flush(struct pcpu_quota *pq)
 void
 pcpu_quota_cache_set(struct pcpu_quota *pq, int enable)
 {
+	int *flagsp;
+
+	flagsp = (int *)(uintptr_t)&pq->pq_flags;
 	if (!enable && (pq->pq_flags & PCPU_QUOTA_CAN_CACHE)) {
-		if (atomic_testandclear_int(&pq->pq_flags, PCPU_QUOTA_CAN_CACHE) == 0 &&
-			atomic_testandset_int(&pq->pq_flags, PCPU_QUOTA_FLUSHING) == 0) {
+		if (ck_pr_btr_int(flagsp, PCPU_QUOTA_CAN_CACHE) == 0 &&
+			ck_pr_bts_int(flagsp, PCPU_QUOTA_FLUSHING) == 0) {
 			epoch_wait(global_epoch);
 			pcpu_quota_flush(pq);
-			atomic_clear_int(&pq->pq_flags, PCPU_QUOTA_FLUSHING);
+			ck_pr_btr_int(flagsp, PCPU_QUOTA_FLUSHING);
 		}
 	} else if (enable && (pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0) {
 		while (pq->pq_flags & PCPU_QUOTA_FLUSHING)
 			cpu_spinwait();
-		atomic_testandset_int(&pq->pq_flags,  PCPU_QUOTA_CAN_CACHE);
+		ck_pr_bts_int(flagsp,  PCPU_QUOTA_CAN_CACHE);
 	}
 }
 
@@ -136,7 +140,7 @@ pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 	}
 	incr -= *p;
 	*p = 0;
-	rc = pq->pq_alloc(pq->pq_context, incr, p);
+	rc = pq->pq_alloc(pq->pq_context, incr, (unsigned long *)p);
 	if ( __predict_false((pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0) && *p > 0)
 		pcpu_quota_cache_set(pq, 1);
 
