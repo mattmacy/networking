@@ -439,16 +439,6 @@ pmap_pcid_save_cnt_proc(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_vm_pmap, OID_AUTO, pcid_save_cnt, CTLTYPE_U64 | CTLFLAG_RW |
     CTLFLAG_MPSAFE, NULL, 0, pmap_pcid_save_cnt_proc, "QU",
     "Count of saved TLB context on switch");
-static struct mtx invl_gen_mtx;
-#if 0
-static LIST_HEAD(, pmap_invl_gen) pmap_invl_gen_tracker =
-    LIST_HEAD_INITIALIZER(&pmap_invl_gen_tracker);
-static u_long pmap_invl_gen = 0;
-/* Fake lock object to satisfy turnstiles interface. */
-static struct lock_object invl_gen_ts = {
-	.lo_name = "invlts",
-};
-#endif
 
 static void
 pmap_epoch_init(void *arg __unused)
@@ -478,21 +468,6 @@ pmap_not_in_di(void)
 static void
 pmap_delayed_invl_started(void)
 {
-#if 0
-	struct pmap_invl_gen *invl_gen;
-	u_long currgen;
-
-	invl_gen = &curthread->td_md.md_invl_gen;
-	PMAP_ASSERT_NOT_IN_DI();
-	mtx_lock(&invl_gen_mtx);
-	if (LIST_EMPTY(&pmap_invl_gen_tracker))
-		currgen = pmap_invl_gen;
-	else
-		currgen = LIST_FIRST(&pmap_invl_gen_tracker)->gen;
-	invl_gen->gen = currgen + 1;
-	LIST_INSERT_HEAD(&pmap_invl_gen_tracker, invl_gen, link);
-	mtx_unlock(&invl_gen_mtx);
-#endif
 	epoch_enter_preempt(pmap_epoch);
 	curthread->td_md.md_invl_gen.gen = 1;
 }
@@ -514,30 +489,6 @@ pmap_delayed_invl_started(void)
 static void
 pmap_delayed_invl_finished(void)
 {
-#if 0
-	struct pmap_invl_gen *invl_gen, *next;
-	struct turnstile *ts;
-
-	invl_gen = &curthread->td_md.md_invl_gen;
-	KASSERT(invl_gen->gen != 0, ("missed invl_started"));
-	mtx_lock(&invl_gen_mtx);
-	next = LIST_NEXT(invl_gen, link);
-	if (next == NULL) {
-		turnstile_chain_lock(&invl_gen_ts);
-		ts = turnstile_lookup(&invl_gen_ts);
-		pmap_invl_gen = invl_gen->gen;
-		if (ts != NULL) {
-			turnstile_broadcast(ts, TS_SHARED_QUEUE);
-			turnstile_unpend(ts);
-		}
-		turnstile_chain_unlock(&invl_gen_ts);
-	} else {
-		next->gen = invl_gen->gen;
-	}
-	LIST_REMOVE(invl_gen, link);
-	mtx_unlock(&invl_gen_mtx);
-	invl_gen->gen = 0;
-#endif
 	curthread->td_md.md_invl_gen.gen = 0;
 	epoch_exit_preempt(pmap_epoch);
 }
@@ -572,28 +523,6 @@ pmap_delayed_invl_genp(vm_page_t m)
 static void
 pmap_delayed_invl_wait(vm_page_t m)
 {
-#if 0
-	struct turnstile *ts;
-	u_long *m_gen;
-#ifdef PV_STATS
-	bool accounted = false;
-#endif
-
-	m_gen = pmap_delayed_invl_genp(m);
-	while (*m_gen > pmap_invl_gen) {
-#ifdef PV_STATS
-		if (!accounted) {
-			atomic_add_long(&invl_wait, 1);
-			accounted = true;
-		}
-#endif
-		ts = turnstile_trywait(&invl_gen_ts);
-		if (*m_gen > pmap_invl_gen)
-			turnstile_wait(ts, NULL, TS_SHARED_QUEUE);
-		else
-			turnstile_cancel(ts);
-	}
-#endif
 	epoch_wait_preempt(pmap_epoch);
 }
 
@@ -1150,11 +1079,6 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	CPU_FILL(&kernel_pmap->pm_active);	/* don't allow deactivation */
 	TAILQ_INIT(&kernel_pmap->pm_pvchunk);
 	kernel_pmap->pm_flags = pmap_flags;
-
- 	/*
-	 * Initialize the TLB invalidations generation number lock.
-	 */
-	mtx_init(&invl_gen_mtx, "invlgn", NULL, MTX_DEF);
 
 	/*
 	 * Reserve some special page table entries/VA space for temporary
