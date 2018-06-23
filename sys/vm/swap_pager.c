@@ -160,7 +160,7 @@ static vm_offset_t swap_max_pcpu_slop;
 static vm_offset_t swap_max_slop;
 vm_offset_t vmsize_max_pcpu_slop;
 vm_offset_t vmsize_max_slop;
-static vm_offset_t swap_reserved;
+static unsigned long swap_reserved;
 #ifdef __LP64__
 SYSCTL_QUAD(_vm, OID_AUTO, swap_max_slop, CTLFLAG_RD, &swap_max_slop, 0,
     "maximum amount of slop in swap accounting.");
@@ -188,6 +188,9 @@ SYSCTL_ULONG(_vm, OID_AUTO, swap_maxpages, CTLFLAG_RD, &swap_maxpages, 0,
 #define	SWAP_RESERVE_RLIMIT_ON		(1 << 1)
 #define	SWAP_RESERVE_ALLOW_NONWIRED	(1 << 2)
 
+#define atomic_fetchadd_vmoffset atomic_fetchadd_long
+#define atomic_subtract_vmoffset atomic_subtract_long
+#define atomic_add_vmoffset atomic_add_long
 
 struct pcpu_quota *swap_reserve_pq;
 int
@@ -217,8 +220,9 @@ swap_alloc_can_cache(void)
 	return (0);
 }
 
+
 static int
-swap_alloc_slow(void *arg __unused, vm_offset_t incr, vm_offset_t *slop)
+swap_alloc_slow(void *arg __unused, unsigned long incr, unsigned long *slop)
 {
 	vm_offset_t r, s, new, adj;
 	int res, can_cache;
@@ -232,7 +236,7 @@ swap_alloc_slow(void *arg __unused, vm_offset_t incr, vm_offset_t *slop)
 		pcpu_quota_cache_set(swap_reserve_pq, 0);
 
 	res = 0;
-	new = atomic_fetchadd_long(&swap_reserved, incr);
+	new = atomic_fetchadd_vmoffset(&swap_reserved, incr);
 	r = new + incr;
 	if (overcommit & SWAP_RESERVE_ALLOW_NONWIRED) {
 		s = vm_cnt.v_page_count - vm_cnt.v_free_reserved -
@@ -246,7 +250,7 @@ swap_alloc_slow(void *arg __unused, vm_offset_t incr, vm_offset_t *slop)
 		res = 1;
 		*slop = can_cache*adj;
 	} else
-		atomic_subtract_long(&swap_reserved, incr);
+		atomic_subtract_vmoffset(&swap_reserved, incr);
 
 	return (res);
 }
@@ -261,7 +265,7 @@ swap_alloc_init(void *arg __unused)
 	swap_max_slop = swap_max_pcpu_slop*mp_ncpus;
 	vmsize_max_pcpu_slop = (slop_pages_pcpu >> 1)*PAGE_SIZE;
 	vmsize_max_slop = vmsize_max_pcpu_slop*mp_ncpus;
-	swap_reserve_pq = pcpu_quota_alloc(&swap_reserved, swap_max_pcpu_slop,
+	swap_reserve_pq = pcpu_quota_alloc((unsigned long *)&swap_reserved, swap_max_pcpu_slop,
 		swap_alloc_slow, NULL, M_WAITOK);
 }
 SYSINIT(swap_alloc_init, SI_SUB_VM_CONF, SI_ORDER_ANY, swap_alloc_init, NULL);
@@ -279,7 +283,7 @@ swap_free(vm_offset_t decr)
 }
 
 int
-swap_pager_vmsize_alloc(void *arg, vm_offset_t incr, vm_offset_t *slop)
+swap_pager_vmsize_alloc(void *arg, unsigned long incr, unsigned long *slop)
 {
 	struct uidinfo *uip;
 	int can_cache;
@@ -291,7 +295,7 @@ swap_pager_vmsize_alloc(void *arg, vm_offset_t incr, vm_offset_t *slop)
 	if ((overcommit & SWAP_RESERVE_RLIMIT_ON) == 0) {
 		*slop = adj;
 		incr += adj;
-		atomic_add_long(&uip->ui_vmsize, incr);
+		atomic_add_vmoffset(&uip->ui_vmsize, incr);
 		return (1);
 	}
 
@@ -308,10 +312,10 @@ swap_pager_vmsize_alloc(void *arg, vm_offset_t incr, vm_offset_t *slop)
 		can_cache = 1;
 
 	incr += can_cache*adj;
-	new = atomic_fetchadd_long(&uip->ui_vmsize, incr);
+	new = atomic_fetchadd_vmoffset(&uip->ui_vmsize, incr);
 	if ((overcommit & SWAP_RESERVE_RLIMIT_ON) != 0 &&
 		new + incr > lim_cur(curthread, RLIMIT_SWAP)) {
-		atomic_subtract_long(&uip->ui_vmsize, incr);
+		atomic_subtract_vmoffset(&uip->ui_vmsize, incr);
 		return (0);
 	}
 	*slop = can_cache*adj;
@@ -321,7 +325,7 @@ swap_pager_vmsize_alloc(void *arg, vm_offset_t incr, vm_offset_t *slop)
 int
 swap_reserve_by_cred(vm_offset_t incr, struct ucred *cred)
 {
-	int res, error;
+	int res;
 	static int curfail;
 	static struct timeval lastfail;
 	struct uidinfo *uip;
@@ -334,9 +338,9 @@ swap_reserve_by_cred(vm_offset_t incr, struct ucred *cred)
 #ifdef RACCT
 	if (racct_enable) {
 		PROC_LOCK(curproc);
-		error = racct_add(curproc, RACCT_SWAP, incr);
+		res = racct_add(curproc, RACCT_SWAP, incr);
 		PROC_UNLOCK(curproc);
-		if (error != 0)
+		if (res != 0)
 			return (0);
 	}
 #endif
@@ -348,8 +352,8 @@ swap_reserve_by_cred(vm_offset_t incr, struct ucred *cred)
 			swap_free(incr);
 	}
 	if (!res && ppsratecheck(&lastfail, &curfail, 1)) {
-		printf("uid %d, pid %d: swap reservation for %jd bytes failed\n",
-		    uip->ui_uid, curproc->p_pid, incr);
+		printf("uid %d, pid %d: swap reservation for %lu bytes failed\n",
+		    uip->ui_uid, curproc->p_pid, (unsigned long)incr);
 	}
 
 #ifdef RACCT
@@ -369,7 +373,7 @@ swap_reserve_force(vm_offset_t incr)
 	struct uidinfo *uip;
 
 	if (swap_alloc(incr) == 0)
-		atomic_add_long(&swap_reserved, incr);
+		atomic_add_vmoffset(&swap_reserved, incr);
 
 #ifdef RACCT
 	if (racct_enable) {
@@ -380,7 +384,7 @@ swap_reserve_force(vm_offset_t incr)
 #endif
 
 	uip = curthread->td_ucred->cr_ruidinfo;
-	atomic_add_long(&uip->ui_vmsize, incr);
+	atomic_add_vmoffset(&uip->ui_vmsize, incr);
 }
 
 void

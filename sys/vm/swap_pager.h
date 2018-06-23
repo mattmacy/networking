@@ -88,8 +88,8 @@ void swap_pager_swap_init(void);
 int swap_pager_nswapdev(void);
 int swap_pager_reserve(vm_object_t, vm_pindex_t, vm_size_t);
 void swap_pager_status(int *total, int *used);
-int swap_pager_vmsize_alloc(void *arg, vm_offset_t incr, vm_offset_t *slop);
 void swapoff_all(void);
+int swap_pager_vmsize_alloc(void *arg, unsigned long incr, unsigned long *slop);
 
 #endif				/* _KERNEL */
 #endif				/* _VM_SWAP_PAGER_H_ */
