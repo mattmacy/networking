@@ -51,11 +51,18 @@ static MALLOC_DEFINE(M_PCPU_QUOTA, "Per-cpu", "Per-cpu resource accounting.");
 struct pcpu_quota {
 	void *pq_context;
 	counter_u64_t pq_slop;
-	unsigned long *pq_global;
-	unsigned long pq_pcpu_slop;
-	int (*pq_alloc)(void *context, unsigned long incr, unsigned long *slop);
+	uintptr_t *pq_global;
+	uintptr_t pq_pcpu_slop;
+	int (*pq_alloc)(void *context, uintptr_t incr, uintptr_t *slop);
 	volatile int pq_flags;
 } __aligned(CACHE_LINE_SIZE);
+
+
+#ifdef __LP64__
+#define atomic_subtract_uintptr atomic_subtract_long
+#else
+#define atomic_subtract_uintptr atomic_subtract_int
+#endif
 
 static void
 pcpu_quota_flush(struct pcpu_quota *pq)
@@ -73,7 +80,7 @@ pcpu_quota_flush(struct pcpu_quota *pq)
 		*p = 0;
 	}
 	if (value)
-		atomic_subtract_long(pq->pq_global, value);
+		atomic_subtract_uintptr(pq->pq_global, value);
 	epoch_exit(global_epoch);
 }
 
@@ -98,8 +105,8 @@ pcpu_quota_cache_set(struct pcpu_quota *pq, int enable)
 }
 
 struct pcpu_quota *
-pcpu_quota_alloc(unsigned long *global, unsigned long pcpu_slop,
-    int (*alloc)(void *, unsigned long, unsigned long*), void *context, int flags)
+pcpu_quota_alloc(uintptr_t *global, uintptr_t pcpu_slop,
+    int (*alloc)(void *, uintptr_t, uintptr_t*), void *context, int flags)
 {
 	struct pcpu_quota *pq;
 
@@ -126,7 +133,7 @@ pcpu_quota_free(struct pcpu_quota *pq)
 }
 
 int
-pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
+pcpu_quota_incr(struct pcpu_quota *pq, uintptr_t incr)
 {
 	int64_t *p;
 	int rc;
@@ -140,7 +147,7 @@ pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 	}
 	incr -= *p;
 	*p = 0;
-	rc = pq->pq_alloc(pq->pq_context, incr, (unsigned long *)p);
+	rc = pq->pq_alloc(pq->pq_context, incr, (uintptr_t *)p);
 	if ( __predict_false((pq->pq_flags & PCPU_QUOTA_CAN_CACHE) == 0) && *p > 0)
 		pcpu_quota_cache_set(pq, 1);
 
@@ -149,7 +156,7 @@ pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr)
 }
 
 void
-pcpu_quota_decr(struct pcpu_quota *pq, unsigned long decr)
+pcpu_quota_decr(struct pcpu_quota *pq, uintptr_t decr)
 {
 	int64_t *p;
 	int64_t value;
@@ -171,7 +178,7 @@ pcpu_quota_decr(struct pcpu_quota *pq, unsigned long decr)
 	}
 	MPASS(value > 0);
 	*p = adj;
-	atomic_subtract_long(pq->pq_global, (unsigned long)value);
+	atomic_subtract_uintptr(pq->pq_global, (uintptr_t)value);
 	epoch_exit(global_epoch);
 }
 

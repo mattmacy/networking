@@ -31,12 +31,12 @@
 #define _SYS_PCPU_QUOTA_H_
 struct pcpu_quota;
 
-struct pcpu_quota *pcpu_quota_alloc(unsigned long *global, unsigned long pcpu_slop,
-    int (*alloc)(void *, unsigned long, unsigned long *), void *context, int flags);
+struct pcpu_quota *pcpu_quota_alloc(uintptr_t *global, uintptr_t pcpu_slop,
+    int (*alloc)(void *, uintptr_t, uintptr_t *), void *context, int flags);
 
 void pcpu_quota_cache_set(struct pcpu_quota *pq, int enable);
 void pcpu_quota_free(struct pcpu_quota *pq);
-int pcpu_quota_incr(struct pcpu_quota *pq, unsigned long incr);
-void pcpu_quota_decr(struct pcpu_quota *pq, unsigned long decr);
+int pcpu_quota_incr(struct pcpu_quota *pq, uintptr_t incr);
+void pcpu_quota_decr(struct pcpu_quota *pq, uintptr_t decr);
 
 #endif
