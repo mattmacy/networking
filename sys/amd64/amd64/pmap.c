@@ -443,7 +443,7 @@ SYSCTL_PROC(_vm_pmap, OID_AUTO, pcid_save_cnt, CTLTYPE_U64 | CTLFLAG_RW |
 static void
 pmap_epoch_init(void *arg __unused)
 {
-	pmap_epoch = epoch_alloc(EPOCH_PREEMPT);
+	pmap_epoch = epoch_alloc(EPOCH_PREEMPT|EPOCH_LOCKED);
 }
 SYSINIT(epoch, SI_SUB_TASKQ + 1, SI_ORDER_ANY, pmap_epoch_init, NULL);
 
