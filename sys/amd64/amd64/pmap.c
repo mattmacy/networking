@@ -513,12 +513,9 @@ pmap_delayed_invl_genp(vm_page_t m)
  * pmap_delayed_invl_wait(), upon its return we know that no CPU has a
  * valid mapping for the page m in either its page table or TLB.
  *
- * This function works by blocking until the global DI generation
- * number catches up with the generation number associated with the
- * given page m and its PV list.  Since this function's callers
- * typically own an object lock and sometimes own a page lock, it
- * cannot sleep.  Instead, it blocks on a turnstile to relinquish the
- * processor.
+ * This function works by checking that there are either no callers
+ * within a DI block or if there are that a grace period elapses for
+ * any callers in an epoch section when it is initially called.
  */
 static void
 pmap_delayed_invl_wait(vm_page_t m)
