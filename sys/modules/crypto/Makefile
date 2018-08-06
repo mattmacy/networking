@@ -46,5 +46,7 @@ SRCS	+= chacha.c
 SRCS	+= chacha-sw.c
 SRCS	+= opt_param.h cryptodev_if.h bus_if.h device_if.h
 SRCS	+= opt_ddb.h
+SRCS	+= ccm-cbc.c
+SRCS	+= xform_cbc_mac.c
 
 .include <bsd.kmod.mk>

@@ -41,6 +41,7 @@
 #include <crypto/sha2/sha512.h>
 #include <opencrypto/rmd160.h>
 #include <opencrypto/gmac.h>
+#include <opencrypto/ccm-cbc.h>
 
 #include <opencrypto/cryptodev.h>
 #include <opencrypto/xform_userland.h>
@@ -83,6 +84,9 @@ extern struct auth_hash auth_hash_nist_gmac_aes_192;
 extern struct auth_hash auth_hash_nist_gmac_aes_256;
 extern struct auth_hash auth_hash_blake2b;
 extern struct auth_hash auth_hash_blake2s;
+extern struct auth_hash auth_hash_ccm_cbc_mac_128;
+extern struct auth_hash auth_hash_ccm_cbc_mac_192;
+extern struct auth_hash auth_hash_ccm_cbc_mac_256;
 
 union authctx {
 	MD5_CTX md5ctx;
@@ -92,6 +96,7 @@ union authctx {
 	SHA384_CTX sha384ctx;
 	SHA512_CTX sha512ctx;
 	struct aes_gmac_ctx aes_gmac_ctx;
+	struct aes_cbc_mac_ctx aes_cbc_mac_ctx;
 };
 
 #endif /* _CRYPTO_XFORM_AUTH_H_ */
