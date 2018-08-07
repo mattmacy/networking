@@ -1170,7 +1170,7 @@ again:
 		return (EINVAL);
 	}
 
-	hdl = dmu_buf_get_user(db);
+	hdl = (sa_handle_t *)dmu_buf_get_user(db);
 	if (hdl != NULL) {
 		zp  = sa_get_userdata(hdl);
 

@@ -22,6 +22,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  */
 
 /*
@@ -678,6 +679,20 @@ spa_get_errlists(spa_t *spa, avl_tree_t *last, avl_tree_t *scrub)
 	    offsetof(spa_error_entry_t, se_avl));
 }
 
+static void
+spa_zio_thread_init(void *context __unused)
+{
+
+	VERIFY(0 == dmu_thread_context_create());
+}
+
+static void
+spa_zio_thread_destroy(void *context)
+{
+
+	dmu_thread_context_destroy(context/*NOTUSED*/);
+}
+
 static taskq_t *
 spa_taskq_create(spa_t *spa, const char *name, enum zti_modes mode,
     uint_t value)
@@ -721,7 +736,7 @@ spa_taskq_create(spa_t *spa, const char *name, enum zti_modes mode,
 	}
 #endif
 	return (taskq_create_proc(name, value, maxclsyspri, 50, INT_MAX,
-	    spa->spa_proc, flags));
+	    spa->spa_proc, flags, spa_zio_thread_init, spa_zio_thread_destroy));
 }
 
 static void
@@ -1358,7 +1373,7 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 
 	packed = kmem_alloc(nvsize, KM_SLEEP);
 	error = dmu_read(spa->spa_meta_objset, obj, 0, nvsize, packed,
-	    DMU_READ_PREFETCH);
+	    DMU_CTX_FLAG_PREFETCH);
 	if (error == 0)
 		error = nvlist_unpack(packed, nvsize, value, 0);
 	kmem_free(packed, nvsize);
@@ -2438,7 +2453,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 {
 	spa_t *spa;
 	spa_load_state_t state = SPA_LOAD_OPEN;
-	int error;
+	int error = 0;
 	int locked = B_FALSE;
 	int firstopen = B_FALSE;
 
@@ -2540,15 +2555,23 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 		mutex_exit(&spa_namespace_lock);
 #ifdef __FreeBSD__
 #ifdef _KERNEL
-		if (firstopen)
-			zvol_create_minors(pool);
+		if (firstopen) {
+			/*
+			 * Don't pass up errors from here.  The SPA was
+			 * still created and we can't reasonably unwind it
+			 * at this point.
+			 */
+			if (zvol_create_minors(pool))
+				printf("ZFS WARNING: ZVOL device nodes for "
+				    "pool %s could not be created\n", pool);
+		}
 #endif
 #endif
 	}
 
 	*spapp = spa;
 
-	return (0);
+	return (error);
 }
 
 int
@@ -3542,13 +3565,23 @@ spa_import(const char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 	spa_async_request(spa, SPA_ASYNC_AUTOEXPAND);
 
 	mutex_exit(&spa_namespace_lock);
-	spa_history_log_version(spa, LOG_POOL_IMPORT);
 
 #ifdef __FreeBSD__
 #ifdef _KERNEL
-	zvol_create_minors(pool);
+	if (zvol_create_minors(pool)) {
+		/*
+		 * Don't pass up errors from here.  The SPA was
+		 * still created and we can't reasonably unwind it
+		 * at this point.
+		 */
+		printf("ZFS WARNING: Unable to create ZVOL block devices "
+		    "for pool %s\n", pool);
+	}
 #endif
 #endif
+
+	spa_history_log_version(spa, LOG_POOL_IMPORT);
+
 	return (0);
 }
 
@@ -5102,6 +5135,8 @@ spa_async_remove(spa_t *spa, vdev_t *vd)
 		vd->vdev_stat.vs_checksum_errors = 0;
 
 		vdev_state_dirty(vd->vdev_top);
+		/* Tell userspace that the vdev is gone. */
+		zfs_post_remove(spa, vd);
 	}
 
 	for (int c = 0; c < vd->vdev_children; c++)

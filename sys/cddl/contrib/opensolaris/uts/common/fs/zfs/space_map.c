@@ -335,7 +335,7 @@ space_map_load(space_map_t *sm, space_map_ops_t *ops, uint8_t maptype,
 
 		mutex_exit(sm->sm_lock);
 		error = dmu_read(os, smo->smo_object, offset, size, entry_map,
-		    DMU_READ_PREFETCH);
+		    DMU_CTX_FLAG_PREFETCH);
 		mutex_enter(sm->sm_lock);
 		if (error != 0)
 			break;

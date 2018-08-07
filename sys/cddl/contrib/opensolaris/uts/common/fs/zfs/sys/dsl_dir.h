@@ -76,6 +76,9 @@ typedef struct dsl_dir_phys {
 } dsl_dir_phys_t;
 
 struct dsl_dir {
+	/** Dbuf user eviction data for this instance. */
+	dmu_buf_user_t db_evict;
+
 	/* These are immutable; no lock needed: */
 	uint64_t dd_object;
 	dsl_dir_phys_t *dd_phys;

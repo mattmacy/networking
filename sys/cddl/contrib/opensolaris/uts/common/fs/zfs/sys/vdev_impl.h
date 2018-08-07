@@ -316,9 +316,11 @@ extern uint64_t vdev_get_min_asize(vdev_t *vd);
 extern void vdev_set_min_asize(vdev_t *vd);
 
 /*
- * zdb uses this tunable, so it must be declared here to make lint happy.
+ * Global variables
  */
+/* zdb uses this tunable, so it must be declared here to make lint happy. */
 extern int zfs_vdev_cache_size;
+extern uint_t zfs_geom_probe_vdev;
 
 #ifdef	__cplusplus
 }

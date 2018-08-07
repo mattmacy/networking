@@ -104,7 +104,6 @@
 #include <unistd.h>
 #include <signal.h>
 #include <umem.h>
-#include <dlfcn.h>
 #include <ctype.h>
 #include <math.h>
 #include <errno.h>
@@ -223,6 +222,7 @@ typedef void ztest_func_t(ztest_ds_t *zd, uint64_t id);
 
 typedef struct ztest_info {
 	ztest_func_t	*zi_func;	/* test function */
+	const char	*zi_name;	/* string name of test function */
 	uint64_t	zi_iters;	/* iterations per execution */
 	uint64_t	*zi_interval;	/* execute every <interval> seconds */
 	uint64_t	zi_call_count;	/* per-pass count */
@@ -268,37 +268,39 @@ uint64_t zopt_often = 1ULL * NANOSEC;		/* every second */
 uint64_t zopt_sometimes = 10ULL * NANOSEC;	/* every 10 seconds */
 uint64_t zopt_rarely = 60ULL * NANOSEC;		/* every 60 seconds */
 
+#define	ZI(name, iters, interval) { name, #name, iters, interval }
+
 ztest_info_t ztest_info[] = {
-	{ ztest_dmu_read_write,			1,	&zopt_always	},
-	{ ztest_dmu_write_parallel,		10,	&zopt_always	},
-	{ ztest_dmu_object_alloc_free,		1,	&zopt_always	},
-	{ ztest_dmu_commit_callbacks,		1,	&zopt_always	},
-	{ ztest_zap,				30,	&zopt_always	},
-	{ ztest_zap_parallel,			100,	&zopt_always	},
-	{ ztest_split_pool,			1,	&zopt_always	},
-	{ ztest_zil_commit,			1,	&zopt_incessant	},
-	{ ztest_zil_remount,			1,	&zopt_sometimes	},
-	{ ztest_dmu_read_write_zcopy,		1,	&zopt_often	},
-	{ ztest_dmu_objset_create_destroy,	1,	&zopt_often	},
-	{ ztest_dsl_prop_get_set,		1,	&zopt_often	},
-	{ ztest_spa_prop_get_set,		1,	&zopt_sometimes	},
+	ZI(ztest_dmu_read_write,		1,	&zopt_always	),
+	ZI(ztest_dmu_write_parallel,		10,	&zopt_always	),
+	ZI(ztest_dmu_object_alloc_free,		1,	&zopt_always	),
+	ZI(ztest_dmu_commit_callbacks,		1,	&zopt_always	),
+	ZI(ztest_zap,				30,	&zopt_always	),
+	ZI(ztest_zap_parallel,			100,	&zopt_always	),
+	ZI(ztest_split_pool,			1,	&zopt_always	),
+	ZI(ztest_zil_commit,			1,	&zopt_incessant	),
+	ZI(ztest_zil_remount,			1,	&zopt_sometimes	),
+	ZI(ztest_dmu_read_write_zcopy,		1,	&zopt_often	),
+	ZI(ztest_dmu_objset_create_destroy,	1,	&zopt_often	),
+	ZI(ztest_dsl_prop_get_set,		1,	&zopt_often	),
+	ZI(ztest_spa_prop_get_set,		1,	&zopt_sometimes	),
 #if 0
-	{ ztest_dmu_prealloc,			1,	&zopt_sometimes	},
+	ZI(ztest_dmu_prealloc,			1,	&zopt_often	),
 #endif
-	{ ztest_fzap,				1,	&zopt_sometimes	},
-	{ ztest_dmu_snapshot_create_destroy,	1,	&zopt_sometimes	},
-	{ ztest_spa_create_destroy,		1,	&zopt_sometimes	},
-	{ ztest_fault_inject,			1,	&zopt_sometimes	},
-	{ ztest_ddt_repair,			1,	&zopt_sometimes	},
-	{ ztest_dmu_snapshot_hold,		1,	&zopt_sometimes	},
-	{ ztest_reguid,				1,	&zopt_sometimes },
-	{ ztest_spa_rename,			1,	&zopt_rarely	},
-	{ ztest_scrub,				1,	&zopt_rarely	},
-	{ ztest_dsl_dataset_promote_busy,	1,	&zopt_rarely	},
-	{ ztest_vdev_attach_detach,		1,	&zopt_rarely },
-	{ ztest_vdev_LUN_growth,		1,	&zopt_rarely	},
-	{ ztest_vdev_add_remove,		1,	&zopt_vdevtime },
-	{ ztest_vdev_aux_add_remove,		1,	&zopt_vdevtime	},
+	ZI(ztest_fzap,				1,	&zopt_sometimes	),
+	ZI(ztest_dmu_snapshot_create_destroy,	1,	&zopt_sometimes	),
+	ZI(ztest_spa_create_destroy,		1,	&zopt_sometimes	),
+	ZI(ztest_fault_inject,			1,	&zopt_sometimes	),
+	ZI(ztest_ddt_repair,			1,	&zopt_sometimes	),
+	ZI(ztest_dmu_snapshot_hold,		1,	&zopt_sometimes	),
+	ZI(ztest_reguid,			1,	&zopt_often	),
+	ZI(ztest_spa_rename,			1,	&zopt_rarely	),
+	ZI(ztest_scrub,				1,	&zopt_rarely	),
+	ZI(ztest_dsl_dataset_promote_busy,	1,	&zopt_rarely	),
+	ZI(ztest_vdev_attach_detach,		1,	&zopt_rarely	),
+	ZI(ztest_vdev_LUN_growth,		1,	&zopt_rarely	),
+	ZI(ztest_vdev_add_remove,		1,	&zopt_vdevtime	),
+	ZI(ztest_vdev_aux_add_remove,		1,	&zopt_vdevtime	),
 };
 
 #define	ZTEST_FUNCS	(sizeof (ztest_info) / sizeof (ztest_info_t))
@@ -404,6 +406,7 @@ fatal(int do_perror, char *message, ...)
 	}
 	(void) fprintf(stderr, "%s\n", buf);
 	fatal_msg = buf;			/* to ease debugging */
+	fflush(NULL);
 	if (ztest_dump_core)
 		abort();
 	exit(3);
@@ -622,9 +625,12 @@ process_options(int argc, char **argv)
 static void
 ztest_kill(ztest_shared_t *zs)
 {
+	pid_t curpid = getpid();
+
 	zs->zs_alloc = metaslab_class_get_alloc(spa_normal_class(zs->zs_spa));
 	zs->zs_space = metaslab_class_get_space(spa_normal_class(zs->zs_spa));
-	(void) kill(getpid(), SIGKILL);
+	printf("*** Crashing the current test process (pid %d)\n", curpid);
+	(void) kill(curpid, SIGKILL);
 }
 
 static uint64_t
@@ -1427,7 +1433,6 @@ ztest_replay_write(ztest_ds_t *zd, lr_write_t *lr, boolean_t byteswap)
 		 * but not always, because we also want to verify correct
 		 * behavior when the data was not recently read into cache.
 		 */
-		ASSERT(offset % doi.doi_data_block_size == 0);
 		if (ztest_random(4) != 0) {
 			int prefetch = ztest_random(2) ?
 			    DMU_READ_PREFETCH : DMU_READ_NO_PREFETCH;
@@ -1505,6 +1510,9 @@ ztest_replay_truncate(ztest_ds_t *zd, lr_truncate_t *lr, boolean_t byteswap)
 		return (ENOSPC);
 	}
 
+	if (zopt_verbose >= 7)
+		printf("%s: freeing obj %d offset 0x%lx length 0x%lx tx %p\n",
+		    __func__, lr->lr_foid, lr->lr_offset, lr->lr_length, tx);
 	VERIFY(dmu_free_range(os, lr->lr_foid, lr->lr_offset,
 	    lr->lr_length, tx) == 0);
 
@@ -1942,7 +1950,7 @@ ztest_prealloc(ztest_ds_t *zd, uint64_t object, uint64_t offset, uint64_t size)
 	txg = ztest_tx_assign(tx, TXG_WAIT, FTAG);
 
 	if (txg != 0) {
-		dmu_prealloc(os, object, offset, size, tx);
+		(void) dmu_prealloc(os, object, offset, size, tx);
 		dmu_tx_commit(tx);
 		txg_wait_synced(dmu_objset_pool(os), txg);
 	} else {
@@ -3642,14 +3650,14 @@ ztest_dmu_read_write_zcopy(ztest_ds_t *zd, uint64_t id)
 		 * We've verified all the old bufwads, and made new ones.
 		 * Now write them out.
 		 */
-		dmu_write(os, packobj, packoff, packsize, packbuf, tx);
 		if (zopt_verbose >= 7) {
-			(void) printf("writing offset %llx size %llx"
-			    " txg %llx\n",
+			(void) printf("writing obj %d offset %llx size %llx"
+			    " txg %llx\n", packobj,
 			    (u_longlong_t)bigoff,
 			    (u_longlong_t)bigsize,
 			    (u_longlong_t)txg);
 		}
+		dmu_write(os, packobj, packoff, packsize, packbuf, tx);
 		for (off = bigoff, j = 0; j < s; j++, off += chunksize) {
 			dmu_buf_t *dbt;
 			if (i != 5) {
@@ -3668,6 +3676,13 @@ ztest_dmu_read_write_zcopy(ztest_ds_t *zd, uint64_t id)
 			if (i == 1) {
 				VERIFY(dmu_buf_hold(os, bigobj, off,
 				    FTAG, &dbt, DMU_READ_NO_PREFETCH) == 0);
+			}
+			if (zopt_verbose >= 7) {
+				(void) printf("assigning obj %d offset %llx "
+				    "size %llx txg %llx\n", bigobj,
+				    (u_longlong_t)bigoff,
+				    (u_longlong_t)bigsize,
+				    (u_longlong_t)txg);
 			}
 			if (i != 5) {
 				dmu_assign_arcbuf(bonus_db, off,
@@ -4506,11 +4521,17 @@ ztest_fault_inject(ztest_ds_t *zd, uint64_t id)
 			vdev_file_t *vf = vd0->vdev_tsd;
 
 			if (vf != NULL && ztest_random(3) == 0) {
+				printf("Closing fd %d for path '%s'\n",
+				    vf->vf_vnode->v_fd, vd0->vdev_path);
 				(void) close(vf->vf_vnode->v_fd);
 				vf->vf_vnode->v_fd = -1;
 			} else if (ztest_random(2) == 0) {
+				printf("Marking vdev '%s' not readable\n",
+				    vd0->vdev_path);
 				vd0->vdev_cant_read = B_TRUE;
 			} else {
+				printf("Marking vdev '%s' not writable\n",
+				    vd0->vdev_path);
 				vd0->vdev_cant_write = B_TRUE;
 			}
 			guid0 = vd0->vdev_guid;
@@ -4557,11 +4578,13 @@ ztest_fault_inject(ztest_ds_t *zd, uint64_t id)
 			if (islog)
 				(void) rw_wrlock(&ztest_shared->zs_name_lock);
 
+			printf("Offlining vdev '%s'\n", vd0->vdev_path);
 			VERIFY(vdev_offline(spa, guid0, flags) != EBUSY);
 
 			if (islog)
 				(void) rw_unlock(&ztest_shared->zs_name_lock);
 		} else {
+			printf("Onlining vdev '%s'\n", vd0->vdev_path);
 			(void) vdev_online(spa, guid0, 0, NULL);
 		}
 	}
@@ -4737,7 +4760,7 @@ ztest_reguid(ztest_ds_t *zd, uint64_t id)
 		return;
 
 	if (zopt_verbose >= 3) {
-		(void) printf("Changed guid old %llu -> %llu\n",
+		(void) printf("Changed spa %p guid old %llu -> %llu\n", spa,
 		    (u_longlong_t)orig, (u_longlong_t)spa_guid(spa));
 	}
 
@@ -4808,30 +4831,14 @@ ztest_run_zdb(char *pool)
 	int status;
 	char zdb[MAXPATHLEN + MAXNAMELEN + 20];
 	char zbuf[1024];
-	char *bin;
-	char *ztest;
-	char *isa;
-	int isalen;
 	FILE *fp;
 
-	strlcpy(zdb, "/usr/bin/ztest", sizeof(zdb));
-
-	/* zdb lives in /usr/sbin, while ztest lives in /usr/bin */
-	bin = strstr(zdb, "/usr/bin/");
-	ztest = strstr(bin, "/ztest");
-	isa = bin + 8;
-	isalen = ztest - isa;
-	isa = strdup(isa);
-	/* LINTED */
-	(void) sprintf(bin,
-	    "/usr/sbin%.*s/zdb -bcc%s%s -U %s %s",
-	    isalen,
-	    isa,
+	(void) sprintf(zdb,
+	    "zdb -bcc%s%s -U %s %s",
 	    zopt_verbose >= 3 ? "s" : "",
 	    zopt_verbose >= 4 ? "v" : "",
 	    spa_config_path,
 	    pool);
-	free(isa);
 
 	if (zopt_verbose >= 5)
 		(void) printf("Executing %s\n", strstr(zdb, "zdb "));
@@ -4977,7 +4984,7 @@ static void *
 ztest_deadman_thread(void *arg)
 {
 	ztest_shared_t *zs = arg;
-	int grace = 300;
+	int grace = 600;
 	hrtime_t delta;
 
 	delta = (zs->zs_thread_stop - zs->zs_thread_start) / NANOSEC + grace;
@@ -5005,10 +5012,8 @@ ztest_execute(ztest_info_t *zi, uint64_t id)
 	atomic_add_64(&zi->zi_call_time, functime);
 
 	if (zopt_verbose >= 4) {
-		Dl_info dli;
-		(void) dladdr((void *)zi->zi_func, &dli);
 		(void) printf("%6.2f sec in %s\n",
-		    (double)functime / NANOSEC, dli.dli_sname);
+		    (double)functime / NANOSEC, zi->zi_name);
 	}
 }
 
@@ -5639,14 +5644,12 @@ main(int argc, char **argv)
 			(void) printf("%7s %9s   %s\n",
 			    "-----", "----", "--------");
 			for (int f = 0; f < ZTEST_FUNCS; f++) {
-				Dl_info dli;
 
 				zi = &zs->zs_info[f];
 				print_time(zi->zi_call_time, timebuf);
-				(void) dladdr((void *)zi->zi_func, &dli);
 				(void) printf("%7llu %9s   %s\n",
 				    (u_longlong_t)zi->zi_call_count, timebuf,
-				    dli.dli_sname);
+				    zi->zi_name);
 			}
 			(void) printf("\n");
 		}

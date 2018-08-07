@@ -22,6 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2011 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  */
 
 /*
@@ -1036,7 +1037,7 @@ arc_cksum_verify(arc_buf_t *buf)
 	}
 	fletcher_2_native(buf->b_data, buf->b_hdr->b_size, &zc);
 	if (!ZIO_CHECKSUM_EQUAL(*buf->b_hdr->b_freeze_cksum, zc))
-		panic("buffer modified while frozen!");
+		panic("buffer %p modified while frozen!", buf);
 	mutex_exit(&buf->b_hdr->b_freeze_lock);
 }
 
@@ -1069,6 +1070,20 @@ arc_cksum_compute(arc_buf_t *buf, boolean_t force)
 	fletcher_2_native(buf->b_data, buf->b_hdr->b_size,
 	    buf->b_hdr->b_freeze_cksum);
 	mutex_exit(&buf->b_hdr->b_freeze_lock);
+}
+
+boolean_t
+arc_buf_frozen(arc_buf_t *buf)
+{
+	boolean_t frozen = B_TRUE;
+
+	/*
+	 * NB: Does not grab or assert the mutex because the caller more
+	 * than likely cannot use the results in an atomic fashion.
+	 */
+	if (buf->b_hdr->b_freeze_cksum == NULL)
+		frozen = B_FALSE;
+	return (frozen);
 }
 
 void
@@ -1108,6 +1123,15 @@ arc_buf_freeze(arc_buf_t *buf)
 	hash_lock = HDR_LOCK(buf->b_hdr);
 	mutex_enter(hash_lock);
 
+#ifdef ZFS_DEBUG
+	if (buf->b_hdr->b_freeze_cksum == NULL && buf->b_hdr->b_state != arc_anon) {
+		printf("%s: invalid state: freeze_cksum=%p, b_state=%p\n",
+		    __func__, buf->b_hdr->b_freeze_cksum, buf->b_hdr->b_state);
+		printf("arc_anon=%p arc_mru=%p arc_mru_ghost=%p arc_mfu=%p "
+		    "arc_mfu_ghost=%p arc_l2c_only=%p\n", arc_anon, arc_mru,
+		    arc_mru_ghost, arc_mfu, arc_mfu_ghost, arc_l2c_only);
+	}
+#endif
 	ASSERT(buf->b_hdr->b_freeze_cksum != NULL ||
 	    buf->b_hdr->b_state == arc_anon);
 	arc_cksum_compute(buf, B_FALSE);
@@ -2939,6 +2963,7 @@ arc_read_nolock(zio_t *pio, spa_t *spa, const blkptr_t *bp,
 	kmutex_t *hash_lock;
 	zio_t *rzio;
 	uint64_t guid = spa_load_guid(spa);
+	boolean_t cached_only = (*arc_flags & ARC_CACHED_ONLY) != 0;
 
 top:
 	hdr = buf_hash_find(guid, BP_IDENTITY(bp), BP_PHYSICAL_BIRTH(bp),
@@ -2949,6 +2974,12 @@ top:
 
 		if (HDR_IO_IN_PROGRESS(hdr)) {
 
+			/*
+			 * Cache lookups should only occur from consumers
+			 * that do not have any context loaded yet.  This
+			 * means that no I/O should be in progress for them.
+			 */
+			ASSERT(!cached_only);
 			if (*arc_flags & ARC_WAIT) {
 				cv_wait(&hdr->b_cv, hash_lock);
 				mutex_exit(hash_lock);
@@ -3019,6 +3050,13 @@ top:
 		vdev_t *vd = NULL;
 		uint64_t addr;
 		boolean_t devw = B_FALSE;
+
+		if (cached_only) {
+			if (hdr)
+				mutex_exit(hash_lock);
+			done(NULL, NULL, private);
+			return (0);
+		}
 
 		if (hdr == NULL) {
 			/* this block is not in the cache */
@@ -3291,7 +3329,7 @@ arc_buf_evict(arc_buf_t *buf)
 }
 
 /*
- * Release this buffer from the cache.  This must be done
+ * Convert to an anynomyous buffer.  This must be done
  * after a read and prior to modifying the buffer contents.
  * If the buffer has more than one reference, we must make
  * a new hdr for the buffer.
@@ -4383,7 +4421,7 @@ l2arc_read_done(zio_t *zio)
 		if (zio->io_error != 0) {
 			ARCSTAT_BUMP(arcstat_l2_io_error);
 		} else {
-			zio->io_error = EIO;
+			ZIO_SET_ERROR(zio, EIO);
 		}
 		if (!equal)
 			ARCSTAT_BUMP(arcstat_l2_cksum_bad);

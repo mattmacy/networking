@@ -20,6 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  */
 
 #ifndef	_SYS_ARC_H
@@ -52,6 +53,7 @@ struct arc_buf {
 	void			*b_data;
 	arc_evict_func_t	*b_efunc;
 	void			*b_private;
+	void			*b_last_dbuf;
 };
 
 typedef enum arc_buf_contents {
@@ -67,7 +69,9 @@ typedef enum arc_buf_contents {
 #define	ARC_PREFETCH	(1 << 3)	/* I/O is a prefetch */
 #define	ARC_CACHED	(1 << 4)	/* I/O was already in cache */
 #define	ARC_L2CACHE	(1 << 5)	/* cache in L2ARC */
+#define	ARC_CACHED_ONLY	(1 << 6)	/**< cache lookup only */
 
+	
 /*
  * The following breakdows of arc_size exist for kstat only.
  */
@@ -92,15 +96,24 @@ void arc_buf_add_ref(arc_buf_t *buf, void *tag);
 int arc_buf_remove_ref(arc_buf_t *buf, void *tag);
 int arc_buf_size(arc_buf_t *buf);
 void arc_release(arc_buf_t *buf, void *tag);
+arc_buf_t *arc_buf_find_bp(spa_t *spa, blkptr_t *bp, void *priv);
 int arc_release_bp(arc_buf_t *buf, void *tag, blkptr_t *bp, spa_t *spa,
     zbookmark_t *zb);
 int arc_released(arc_buf_t *buf);
 int arc_has_callback(arc_buf_t *buf);
 void arc_buf_freeze(arc_buf_t *buf);
+boolean_t arc_buf_frozen(arc_buf_t *buf);
 void arc_buf_thaw(arc_buf_t *buf);
 #ifdef ZFS_DEBUG
 int arc_referenced(arc_buf_t *buf);
 #endif
+
+static inline void
+arc_discard_buf(arc_buf_t *buf, void *tag)
+{
+	arc_release(buf, tag);
+	VERIFY(arc_buf_remove_ref(buf, tag) == 1);
+}
 
 int arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp, arc_buf_t *pbuf,
     arc_done_func_t *done, void *priv, int priority, int zio_flags,

@@ -252,6 +252,8 @@ TUNABLE_INT("vfs.zfs.recover", &zfs_recover);
 SYSCTL_INT(_vfs_zfs, OID_AUTO, recover, CTLFLAG_RDTUN, &zfs_recover, 0,
     "Try to recover from otherwise-fatal errors.");
 
+SYSCTL_INT(_vfs_zfs, OID_AUTO, debug_flags, CTLFLAG_RW, &zfs_flags, 0,
+    "Debug flags for ZFS testing.");
 
 /*
  * ==========================================================================

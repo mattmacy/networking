@@ -167,7 +167,7 @@ dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
 	if (bp->blk_birth > ds->ds_phys->ds_prev_snap_txg) {
 		int64_t delta;
 
-		dprintf_bp(bp, "freeing ds=%llu", ds->ds_object);
+		dprintf_bp(bp, "freeing ds=%llu\n", ds->ds_object);
 		dsl_free(tx->tx_pool, tx->tx_txg, bp);
 
 		mutex_enter(&ds->ds_dir->dd_lock);
@@ -260,11 +260,9 @@ dsl_dataset_block_freeable(dsl_dataset_t *ds, const blkptr_t *bp,
 	return (B_TRUE);
 }
 
-/* ARGSUSED */
 static void
-dsl_dataset_evict(dmu_buf_t *db, void *dsv)
+dsl_dataset_evict_impl(dsl_dataset_t *ds, boolean_t evict_deadlist)
 {
-	dsl_dataset_t *ds = dsv;
 
 	ASSERT(ds->ds_owner == NULL || DSL_DATASET_IS_DESTROYED(ds));
 
@@ -279,7 +277,7 @@ dsl_dataset_evict(dmu_buf_t *db, void *dsv)
 	}
 
 	bplist_destroy(&ds->ds_pending_deadlist);
-	if (db != NULL) {
+	if (evict_deadlist) {
 		dsl_deadlist_close(&ds->ds_deadlist);
 	} else {
 		ASSERT(ds->ds_deadlist.dl_dbuf == NULL);
@@ -301,6 +299,13 @@ dsl_dataset_evict(dmu_buf_t *db, void *dsv)
 	cv_destroy(&ds->ds_exclusive_cv);
 
 	kmem_free(ds, sizeof (dsl_dataset_t));
+}
+
+/* ARGSUSED */
+static void
+dsl_dataset_evict(dmu_buf_user_t *dbu)
+{
+	dsl_dataset_evict_impl((dsl_dataset_t *)dbu, B_TRUE);
 }
 
 static int
@@ -391,7 +396,7 @@ dsl_dataset_get_ref(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 	if (doi.doi_type != DMU_OT_DSL_DATASET)
 		return (EINVAL);
 
-	ds = dmu_buf_get_user(dbuf);
+	ds = (dsl_dataset_t *)dmu_buf_get_user(dbuf);
 	if (ds == NULL) {
 		dsl_dataset_t *winner;
 
@@ -478,10 +483,12 @@ dsl_dataset_get_ref(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 			ds->ds_reserved = ds->ds_quota = 0;
 		}
 
-		if (err == 0) {
-			winner = dmu_buf_set_user_ie(dbuf, ds, &ds->ds_phys,
-			    dsl_dataset_evict);
-		}
+		dmu_buf_init_user(&ds->db_evict, dsl_dataset_evict,
+		    (void **)&ds->ds_phys);
+		if (err == 0)
+			winner = (dsl_dataset_t *)
+			    dmu_buf_set_user_ie(dbuf, &ds->db_evict);
+
 		if (err || winner) {
 			bplist_destroy(&ds->ds_pending_deadlist);
 			dsl_deadlist_close(&ds->ds_deadlist);
@@ -754,7 +761,7 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 	if (ds->ds_dbuf)
 		dsl_dataset_drop_ref(ds, tag);
 	else
-		dsl_dataset_evict(NULL, ds);
+		dsl_dataset_evict_impl(ds, B_FALSE);
 }
 
 boolean_t
@@ -1489,6 +1496,7 @@ dsl_dataset_destroy_check(void *arg1, void *arg2, dmu_tx_t *tx)
 }
 
 struct refsarg {
+	dmu_buf_user_t db_evict;
 	kmutex_t lock;
 	boolean_t gone;
 	kcondvar_t cv;
@@ -1496,9 +1504,9 @@ struct refsarg {
 
 /* ARGSUSED */
 static void
-dsl_dataset_refs_gone(dmu_buf_t *db, void *argv)
+dsl_dataset_refs_gone(dmu_buf_user_t *dbu)
 {
-	struct refsarg *arg = argv;
+	struct refsarg *arg = (struct refsarg *)dbu;
 
 	mutex_enter(&arg->lock);
 	arg->gone = TRUE;
@@ -1510,13 +1518,18 @@ static void
 dsl_dataset_drain_refs(dsl_dataset_t *ds, void *tag)
 {
 	struct refsarg arg;
+	dmu_buf_user_t *old_user;
 
 	bzero(&arg, sizeof(arg));
 	mutex_init(&arg.lock, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&arg.cv, NULL, CV_DEFAULT, NULL);
 	arg.gone = FALSE;
-	(void) dmu_buf_update_user(ds->ds_dbuf, ds, &arg, &ds->ds_phys,
-	    dsl_dataset_refs_gone);
+	dmu_buf_init_user(&arg.db_evict, dsl_dataset_refs_gone,
+	    (void **)&ds->ds_phys);
+	old_user = dmu_buf_update_user(ds->ds_dbuf, &ds->db_evict,
+	    &arg.db_evict);
+	ASSERT(old_user == &ds->db_evict);
+
 	dmu_buf_rele(ds->ds_dbuf, tag);
 	mutex_enter(&arg.lock);
 	while (!arg.gone)

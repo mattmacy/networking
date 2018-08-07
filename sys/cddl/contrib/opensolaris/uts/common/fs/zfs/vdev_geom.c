@@ -56,6 +56,13 @@ SYSCTL_DECL(_vfs_zfs_vdev);
 SYSCTL_INT(_vfs_zfs_vdev, OID_AUTO, bio_flush_disable, CTLFLAG_RW,
     &vdev_geom_bio_flush_disable, 0, "Disable BIO_FLUSH");
 
+/**
+ * Thread local storage used to indicate when a thread is probing geoms
+ * for their guids.  If NULL, this thread is not tasting geoms.  If non NULL,
+ * it is looking for a replacement for the vdev_t* that is its value.
+ */
+uint_t zfs_geom_probe_vdev;
+
 static void
 vdev_geom_orphan(struct g_consumer *cp)
 {
@@ -79,7 +86,6 @@ vdev_geom_orphan(struct g_consumer *cp)
 	 * async removal support to invoke a close on this
 	 * vdev once it is safe to do so.
 	 */
-	zfs_post_remove(vd->vdev_spa, vd);
 	vd->vdev_remove_wanted = B_TRUE;
 	spa_async_request(vd->vdev_spa, SPA_ASYNC_REMOVE);
 }
@@ -277,9 +283,8 @@ vdev_geom_read_guid(struct g_consumer *cp)
 static void
 vdev_geom_taste_orphan(struct g_consumer *cp)
 {
-
-	KASSERT(1 == 0, ("%s called while tasting %s.", __func__,
-	    cp->provider->name));
+	ZFS_LOG(0, "WARNING: Orphan %s while tasting its VDev GUID.",
+	    cp->provider->name);
 }
 
 static struct g_consumer *
@@ -294,7 +299,6 @@ vdev_geom_attach_by_guid(uint64_t guid)
 	g_topology_assert();
 
 	zgp = g_new_geomf(&zfs_vdev_class, "zfs::vdev::taste");
-	/* This orphan function should be never called. */
 	zgp->orphan = vdev_geom_taste_orphan;
 	zcp = g_new_consumer(zgp);
 
@@ -446,6 +450,9 @@ vdev_geom_open(vdev_t *vd, uint64_t *psize, uint64_t *ashift)
 		}
 	}
 
+	/* Clear the TLS now that tasting is done */
+	VERIFY(tsd_set(zfs_geom_probe_vdev, NULL) == 0);
+
 	if (cp == NULL) {
 		ZFS_LOG(1, "Provider %s not found.", vd->vdev_path);
 		error = ENOENT;
@@ -494,6 +501,9 @@ vdev_geom_open(vdev_t *vd, uint64_t *psize, uint64_t *ashift)
 	 * Determine the device's minimum transfer size.
 	 */
 	*ashift = highbit(MAX(pp->sectorsize, SPA_MINBLOCKSIZE)) - 1;
+
+	/* Set the TLS to indicate downstack that we should not access zvols*/
+	VERIFY(tsd_set(zfs_geom_probe_vdev, vd) == 0);
 
 	/*
 	 * Clear the nowritecache bit, so that on a vdev_reopen() we will

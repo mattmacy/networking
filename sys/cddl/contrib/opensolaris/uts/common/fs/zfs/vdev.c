@@ -855,7 +855,7 @@ vdev_metaslab_init(vdev_t *vd, uint64_t txg)
 			uint64_t object = 0;
 			error = dmu_read(mos, vd->vdev_ms_array,
 			    m * sizeof (uint64_t), sizeof (uint64_t), &object,
-			    DMU_READ_PREFETCH);
+			    DMU_CTX_FLAG_PREFETCH);
 			if (error)
 				return (error);
 			if (object != 0) {

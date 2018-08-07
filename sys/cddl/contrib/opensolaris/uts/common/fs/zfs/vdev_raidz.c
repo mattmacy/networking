@@ -435,18 +435,36 @@ vdev_raidz_map_alloc(zio_t *zio, uint64_t unit_shift, uint64_t dcols,
     uint64_t nparity)
 {
 	raidz_map_t *rm;
+	/* The starting RAIDZ (parent) vdev sector of the block. */
 	uint64_t b = zio->io_offset >> unit_shift;
 	uint64_t s = zio->io_size >> unit_shift;
+	/* The first column for this stripe. */
 	uint64_t f = b % dcols;
 	uint64_t o = (b / dcols) << unit_shift;
 	uint64_t q, r, c, bc, col, acols, scols, coff, devidx, asize, tot;
 
-	q = s / (dcols - nparity);
-	r = s - q * (dcols - nparity);
-	bc = (r == 0 ? 0 : r + nparity);
+	/*
+	 * The number of sectors for this stripe on all but the "remnant"
+ 	 * child vdev.
+	 */
+ 	q = s / (dcols - nparity);
+
+	/*
+	 * The number of "remnant" sectors in this I/O.  This will add a 
+	 * sector to some, but not all, child vdevs.
+	 */
+ 	r = s - q * (dcols - nparity);
+ 
+	/* The number of "bonus columns" - those which contain remnant data. */
+ 	bc = (r == 0 ? 0 : r + nparity);
+
+	/* The total number of sectors associated with this I/O. */
 	tot = s + nparity * (q + (r == 0 ? 0 : 1));
 
 	if (q == 0) {
+		/*
+		 * Our I/O request doesn't span all child vdevs.
+		 */	
 		acols = bc;
 		scols = MIN(dcols, roundup(bc, nparity + 1));
 	} else {

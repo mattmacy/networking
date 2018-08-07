@@ -108,6 +108,9 @@ typedef struct dsl_dataset_phys {
 } dsl_dataset_phys_t;
 
 typedef struct dsl_dataset {
+	/** Dbuf user eviction data for this instance. */
+	dmu_buf_user_t db_evict;
+
 	/* Immutable: */
 	struct dsl_dir *ds_dir;
 	dsl_dataset_phys_t *ds_phys;

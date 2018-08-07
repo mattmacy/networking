@@ -63,6 +63,9 @@ struct taskqueue {
 	int			tq_spin;
 	int			tq_flags;
 	int			tq_callouts;
+
+	taskqueue_callback_fn	tq_callbacks[TASKQUEUE_CALLBACK_TYPE_MAX];
+	void			*tq_cb_contexts[TASKQUEUE_CALLBACK_TYPE_MAX];
 };
 
 #define	TQ_FLAGS_ACTIVE		(1 << 0)
@@ -85,6 +88,13 @@ struct taskqueue {
 			mtx_unlock_spin(&(tq)->tq_mutex);		\
 		else							\
 			mtx_unlock(&(tq)->tq_mutex);			\
+	} while (0)
+
+#define	TASKQUEUE_RUN_CALLBACK(tq, cb_type)				\
+	do {			      					\
+		if ((tq)->tq_callbacks[cb_type] != NULL)		\
+			(tq)->tq_callbacks[cb_type](			\
+			    (tq)->tq_cb_contexts[cb_type]);		\
 	} while (0)
 
 void
@@ -137,6 +147,19 @@ taskqueue_create(const char *name, int mflags,
 			MTX_DEF, "taskqueue");
 }
 
+void
+taskqueue_set_callback(struct taskqueue *queue,
+    enum taskqueue_callback_type cb_type, taskqueue_callback_fn callback,
+    void *context)
+{
+
+	if (cb_type >= TASKQUEUE_CALLBACK_TYPE_MAX)
+		panic("Newer taskqueue consumer using old taskqueue API");
+
+	queue->tq_callbacks[cb_type] = callback;
+	queue->tq_cb_contexts[cb_type] = context;
+}
+
 /*
  * Signal a taskqueue thread to terminate.
  */
@@ -165,7 +188,7 @@ taskqueue_free(struct taskqueue *queue)
 }
 
 static int
-taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task)
+taskqueue_enqueue_locked(struct taskqueue *queue, struct task *queued_task)
 {
 	struct task *ins;
 	struct task *prev;
@@ -173,9 +196,9 @@ taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task)
 	/*
 	 * Count multiple enqueues.
 	 */
-	if (task->ta_pending) {
-		if (task->ta_pending < USHRT_MAX)
-			task->ta_pending++;
+	if (queued_task->ta_pending) {
+		if (queued_task->ta_pending < USHRT_MAX)
+			queued_task->ta_pending++;
 		return (0);
 	}
 
@@ -183,22 +206,24 @@ taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task)
 	 * Optimise the case when all tasks have the same priority.
 	 */
 	prev = STAILQ_LAST(&queue->tq_queue, task, ta_link);
-	if (!prev || prev->ta_priority >= task->ta_priority) {
-		STAILQ_INSERT_TAIL(&queue->tq_queue, task, ta_link);
+	if (!prev || prev->ta_priority >= queued_task->ta_priority) {
+		STAILQ_INSERT_TAIL(&queue->tq_queue, queued_task, ta_link);
 	} else {
 		prev = NULL;
 		for (ins = STAILQ_FIRST(&queue->tq_queue); ins;
 		     prev = ins, ins = STAILQ_NEXT(ins, ta_link))
-			if (ins->ta_priority < task->ta_priority)
+			if (ins->ta_priority < queued_task->ta_priority)
 				break;
 
 		if (prev)
-			STAILQ_INSERT_AFTER(&queue->tq_queue, prev, task, ta_link);
+			STAILQ_INSERT_AFTER(&queue->tq_queue, prev, queued_task,
+			    ta_link);
 		else
-			STAILQ_INSERT_HEAD(&queue->tq_queue, task, ta_link);
+			STAILQ_INSERT_HEAD(&queue->tq_queue, queued_task,
+			    ta_link);
 	}
 
-	task->ta_pending = 1;
+	queued_task->ta_pending = 1;
 	if ((queue->tq_flags & TQ_FLAGS_BLOCKED) == 0)
 		queue->tq_enqueue(queue->tq_context);
 	else
@@ -492,7 +517,9 @@ taskqueue_thread_loop(void *arg)
 
 	tqp = arg;
 	tq = *tqp;
+	TASKQUEUE_RUN_CALLBACK(tq, TASKQUEUE_CALLBACK_TYPE_INIT);
 	TQ_LOCK(tq);
+
 	while ((tq->tq_flags & TQ_FLAGS_ACTIVE) != 0) {
 		taskqueue_run_locked(tq);
 		/*
@@ -506,10 +533,20 @@ taskqueue_thread_loop(void *arg)
 	}
 	taskqueue_run_locked(tq);
 
+	/*
+	 * This thread is on its way out, so just drop the lock temporarily 
+	 * in order to call the shutdown callback.  This allows the callback
+	 * to look at the taskqueue, even just before it dies.
+	 */
+	TQ_UNLOCK(tq);
+	TASKQUEUE_RUN_CALLBACK(tq, TASKQUEUE_CALLBACK_TYPE_SHUTDOWN);
+	TQ_LOCK(tq);
+
 	/* rendezvous with thread that asked us to terminate */
 	tq->tq_tcount--;
 	wakeup_one(tq->tq_threads);
 	TQ_UNLOCK(tq);
+
 	kthread_exit();
 }
 

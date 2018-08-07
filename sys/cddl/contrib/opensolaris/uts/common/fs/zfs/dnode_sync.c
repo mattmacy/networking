@@ -164,15 +164,19 @@ free_verify(dmu_buf_impl_t *db, uint64_t start, uint64_t end, dmu_tx_t *tx)
 
 		rw_enter(&dn->dn_struct_rwlock, RW_READER);
 		err = dbuf_hold_impl(dn, db->db_level-1,
-		    (db->db_blkid << epbs) + i, TRUE, FTAG, &child);
+		    (db->db_blkid << epbs) + i, TRUE, FTAG, &child,
+		    /*buf_set*/NULL);
 		rw_exit(&dn->dn_struct_rwlock);
 		if (err == ENOENT)
 			continue;
 		ASSERT(err == 0);
 		ASSERT(child->db_level == 0);
-		dr = child->db_last_dirty;
-		while (dr && dr->dr_txg > txg)
-			dr = dr->dr_next;
+
+		for (dr = list_head(&child->db_dirty_records);
+		    dr != NULL && dr->dr_txg > txg;
+		    dr = list_next(&child->db_dirty_records, dr))
+			;
+
 		ASSERT(dr == NULL || dr->dr_txg == txg);
 
 		/* data_old better be zeroed */
@@ -194,7 +198,7 @@ free_verify(dmu_buf_impl_t *db, uint64_t start, uint64_t end, dmu_tx_t *tx)
 		mutex_enter(&child->db_mtx);
 		buf = child->db.db_data;
 		if (buf != NULL && child->db_state != DB_FILL &&
-		    child->db_last_dirty == NULL) {
+		    list_is_empty(&child->db_dirty_records)) {
 			for (j = 0; j < child->db.db_size >> 3; j++) {
 				if (buf[j] != 0) {
 					panic("freed data not zero: "
@@ -262,7 +266,8 @@ free_children(dmu_buf_impl_t *db, uint64_t blkid, uint64_t nblks, int trunc,
 		FREE_VERIFY(db, start, end, tx);
 		blocks_freed = free_blocks(dn, bp, end-start+1, tx);
 		arc_buf_freeze(db->db_buf);
-		ASSERT(all || blocks_freed == 0 || db->db_last_dirty);
+		ASSERT(all || blocks_freed == 0 ||
+		    !list_is_empty(&db->db_dirty_records));
 		DB_DNODE_EXIT(db);
 		return (all ? ALL : blocks_freed);
 	}
@@ -271,7 +276,8 @@ free_children(dmu_buf_impl_t *db, uint64_t blkid, uint64_t nblks, int trunc,
 		if (BP_IS_HOLE(bp))
 			continue;
 		rw_enter(&dn->dn_struct_rwlock, RW_READER);
-		err = dbuf_hold_impl(dn, db->db_level-1, i, TRUE, FTAG, &subdb);
+		err = dbuf_hold_impl(dn, db->db_level-1, i, TRUE, FTAG, &subdb,
+		    /*buf_set*/NULL);
 		ASSERT3U(err, ==, 0);
 		rw_exit(&dn->dn_struct_rwlock);
 
@@ -295,7 +301,8 @@ free_children(dmu_buf_impl_t *db, uint64_t blkid, uint64_t nblks, int trunc,
 		ASSERT3U(bp->blk_birth, ==, 0);
 	}
 #endif
-	ASSERT(all || blocks_freed == 0 || db->db_last_dirty);
+	ASSERT(all || blocks_freed == 0 ||
+	    !list_is_empty(&db->db_dirty_records));
 	return (all ? ALL : blocks_freed);
 }
 
@@ -347,7 +354,8 @@ dnode_sync_free_range(dnode_t *dn, uint64_t blkid, uint64_t nblks, dmu_tx_t *tx)
 		if (BP_IS_HOLE(bp))
 			continue;
 		rw_enter(&dn->dn_struct_rwlock, RW_READER);
-		err = dbuf_hold_impl(dn, dnlevel-1, i, TRUE, FTAG, &db);
+		err = dbuf_hold_impl(dn, dnlevel-1, i, TRUE, FTAG, &db,
+		    /*buf_set*/NULL);
 		ASSERT3U(err, ==, 0);
 		rw_exit(&dn->dn_struct_rwlock);
 
@@ -375,6 +383,9 @@ dnode_evict_dbufs(dnode_t *dn)
 {
 	int progress;
 	int pass = 0;
+	list_t evict_list;
+
+	dmu_buf_create_user_evict_list(&evict_list);
 
 	do {
 		dmu_buf_impl_t *db, marker;
@@ -400,10 +411,13 @@ dnode_evict_dbufs(dnode_t *dn)
 				mutex_exit(&db->db_mtx);
 			} else if (refcount_is_zero(&db->db_holds)) {
 				progress = TRUE;
-				dbuf_clear(db); /* exits db_mtx for us */
+				dbuf_clear(db, &evict_list);
 			} else {
 				mutex_exit(&db->db_mtx);
 			}
+			/* Make sure dbuf_clear exits db_mtx for us. */
+			ASSERT(MUTEX_NOT_HELD(&db->db_mtx));
+			dmu_buf_process_user_evicts(&evict_list);
 
 		}
 		list_remove(&dn->dn_dbufs, &marker);
@@ -424,10 +438,11 @@ dnode_evict_dbufs(dnode_t *dn)
 	rw_enter(&dn->dn_struct_rwlock, RW_WRITER);
 	if (dn->dn_bonus && refcount_is_zero(&dn->dn_bonus->db_holds)) {
 		mutex_enter(&dn->dn_bonus->db_mtx);
-		dbuf_evict(dn->dn_bonus);
+		dbuf_evict(dn->dn_bonus, &evict_list);
 		dn->dn_bonus = NULL;
 	}
 	rw_exit(&dn->dn_struct_rwlock);
+	dmu_buf_destroy_user_evict_list(&evict_list);
 }
 
 static void
@@ -445,8 +460,9 @@ dnode_undirty_dbufs(list_t *list)
 		mutex_enter(&db->db_mtx);
 		/* XXX - use dbuf_undirty()? */
 		list_remove(list, dr);
-		ASSERT(db->db_last_dirty == dr);
-		db->db_last_dirty = NULL;
+		ASSERT(list_head(&db->db_dirty_records) == dr);
+		list_remove_head(&db->db_dirty_records);
+		dbuf_dirty_record_cleanup_ranges(dr);
 		db->db_dirtycnt -= 1;
 		if (db->db_level == 0) {
 			ASSERT(db->db_blkid == DMU_BONUS_BLKID ||

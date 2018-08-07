@@ -49,7 +49,6 @@
 
 int fzap_default_block_shift = 14; /* 16k blocksize */
 
-static void zap_leaf_pageout(dmu_buf_t *db, void *vl);
 static uint64_t zap_allocate_blocks(zap_t *zap, int nblocks);
 
 
@@ -79,8 +78,10 @@ fzap_upgrade(zap_t *zap, dmu_tx_t *tx, zap_flags_t flags)
 	ASSERT(RW_WRITE_HELD(&zap->zap_rwlock));
 	zap->zap_ismicro = FALSE;
 
-	(void) dmu_buf_update_user(zap->zap_dbuf, zap, zap,
-	    &zap->zap_f.zap_phys, zap_evict);
+	dmu_buf_init_user(&zap->db_evict, zap_evict,
+	    (void **)&zap->zap_f.zap_phys);
+	(void) dmu_buf_update_user(zap->zap_dbuf, &zap->db_evict,
+	    &zap->db_evict);
 
 	mutex_init(&zap->zap_f.zap_num_entries_mtx, 0, 0, 0);
 	zap->zap_f.zap_block_shift = highbit(zap->zap_dbuf->db_size) - 1;
@@ -386,10 +387,19 @@ zap_allocate_blocks(zap_t *zap, int nblocks)
 	return (newblk);
 }
 
+static void
+zap_leaf_pageout(dmu_buf_user_t *dbu)
+{
+	zap_leaf_t *l = (zap_leaf_t *)dbu;
+
+	rw_destroy(&l->l_rwlock);
+	kmem_free(l, sizeof (zap_leaf_t));
+}
+
 static zap_leaf_t *
 zap_create_leaf(zap_t *zap, dmu_tx_t *tx)
 {
-	void *winner;
+	zap_leaf_t *winner;
 	zap_leaf_t *l = kmem_alloc(sizeof (zap_leaf_t), KM_SLEEP);
 
 	ASSERT(RW_WRITE_HELD(&zap->zap_rwlock));
@@ -403,7 +413,8 @@ zap_create_leaf(zap_t *zap, dmu_tx_t *tx)
 	VERIFY(0 == dmu_buf_hold(zap->zap_objset, zap->zap_object,
 	    l->l_blkid << FZAP_BLOCK_SHIFT(zap), NULL, &l->l_dbuf,
 	    DMU_READ_NO_PREFETCH));
-	winner = dmu_buf_set_user(l->l_dbuf, l, &l->l_phys, zap_leaf_pageout);
+	dmu_buf_init_user(&l->db_evict, zap_leaf_pageout, (void **)&l->l_phys);
+	winner = (zap_leaf_t *)dmu_buf_set_user(l->l_dbuf, &l->db_evict);
 	ASSERT(winner == NULL);
 	dmu_buf_will_dirty(l->l_dbuf, tx);
 
@@ -435,16 +446,6 @@ zap_put_leaf(zap_leaf_t *l)
 	dmu_buf_rele(l->l_dbuf, NULL);
 }
 
-_NOTE(ARGSUSED(0))
-static void
-zap_leaf_pageout(dmu_buf_t *db, void *vl)
-{
-	zap_leaf_t *l = vl;
-
-	rw_destroy(&l->l_rwlock);
-	kmem_free(l, sizeof (zap_leaf_t));
-}
-
 static zap_leaf_t *
 zap_open_leaf(uint64_t blkid, dmu_buf_t *db)
 {
@@ -460,12 +461,13 @@ zap_open_leaf(uint64_t blkid, dmu_buf_t *db)
 	l->l_dbuf = db;
 	l->l_phys = NULL;
 
-	winner = dmu_buf_set_user(db, l, &l->l_phys, zap_leaf_pageout);
+	dmu_buf_init_user(&l->db_evict, zap_leaf_pageout, (void **)&l->l_phys);
+	winner = (zap_leaf_t *)dmu_buf_set_user(db, &l->db_evict);
 
 	rw_exit(&l->l_rwlock);
 	if (winner != NULL) {
 		/* someone else set it first */
-		zap_leaf_pageout(NULL, l);
+		zap_leaf_pageout(&l->db_evict);
 		l = winner;
 	}
 
@@ -514,7 +516,7 @@ zap_get_leaf_byblk(zap_t *zap, uint64_t blkid, dmu_tx_t *tx, krw_t lt,
 	ASSERT3U(db->db_size, ==, 1 << bs);
 	ASSERT(blkid != 0);
 
-	l = dmu_buf_get_user(db);
+	l = (zap_leaf_t *)dmu_buf_get_user(db);
 
 	if (l == NULL)
 		l = zap_open_leaf(blkid, db);

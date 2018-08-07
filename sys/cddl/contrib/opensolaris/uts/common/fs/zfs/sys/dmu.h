@@ -21,6 +21,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  */
 /*
  * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
@@ -40,6 +41,7 @@
  * dmu_spa.h.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/cred.h>
@@ -178,8 +180,8 @@ void zfs_znode_byteswap(void *buf, size_t size);
 /*
  * artificial blkids for bonus buffer and spill blocks
  */
-#define	DMU_BONUS_BLKID		(-1ULL)
-#define	DMU_SPILL_BLKID		(-2ULL)
+#define	DMU_BONUS_BLKID		(ULLONG_MAX)
+#define	DMU_SPILL_BLKID		(ULLONG_MAX - 1)
 /*
  * Public routines to create, destroy, open, and close objsets.
  */
@@ -214,7 +216,223 @@ typedef struct dmu_buf {
 	void *db_data;			/* data in buffer */
 } dmu_buf_t;
 
-typedef void dmu_buf_evict_func_t(struct dmu_buf *db, void *user_ptr);
+/**
+ * \brief These structures are for DMU consumers that want async
+ * callbacks.
+ */
+struct dmu_context;
+struct dmu_buf_set;
+struct zio;
+typedef void (*dmu_context_callback_t)(struct dmu_context *);
+typedef void (*dmu_buf_set_callback_t)(struct dmu_buf_set *);
+typedef void (*dmu_buf_transfer_callback_t)(struct dmu_buf_set *, dmu_buf_t *,
+    uint64_t, uint64_t);
+
+typedef struct dmu_context {
+
+	/** The primary data associated with this context. */
+	uint64_t size;		/**< Requested total I/O size. */
+	uint64_t resid;		/**< Remaining bytes to process. */
+	uint64_t dn_start;	/**< Starting block offset into the dnode. */
+	uint64_t dn_offset;	/**< Current block offset. */
+	dmu_tx_t *tx;		/**< Caller's transaction, if specified. */
+	void *data_buf;		/**< UIO or char pointer */
+
+	/** The dnode held in association with this context. */
+	struct dnode *dn;
+	objset_t *os;		/**< Object set associated with the dnode. */
+	uint64_t object;	/**< Object ID associated with the dnode. */
+
+	/** Number of buffer sets left to complete. */
+	int holds;
+
+	/** The tag used for this context. */
+	void *tag;
+
+	/** The callback to call once an I/O completes entirely. */
+	dmu_context_callback_t context_cb;
+
+	/** The callback to call to transfer a buffer set. */
+	dmu_buf_set_callback_t buf_set_transfer_cb;
+
+	/** The callback to call to transfer a buffer. */
+	dmu_buf_transfer_callback_t buf_transfer_cb;
+
+	/**
+	 * The callback to call to move a specific block's contents.  This
+	 * is normally only set by dmu_context_init().
+	 */
+	dmu_buf_transfer_callback_t move_cb;
+
+	/** Total number of bytes transferred. */
+	uint64_t completed_size;
+
+	/** Flags for this DMU context. */
+	uint32_t flags;
+#define	DMU_CTX_FLAG_READ	(1 << 1)
+#define	DMU_CTX_FLAG_UIO	(1 << 2)
+#define	DMU_CTX_FLAG_PREFETCH	(1 << 3)
+#define	DMU_CTX_FLAG_NO_HOLD	(1 << 4)
+#define	DMU_CTX_FLAG_SUN_PAGES	(1 << 5)
+#define	DMU_CTX_FLAG_NOFILL	(1 << 6)
+#define	DMU_CTX_FLAG_ASYNC	(1 << 7)
+
+#define	DMU_CTX_WRITER_FLAGS	(DMU_CTX_FLAG_SUN_PAGES|DMU_CTX_FLAG_NOFILL)
+#define	DMU_CTX_READER_FLAGS	(DMU_CTX_FLAG_PREFETCH)
+
+#define	DMU_CTX_BUF_IS_CHAR(dmu_ctx) \
+	(((dmu_ctx)->flags & (DMU_CTX_FLAG_UIO|DMU_CTX_FLAG_SUN_PAGES)) == 0)
+
+	/** The number of errors that occurred. */
+	int err;
+
+} dmu_context_t;
+
+typedef struct dmu_buf_set {
+
+	/** The DMU context that this buffer set is associated with. */
+	dmu_context_t *dmu_ctx;
+
+	/** Number of dmu_bufs associated with this context. */
+	int count;
+
+	/** Length of dbp; only used to free the correct size. */
+	int dbp_length;
+
+	/** Number of dmu_bufs left to complete. */
+	int holds;
+
+	/** The starting offset, relative to the associated dnode. */
+	uint64_t dn_start;
+	/** The size of the I/O. */
+	uint64_t size;
+	/** The amount of data remaining to process for this buffer set. */
+	uint64_t resid;
+
+	/** For writes only, if the context doesn't have a transaction. */
+	dmu_tx_t *tx;
+#define	DMU_BUF_SET_TX(buf_set) \
+	((buf_set)->dmu_ctx->tx ? (buf_set)->dmu_ctx->tx : (buf_set)->tx)
+
+	/** The number of errors that occurred. */
+	int err;
+
+	/** The ZIO associated with this context. */
+	struct zio *zio;
+
+	/** The set of buffers themselves. */
+	struct dmu_buf *dbp[0];
+
+} dmu_buf_set_t;
+
+void dmu_buf_set_rele(dmu_buf_set_t *buf_set, boolean_t err);
+int dmu_context_init(dmu_context_t *dmu_ctx, struct dnode *dn, objset_t *os,
+    uint64_t object, uint64_t offset, uint64_t size, void *data_buf, void *tag,
+    uint32_t flags);
+void dmu_context_seek(dmu_context_t *dmu_ctx, uint64_t offset, uint64_t size,
+    void *data_buf);
+void dmu_context_rele(dmu_context_t *dmu_ctx);
+void dmu_buf_set_transfer(dmu_buf_set_t *buf_set);
+void dmu_buf_set_transfer_write(dmu_buf_set_t *buf_set);
+
+/* Optional context setters; use after calling dmu_context_init*(). */
+static inline void
+dmu_context_set_context_cb(dmu_context_t *ctx, dmu_context_callback_t cb)
+{
+	ctx->context_cb = cb;
+}
+static inline void
+dmu_context_set_buf_set_transfer_cb(dmu_context_t *ctx,
+    dmu_buf_set_callback_t cb)
+{
+	ctx->buf_set_transfer_cb = cb;
+}
+static inline void
+dmu_context_set_buf_transfer_cb(dmu_context_t *ctx,
+    dmu_buf_transfer_callback_t cb)
+{
+	ctx->buf_transfer_cb = cb;
+}
+static inline void
+dmu_context_set_dmu_tx(dmu_context_t *ctx, dmu_tx_t *tx)
+{
+	ASSERT(tx != NULL && ((ctx->flags & DMU_CTX_FLAG_READ) == 0));
+	dmu_context_set_buf_set_transfer_cb(ctx, dmu_buf_set_transfer);
+	ctx->tx = tx;
+}
+
+/* DMU thread context handlers. */
+int dmu_thread_context_create(void);
+void dmu_thread_context_process(void);
+void dmu_thread_context_destroy(void *);
+
+struct dmu_buf_user;
+
+typedef void dmu_buf_evict_func_t(struct dmu_buf_user *);
+
+/**
+ * The DMU buffer user eviction data container.  This is used to allow users
+ * of a dbuf to register with the dbuf layer that they wish to be notified
+ * when the backing store for a dbuf they're using has been evicted.  The
+ * backing store is an ARC buffer that corresponds to the transaction group
+ * that the user is currently operating in.
+ *
+ * Whenever a dirty record's ARC buffer is removed, the context in which the
+ * removal occurs must queue an user eviction.  This queue must then be
+ * processed while not holding any dbuf locks.  In this way, the user can
+ * perform any work needed in their eviction function.
+ *
+ * Implementation Note: Users are expected to allocate and free space for
+ * this structure.  Consequently, if any additional context is needed, another
+ * struct that includes this one at the start should be passed in.
+ */
+typedef struct dmu_buf_user {
+	/**
+	 * This instance's link in the eviction queue.  Set when the buffer
+	 * has evicted and the callback needs to be called.
+	 */
+	list_node_t evict_queue_link;
+	/** This instance's eviction function pointer. */
+	dmu_buf_evict_func_t *evict_func;
+	/** Location that db_data, when updated, should be copied to. */
+	void **user_data_ptr_ptr;
+} dmu_buf_user_t;
+
+/** Initialization routine for dmu_buf_user_t instances. */
+static inline void
+dmu_buf_init_user(dmu_buf_user_t *dbu, dmu_buf_evict_func_t *evict_func,
+    void **user_data_ptr_ptr)
+{
+	list_link_init(&dbu->evict_queue_link);
+	dbu->evict_func = evict_func;
+	dbu->user_data_ptr_ptr = user_data_ptr_ptr;
+}
+
+/** DMU buffer user eviction routines. */
+static inline void
+dmu_buf_create_user_evict_list(list_t *evict_list_p)
+{
+	list_create(evict_list_p, sizeof(dmu_buf_user_t),
+	    offsetof(dmu_buf_user_t, evict_queue_link));
+}
+static inline void
+dmu_buf_process_user_evicts(list_t *evict_list_p)
+{
+	dmu_buf_user_t *dbu, *next;
+
+	for (dbu = (dmu_buf_user_t *)list_head(evict_list_p); dbu != NULL;
+	    dbu = next) {
+		next = (dmu_buf_user_t *)list_next(evict_list_p, dbu);
+		list_remove(evict_list_p, dbu);
+		dbu->evict_func(dbu);
+	}
+}
+static inline void
+dmu_buf_destroy_user_evict_list(list_t *evict_list_p)
+{
+	dmu_buf_process_user_evicts(evict_list_p);
+	list_destroy(evict_list_p);
+}
 
 /*
  * The names of zap entries in the DIRECTORY_OBJECT of the MOS.
@@ -407,23 +625,21 @@ void dmu_buf_rele_array(dmu_buf_t **, int numbufs, void *tag);
  * dmu_evict_user() will call the pageout func for all buffers in a
  * objset with a given pageout func.
  */
-void *dmu_buf_set_user(dmu_buf_t *db, void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *pageout_func);
+dmu_buf_user_t *dmu_buf_set_user(dmu_buf_t *db, dmu_buf_user_t *user);
+
 /*
  * set_user_ie is the same as set_user, but request immediate eviction
  * when hold count goes to zero.
  */
-void *dmu_buf_set_user_ie(dmu_buf_t *db, void *user_ptr,
-    void *user_data_ptr_ptr, dmu_buf_evict_func_t *pageout_func);
-void *dmu_buf_update_user(dmu_buf_t *db_fake, void *old_user_ptr,
-    void *user_ptr, void *user_data_ptr_ptr,
-    dmu_buf_evict_func_t *pageout_func);
+dmu_buf_user_t *dmu_buf_set_user_ie(dmu_buf_t *db, dmu_buf_user_t *user);
+dmu_buf_user_t *dmu_buf_update_user(dmu_buf_t *db, dmu_buf_user_t *old_user,
+    dmu_buf_user_t *new_user);
 void dmu_evict_user(objset_t *os, dmu_buf_evict_func_t *func);
 
 /*
  * Returns the user_ptr set with dmu_buf_set_user(), or NULL if not set.
  */
-void *dmu_buf_get_user(dmu_buf_t *db);
+dmu_buf_user_t *dmu_buf_get_user(dmu_buf_t *db);
 
 /*
  * Indicate that you are going to modify the buffer's data (db_data).
@@ -433,7 +649,9 @@ void *dmu_buf_get_user(dmu_buf_t *db);
  * (ie. you've called dmu_tx_hold_object(tx, db->db_object)).
  */
 void dmu_buf_will_dirty(dmu_buf_t *db, dmu_tx_t *tx);
-
+void dmu_buf_will_dirty_range(dmu_buf_t *db, dmu_tx_t *tx, int offset,
+    int size);
+ 
 /*
  * Tells if the given dbuf is freeable.
  */
@@ -504,19 +722,23 @@ int dmu_free_long_range(objset_t *os, uint64_t object, uint64_t offset,
 	uint64_t size);
 int dmu_free_object(objset_t *os, uint64_t object);
 
+void dmu_buf_cb_process(void);
+
 /*
  * Convenience functions.
  *
  * Canfail routines will return 0 on success, or an errno if there is a
  * nonrecoverable I/O error.
  */
+// XXX REMOVE THESE IN FAVOR OF DMU_CTX_FLAG_PREFETCH
 #define	DMU_READ_PREFETCH	0 /* prefetch */
 #define	DMU_READ_NO_PREFETCH	1 /* don't prefetch */
 int dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	void *buf, uint32_t flags);
+int dmu_issue(dmu_context_t *dmu_ctx);
 void dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	const void *buf, dmu_tx_t *tx);
-void dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
+int dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dmu_tx_t *tx);
 int dmu_read_uio(objset_t *os, uint64_t object, struct uio *uio, uint64_t size);
 int dmu_write_uio(objset_t *os, uint64_t object, struct uio *uio, uint64_t size,

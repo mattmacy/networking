@@ -18,8 +18,12 @@ CFLAGS+= -I${.CURDIR}/../../contrib/opensolaris/head
 CFLAGS+= -I${.CURDIR}/../../lib/libumem
 
 DPADD=	${LIBM} ${LIBNVPAIR} ${LIBUMEM} ${LIBZPOOL} \
-	${LIBPTHREAD} ${LIBAVL}
-LDADD=	-lm -lnvpair -lumem -lzpool -lpthread -lavl
+	${LIBPTHREAD} ${LIBZ} ${LIBAVL}
+LDADD=	-lm -lnvpair -lumem -lzpool -lpthread -lz -lavl -luutil
+
+# Since there are many asserts in this program, it makes no sense to compile
+# it without debugging.
+CFLAGS+=-g -O0
 
 CSTD=	c99
 

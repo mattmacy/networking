@@ -20,6 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011-2012, Spectra Logic Corporation. All rights reserved.
  */
 
 #ifndef	_SYS_DNODE_H
@@ -88,6 +89,10 @@ extern "C" {
 #define	DNODES_PER_BLOCK	(1ULL << DNODES_PER_BLOCK_SHIFT)
 #define	DNODES_PER_LEVEL_SHIFT	(DN_MAX_INDBLKSHIFT - SPA_BLKPTRSHIFT)
 #define	DNODES_PER_LEVEL	(1ULL << DNODES_PER_LEVEL_SHIFT)
+
+/* Next level for a given dnode and txg */
+#define	DN_NEXT_LEVEL(dn, txg) \
+	(dn)->dn_next_nlevels[(txg) & TXG_MASK]
 
 /* The +2 here is a cheesy way to round up */
 #define	DN_MAX_LEVELS	(2 + ((DN_MAX_OFFSET_SHIFT - SPA_MINBLOCKSHIFT) / \
@@ -241,6 +246,8 @@ typedef struct dnode_handle {
 } dnode_handle_t;
 
 typedef struct dnode_children {
+	/** Dbuf user eviction data for this instance. */
+	dmu_buf_user_t db_evict;
 	size_t dnc_count;		/* number of children */
 	dnode_handle_t dnc_children[1];	/* sized dynamically */
 } dnode_children_t;
@@ -266,6 +273,7 @@ int dnode_hold_impl(struct objset *dd, uint64_t object, int flag,
 boolean_t dnode_add_ref(dnode_t *dn, void *ref);
 void dnode_rele(dnode_t *dn, void *ref);
 void dnode_setdirty(dnode_t *dn, dmu_tx_t *tx);
+void dnode_set_dirtyctx(dnode_t *dn, dmu_tx_t *tx, void *tag);
 void dnode_sync(dnode_t *dn, dmu_tx_t *tx);
 void dnode_allocate(dnode_t *dn, dmu_object_type_t ot, int blocksize, int ibs,
     dmu_object_type_t bonustype, int bonuslen, dmu_tx_t *tx);
@@ -289,6 +297,12 @@ void dnode_fini(void);
 int dnode_next_offset(dnode_t *dn, int flags, uint64_t *off,
     int minlvl, uint64_t blkfill, uint64_t txg);
 void dnode_evict_dbufs(dnode_t *dn);
+
+#define	DNODE_VERIFY_DIRTYCTX(dn, tx)					\
+	ASSERT((dn)->dn_object == DMU_META_DNODE_OBJECT ||		\
+	    (dn)->dn_dirtyctx == DN_UNDIRTIED ||			\
+	    (dn)->dn_dirtyctx ==					\
+	    (dmu_tx_is_syncing(tx) ? DN_DIRTY_SYNC : DN_DIRTY_OPEN))
 
 #ifdef ZFS_DEBUG
 

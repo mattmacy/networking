@@ -20,7 +20,7 @@ CFLAGS+= -I${.CURDIR}/../../lib/libumem
 
 DPADD=	${LIBM} ${LIBNVPAIR} ${LIBUMEM} ${LIBZPOOL} \
 	${LIBPTHREAD} ${LIBZ} ${LIBAVL}
-LDADD=	-lm -lnvpair -lumem -lzpool -lpthread -lz -lavl
+LDADD=	-lm -lnvpair -lumem -lzpool -lpthread -lz -lavl -luutil
 
 CSTD=	c99
 

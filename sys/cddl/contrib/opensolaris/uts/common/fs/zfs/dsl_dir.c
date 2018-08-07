@@ -50,9 +50,9 @@ static void dsl_dir_set_reservation_sync(void *arg1, void *arg2, dmu_tx_t *tx);
 
 /* ARGSUSED */
 static void
-dsl_dir_evict(dmu_buf_t *db, void *arg)
+dsl_dir_evict(dmu_buf_user_t *dbu)
 {
-	dsl_dir_t *dd = arg;
+	dsl_dir_t *dd = (dsl_dir_t *)dbu;
 	dsl_pool_t *dp = dd->dd_pool;
 	int t;
 
@@ -90,7 +90,7 @@ dsl_dir_open_obj(dsl_pool_t *dp, uint64_t ddobj,
 	err = dmu_bonus_hold(dp->dp_meta_objset, ddobj, tag, &dbuf);
 	if (err)
 		return (err);
-	dd = dmu_buf_get_user(dbuf);
+	dd = (dsl_dir_t *)dmu_buf_get_user(dbuf);
 #ifdef ZFS_DEBUG
 	{
 		dmu_object_info_t doi;
@@ -159,8 +159,9 @@ dsl_dir_open_obj(dsl_pool_t *dp, uint64_t ddobj,
 			dmu_buf_rele(origin_bonus, FTAG);
 		}
 
-		winner = dmu_buf_set_user_ie(dbuf, dd, &dd->dd_phys,
-		    dsl_dir_evict);
+		dmu_buf_init_user(&dd->db_evict, dsl_dir_evict,
+		    (void **)&dd->dd_phys);
+		winner = (dsl_dir_t *)dmu_buf_set_user_ie(dbuf, &dd->db_evict);
 		if (winner) {
 			if (dd->dd_parent)
 				dsl_dir_close(dd->dd_parent, dd);

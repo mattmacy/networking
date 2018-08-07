@@ -412,7 +412,7 @@ update_pages(vnode_t *vp, int64_t start, int len, objset_t *os, uint64_t oid,
 				    va+off, tx);
 			} else {
 				(void) dmu_read(os, oid, start+off, nbytes,
-				    va+off, DMU_READ_PREFETCH);
+				    va+off, DMU_CTX_FLAG_PREFETCH);
 			}
 			zfs_unmap_page(sf);
 			VM_OBJECT_LOCK(obj);
@@ -464,7 +464,7 @@ mappedread_sf(vnode_t *vp, int nbytes, uio_t *uio)
 			VM_OBJECT_UNLOCK(obj);
 			va = zfs_map_page(pp, &sf);
 			error = dmu_read(os, zp->z_id, start, bytes, va,
-			    DMU_READ_PREFETCH);
+			    DMU_CTX_FLAG_PREFETCH);
 			if (bytes != PAGESIZE && error == 0)
 				bzero(va + bytes, PAGESIZE - bytes);
 			zfs_unmap_page(sf);
@@ -573,10 +573,11 @@ zfs_read(vnode_t *vp, uio_t *uio, int ioflag, cred_t *cr, caller_context_t *ct)
 	znode_t		*zp = VTOZ(vp);
 	zfsvfs_t	*zfsvfs = zp->z_zfsvfs;
 	objset_t	*os;
-	ssize_t		n, nbytes;
+	ssize_t		n;
 	int		error;
 	rl_t		*rl;
 	xuio_t		*xuio = NULL;
+	dmu_context_t	dmu_ctx;
 
 	ZFS_ENTER(zfsvfs);
 	ZFS_VERIFY_ZP(zp);
@@ -669,19 +670,27 @@ zfs_read(vnode_t *vp, uio_t *uio, int ioflag, cred_t *cr, caller_context_t *ct)
 	}
 #endif	/* sun */
 
+	error = dmu_context_init(&dmu_ctx, /*dnode*/NULL, os, zp->z_id,
+	    uio->uio_loffset, n, uio, FTAG,
+	    DMU_CTX_FLAG_READ|DMU_CTX_FLAG_UIO|DMU_CTX_FLAG_PREFETCH);
+	if (error)
+		goto out;
+
 	while (n > 0) {
-		nbytes = MIN(n, zfs_read_chunk_size -
+		ssize_t sz = MIN(n, zfs_read_chunk_size -
 		    P2PHASE(uio->uio_loffset, zfs_read_chunk_size));
 
 #ifdef __FreeBSD__
 		if (uio->uio_segflg == UIO_NOCOPY)
-			error = mappedread_sf(vp, nbytes, uio);
+			error = mappedread_sf(vp, sz, uio);
 		else
 #endif /* __FreeBSD__ */
 		if (vn_has_cached_data(vp))
-			error = mappedread(vp, nbytes, uio);
-		else
-			error = dmu_read_uio(os, zp->z_id, uio, nbytes);
+			error = mappedread(vp, sz, uio);
+		else {
+			dmu_context_seek(&dmu_ctx, uio->uio_loffset, sz, uio);
+			error = dmu_issue(&dmu_ctx);
+		}
 		if (error) {
 			/* convert checksum errors into IO errors */
 			if (error == ECKSUM)
@@ -689,8 +698,9 @@ zfs_read(vnode_t *vp, uio_t *uio, int ioflag, cred_t *cr, caller_context_t *ct)
 			break;
 		}
 
-		n -= nbytes;
+		n -= sz;
 	}
+	dmu_context_rele(&dmu_ctx);
 out:
 	zfs_range_unlock(rl);
 
@@ -1162,7 +1172,7 @@ zfs_get_data(void *arg, lr_write_t *lr, char *buf, zio_t *zio)
 			error = ENOENT;
 		} else {
 			error = dmu_read(os, object, offset, size, buf,
-			    DMU_READ_NO_PREFETCH);
+			    /*flags*/0);
 		}
 		ASSERT(error == 0 || error == ENOENT);
 	} else { /* indirect write */
@@ -4684,7 +4694,7 @@ zfs_fillpage(vnode_t *vp, u_offset_t off, struct seg *seg,
 		ASSERT3U(io_off, ==, cur_pp->p_offset);
 		va = zfs_map_page(cur_pp, S_WRITE);
 		err = dmu_read(os, zp->z_id, io_off, PAGESIZE, va,
-		    DMU_READ_PREFETCH);
+		    DMU_CTX_FLAG_PREFETCH);
 		zfs_unmap_page(cur_pp, va);
 		if (err) {
 			/* On error, toss the entire kluster */
@@ -5593,7 +5603,7 @@ zfs_getpages(struct vnode *vp, vm_page_t *m, int count, int reqpage)
 	VM_OBJECT_UNLOCK(object);
 	va = zfs_map_page(mreq, &sf);
 	error = dmu_read(os, zp->z_id, IDX_TO_OFF(mreq->pindex),
-	    size, va, DMU_READ_PREFETCH);
+	    size, va, DMU_CTX_FLAG_PREFETCH);
 	if (size != PAGE_SIZE)
 		bzero(va + size, PAGE_SIZE - size);
 	zfs_unmap_page(sf);

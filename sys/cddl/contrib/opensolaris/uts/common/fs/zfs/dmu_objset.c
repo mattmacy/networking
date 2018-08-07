@@ -1006,7 +1006,10 @@ dmu_objset_snapshot(char *fsname, char *snapname, char *tag,
 			dmu_objset_name(os, name);
 			strlcat(name, "@", sizeof(name));
 			strlcat(name, snapname, sizeof(name));
-			zvol_create_minors(name);
+			err = zvol_create_minors(name);
+			if (err)
+				printf("ZFS WARNING: Unable to create minors"
+				    " for snapshot %s\n", name);
 		}
 #endif
 #endif
@@ -1302,15 +1305,17 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 static void *
 dmu_objset_userquota_find_data(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
-	dbuf_dirty_record_t *dr, **drp;
+	dbuf_dirty_record_t *dr;
 	void *data;
 
 	if (db->db_dirtycnt == 0)
 		return (db->db.db_data);  /* Nothing is changing */
 
-	for (drp = &db->db_last_dirty; (dr = *drp) != NULL; drp = &dr->dr_next)
+	for (dr = list_head(&db->db_dirty_records); dr != NULL;
+	    dr = list_next(&db->db_dirty_records, dr)) {
 		if (dr->dr_txg == tx->tx_txg)
 			break;
+	}
 
 	if (dr == NULL) {
 		data = NULL;

@@ -2,6 +2,7 @@
 
 KMOD=	zfs
 
+CFLAGS += -Wno-error
 SRCS=	bus_if.h device_if.h vnode_if.h
 
 SUNW=	${.CURDIR}/../../cddl/contrib/opensolaris
@@ -84,12 +85,16 @@ CFLAGS+=-I${SUNW}/common/zfs
 CFLAGS+=-I${SUNW}/common
 CFLAGS+=-DBUILDING_ZFS
 
+
+
 .if ${MACHINE_ARCH} == "powerpc64"
 CFLAGS+=-mminimal-toc
 .endif
 
-#CFLAGS+=-DDEBUG=1
-#DEBUG_FLAGS=-g
+.ifdef WITH_ZFS_DEBUGGING
+CFLAGS+=-DDEBUG=1
+DEBUG_FLAGS?=-g
+.endif
 
 .include <bsd.kmod.mk>
 
