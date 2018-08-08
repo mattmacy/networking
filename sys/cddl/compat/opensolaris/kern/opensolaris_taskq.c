@@ -2,6 +2,8 @@
  * Copyright (c) 2009 Pawel Jakub Dawidek <pjd@FreeBSD.org>
  * All rights reserved.
  *
+ * Copyright (c) 2012 Spectra Logic Corporation.  All rights reserved.
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -69,9 +71,10 @@ system_taskq_fini(void *arg)
 }
 SYSUNINIT(system_taskq_fini, SI_SUB_CONFIGURE, SI_ORDER_ANY, system_taskq_fini, NULL);
 
-taskq_t *
-taskq_create(const char *name, int nthreads, pri_t pri, int minalloc __unused,
-    int maxalloc __unused, uint_t flags)
+static taskq_t *
+taskq_create_with_init(const char *name, int nthreads, pri_t pri,
+    int minalloc __unused, int maxalloc __unused, uint_t flags,
+    taskq_callback_fn ctor, taskq_callback_fn dtor)
 {
 	taskq_t *tq;
 
@@ -81,17 +84,34 @@ taskq_create(const char *name, int nthreads, pri_t pri, int minalloc __unused,
 	tq = kmem_alloc(sizeof(*tq), KM_SLEEP);
 	tq->tq_queue = taskqueue_create(name, M_WAITOK, taskqueue_thread_enqueue,
 	    &tq->tq_queue);
+	if (ctor != NULL)
+		taskqueue_set_callback(tq->tq_queue,
+		    TASKQUEUE_CALLBACK_TYPE_INIT, ctor, NULL);
+	if (dtor != NULL)
+		taskqueue_set_callback(tq->tq_queue,
+		    TASKQUEUE_CALLBACK_TYPE_SHUTDOWN, dtor, NULL);
 	(void) taskqueue_start_threads(&tq->tq_queue, nthreads, pri, "%s", name);
 
 	return ((taskq_t *)tq);
 }
 
 taskq_t *
-taskq_create_proc(const char *name, int nthreads, pri_t pri, int minalloc,
-    int maxalloc, proc_t *proc __unused, uint_t flags)
+taskq_create(const char *name, int nthreads, pri_t pri, int minalloc __unused,
+    int maxalloc __unused, uint_t flags)
 {
 
-	return (taskq_create(name, nthreads, pri, minalloc, maxalloc, flags));
+	return (taskq_create_with_init(name, nthreads, pri, minalloc, maxalloc,
+	    flags, NULL, NULL));
+}
+
+taskq_t *
+taskq_create_proc(const char *name, int nthreads, pri_t pri, int minalloc,
+    int maxalloc, proc_t *proc __unused, uint_t flags, taskq_callback_fn ctor,
+    taskq_callback_fn dtor)
+{
+
+	return (taskq_create_with_init(name, nthreads, pri, minalloc, maxalloc,
+	    flags, ctor, dtor));
 }
 
 void
