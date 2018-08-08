@@ -20,6 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  * Copyright (c) 2012, 2017 by Delphix. All rights reserved.
  * Copyright (c) 2013 by Saso Kiselkov. All rights reserved.
  */
@@ -65,7 +66,9 @@ typedef void arc_write_done_func_t(zio_t *zio, arc_buf_t *buf, void *priv);
 /* generic arc_done_func_t's which you can use */
 arc_read_done_func_t arc_bcopy_func;
 arc_read_done_func_t arc_getbuf_func;
+#define	ARC_CACHED_ONLY	(1 << 6)	/**< cache lookup only */
 
+	
 typedef enum arc_flags
 {
 	/*
@@ -133,6 +136,7 @@ struct arc_buf {
 	arc_buf_t		*b_next;
 	kmutex_t		b_evict_lock;
 	void			*b_data;
+	void                    *b_last_dbuf;
 	arc_buf_flags_t		b_flags;
 };
 
@@ -174,13 +178,21 @@ int arc_buf_size(arc_buf_t *buf);
 int arc_buf_lsize(arc_buf_t *buf);
 void arc_buf_access(arc_buf_t *buf);
 void arc_release(arc_buf_t *buf, void *tag);
+arc_buf_t *arc_buf_find_bp(spa_t *spa, blkptr_t *bp, void *priv);
 int arc_released(arc_buf_t *buf);
 void arc_buf_freeze(arc_buf_t *buf);
+boolean_t arc_buf_frozen(arc_buf_t *buf);
 void arc_buf_thaw(arc_buf_t *buf);
 #ifdef ZFS_DEBUG
 int arc_referenced(arc_buf_t *buf);
 #endif
 
+
+static inline void
+arc_discard_buf(arc_buf_t *buf, void *tag)
+{
+	arc_release(buf, tag);
+}
 int arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp,
     arc_read_done_func_t *done, void *priv, zio_priority_t priority,
     int flags, arc_flags_t *arc_flags, const zbookmark_phys_t *zb);

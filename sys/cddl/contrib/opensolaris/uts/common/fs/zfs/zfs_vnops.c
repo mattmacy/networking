@@ -533,7 +533,7 @@ update_pages(vnode_t *vp, int64_t start, int len, objset_t *os, uint64_t oid,
 
 			va = zfs_map_page(pp, &sf);
 			(void) dmu_read(os, oid, start+off, nbytes,
-			    va+off, DMU_READ_PREFETCH);;
+			    va+off, DMU_READ_PREFETCH);
 			zfs_unmap_page(sf);
 
 			zfs_vmobject_wlock(obj);
@@ -585,7 +585,7 @@ mappedread_sf(vnode_t *vp, int nbytes, uio_t *uio)
 			zfs_vmobject_wunlock(obj);
 			va = zfs_map_page(pp, &sf);
 			error = dmu_read(os, zp->z_id, start, bytes, va,
-			    DMU_READ_PREFETCH);
+			    DMU_CTX_FLAG_PREFETCH);
 			if (bytes != PAGESIZE && error == 0)
 				bzero(va + bytes, PAGESIZE - bytes);
 			zfs_unmap_page(sf);
@@ -701,13 +701,17 @@ zfs_read(vnode_t *vp, uio_t *uio, int ioflag, cred_t *cr, caller_context_t *ct)
 {
 	znode_t		*zp = VTOZ(vp);
 	zfsvfs_t	*zfsvfs = zp->z_zfsvfs;
-	ssize_t		n, nbytes;
+	objset_t	*os;
+	ssize_t		n;
 	int		error = 0;
 	rl_t		*rl;
 	xuio_t		*xuio = NULL;
+	dmu_context_t	dmu_ctx;
+
 
 	ZFS_ENTER(zfsvfs);
 	ZFS_VERIFY_ZP(zp);
+	os = zfsvfs->z_os;
 
 	if (zp->z_pflags & ZFS_AV_QUARANTINED) {
 		ZFS_EXIT(zfsvfs);
@@ -796,20 +800,26 @@ zfs_read(vnode_t *vp, uio_t *uio, int ioflag, cred_t *cr, caller_context_t *ct)
 	}
 #endif	/* illumos */
 
+	error = dmu_context_init(&dmu_ctx, /*dnode*/NULL, os, zp->z_id,
+	    uio->uio_loffset, n, uio, FTAG,
+	    DMU_CTX_FLAG_READ|DMU_CTX_FLAG_UIO|DMU_CTX_FLAG_PREFETCH);
+	if (error)
+		goto out;
+
 	while (n > 0) {
-		nbytes = MIN(n, zfs_read_chunk_size -
+		ssize_t sz = MIN(n, zfs_read_chunk_size -
 		    P2PHASE(uio->uio_loffset, zfs_read_chunk_size));
 
 #ifdef __FreeBSD__
 		if (uio->uio_segflg == UIO_NOCOPY)
-			error = mappedread_sf(vp, nbytes, uio);
+			error = mappedread_sf(vp, sz, uio);
 		else
 #endif /* __FreeBSD__ */
 		if (vn_has_cached_data(vp)) {
-			error = mappedread(vp, nbytes, uio);
+			error = mappedread(vp, sz, uio);
 		} else {
-			error = dmu_read_uio_dbuf(sa_get_db(zp->z_sa_hdl),
-			    uio, nbytes);
+			dmu_context_seek(&dmu_ctx, uio->uio_loffset, sz, uio);
+			error = dmu_issue(&dmu_ctx);
 		}
 		if (error) {
 			/* convert checksum errors into IO errors */
@@ -818,8 +828,9 @@ zfs_read(vnode_t *vp, uio_t *uio, int ioflag, cred_t *cr, caller_context_t *ct)
 			break;
 		}
 
-		n -= nbytes;
+		n -= sz;
 	}
+	dmu_context_rele(&dmu_ctx);
 out:
 	zfs_range_unlock(rl);
 
@@ -1324,7 +1335,7 @@ zfs_get_data(void *arg, lr_write_t *lr, char *buf, struct lwb *lwb, zio_t *zio)
 			error = SET_ERROR(ENOENT);
 		} else {
 			error = dmu_read(os, object, offset, size, buf,
-			    DMU_READ_NO_PREFETCH);
+			    /*flags*/0);
 		}
 		ASSERT(error == 0 || error == ENOENT);
 	} else { /* indirect write */
@@ -1357,7 +1368,7 @@ zfs_get_data(void *arg, lr_write_t *lr, char *buf, struct lwb *lwb, zio_t *zio)
 #endif
 		if (error == 0)
 			error = dmu_buf_hold(os, object, offset, zgd, &db,
-			    DMU_READ_NO_PREFETCH);
+			    DMU_CTX_FLAG_PREFETCH);
 
 		if (error == 0) {
 			blkptr_t *bp = &lr->lr_blkptr;

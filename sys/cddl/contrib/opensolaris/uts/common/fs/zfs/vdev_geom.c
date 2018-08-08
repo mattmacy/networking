@@ -81,6 +81,13 @@ static void vdev_geom_detach(struct g_consumer *cp, boolean_t open_for_read);
  */
 uint_t zfs_geom_probe_vdev_key;
 
+/**
+ * Thread local storage used to indicate when a thread is probing geoms
+ * for their guids.  If NULL, this thread is not tasting geoms.  If non NULL,
+ * it is looking for a replacement for the vdev_t* that is its value.
+ */
+uint_t zfs_geom_probe_vdev;
+
 static void
 vdev_geom_set_rotation_rate(vdev_t *vd, struct g_consumer *cp)
 { 
@@ -848,6 +855,9 @@ vdev_geom_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	/* Clear the TLS now that tasting is done */
 	VERIFY(tsd_set(zfs_geom_probe_vdev_key, NULL) == 0);
 
+	/* Clear the TLS now that tasting is done */
+	VERIFY(tsd_set(zfs_geom_probe_vdev, NULL) == 0);
+
 	if (cp == NULL) {
 		ZFS_LOG(1, "Vdev %s not found.", vd->vdev_path);
 		error = ENOENT;
@@ -911,6 +921,9 @@ vdev_geom_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	}
 skip_open:
 	pp = cp->provider;
+
+	/* Set the TLS to indicate downstack that we should not access zvols*/
+	VERIFY(tsd_set(zfs_geom_probe_vdev, vd) == 0);
 
 	/*
 	 * Determine the actual size of the device.

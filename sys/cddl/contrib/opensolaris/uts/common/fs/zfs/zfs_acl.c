@@ -1093,7 +1093,7 @@ zfs_acl_node_read(znode_t *zp, zfs_acl_t **aclpp, boolean_t will_modify)
 		if (znode_acl.z_acl_extern_obj) {
 			error = dmu_read(zp->z_zfsvfs->z_os,
 			    znode_acl.z_acl_extern_obj, 0, aclnode->z_size,
-			    aclnode->z_acldata, DMU_READ_PREFETCH);
+			    aclnode->z_acldata, DMU_CTX_FLAG_PREFETCH);
 		} else {
 			bcopy(znode_acl.z_ace_data, aclnode->z_acldata,
 			    aclnode->z_size);

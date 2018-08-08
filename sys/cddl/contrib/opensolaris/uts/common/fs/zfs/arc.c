@@ -1890,7 +1890,7 @@ arc_cksum_verify(arc_buf_t *buf)
 
 	fletcher_2_native(buf->b_data, arc_buf_size(buf), NULL, &zc);
 	if (!ZIO_CHECKSUM_EQUAL(*hdr->b_l1hdr.b_freeze_cksum, zc))
-		panic("buffer modified while frozen!");
+		panic("buffer %p modified while frozen!", buf);
 	mutex_exit(&hdr->b_l1hdr.b_freeze_lock);
 }
 
@@ -2079,6 +2079,20 @@ arc_bufc_to_flags(arc_buf_contents_t type)
 	}
 	panic("undefined ARC buffer type!");
 	return ((uint32_t)-1);
+}
+
+boolean_t
+arc_buf_frozen(arc_buf_t *buf)
+{
+	boolean_t frozen = B_TRUE;
+
+	/*
+	 * NB: Does not grab or assert the mutex because the caller more
+	 * than likely cannot use the results in an atomic fashion.
+	 */
+	if (buf->b_hdr->b_l1hdr.b_freeze_cksum == NULL)
+		frozen = B_FALSE;
+	return (frozen);
 }
 
 void
@@ -5389,6 +5403,7 @@ arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp, arc_read_done_func_t *done,
 	kmutex_t *hash_lock = NULL;
 	zio_t *rzio;
 	uint64_t guid = spa_load_guid(spa);
+	boolean_t cached_only = (*arc_flags & ARC_CACHED_ONLY) != 0;
 	boolean_t compressed_read = (zio_flags & ZIO_FLAG_RAW) != 0;
 	int rc = 0;
 	
@@ -5428,7 +5443,12 @@ top:
 				arc_hdr_clear_flags(hdr,
 				    ARC_FLAG_PREDICTIVE_PREFETCH);
 			}
-
+			/*
+			 * Cache lookups should only occur from consumers
+			 * that do not have any context loaded yet.  This
+			 * means that no I/O should be in progress for them.
+			 */
+			ASSERT(!cached_only);
 			if (*arc_flags & ARC_FLAG_WAIT) {
 				cv_wait(&hdr->b_l1hdr.b_cv, hash_lock);
 				mutex_exit(hash_lock);
@@ -5521,6 +5541,13 @@ top:
 		uint64_t addr = 0;
 		boolean_t devw = B_FALSE;
 		uint64_t size;
+
+		if (cached_only) {
+			if (hdr)
+				mutex_exit(hash_lock);
+			done(NULL, NULL, bp, NULL, private);
+			return (0);
+		}
 
 		if (hdr == NULL) {
 			/* this block is not in the cache */

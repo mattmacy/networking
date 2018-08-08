@@ -476,7 +476,16 @@ struct zio {
 	enum zio_stage	io_orig_stage;
 	enum zio_stage	io_orig_pipeline;
 	enum zio_stage	io_pipeline_trace;
+
 	int		io_error;
+#ifdef ZFS_DEBUG
+	struct {
+		int err;
+		int lineno;
+		const char *filename;
+	} io_last_errno;
+#endif
+
 	int		io_child_error[ZIO_CHILD_TYPES];
 	uint64_t	io_children[ZIO_CHILD_TYPES][ZIO_WAIT_TYPES];
 	uint64_t	io_child_count;
@@ -503,6 +512,26 @@ struct zio {
 };
 
 extern int zio_bookmark_compare(const void *, const void *);
+
+/*
+ * NB: Mostly useful for tracing ZIO errors.  Perhaps it could be extended
+ * to include a full history for each zio.  Skip ECKSUM, because it can
+ * happen a lot.
+ */
+#ifdef ZFS_DEBUG
+#define	ZIO_SET_ERROR(zio, error) do {					\
+	(zio)->io_error = (error);					\
+	if (error != 0 && error != ECKSUM) {				\
+		dprintf("zio %p error %d at %s:%d\n",			\
+		    zio, (error), __FILE__, __LINE__);			\
+		(zio)->io_last_errno.err = error;			\
+		(zio)->io_last_errno.filename = __FILE__;		\
+		(zio)->io_last_errno.lineno = __LINE__;			\
+	}								\
+} while (0)
+#else
+#define	ZIO_SET_ERROR(zio, error) (zio)->io_error = error
+#endif	/* ZFS_DEBUG */
 
 extern zio_t *zio_null(zio_t *pio, spa_t *spa, vdev_t *vd,
     zio_done_func_t *done, void *priv, enum zio_flag flags);

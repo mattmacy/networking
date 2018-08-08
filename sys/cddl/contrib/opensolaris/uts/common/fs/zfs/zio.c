@@ -1770,7 +1770,7 @@ zio_execute(zio_t *zio)
 			boolean_t cut = (stage == ZIO_STAGE_VDEV_IO_START) ?
 			    zio_requeue_io_start_cut_in_line : B_FALSE;
 			zio_taskq_dispatch(zio, ZIO_TASKQ_ISSUE, cut);
-			return;
+			break;
 		}
 
 		zio->io_stage = stage;
@@ -1784,8 +1784,10 @@ zio_execute(zio_t *zio)
 		zio = zio_pipeline[highbit64(stage) - 1](zio);
 
 		if (zio == NULL)
-			return;
+		    break;
 	}
+	/* Process any deferred events placed on this thread's list. */
+	dmu_thread_context_process();
 }
 
 /*

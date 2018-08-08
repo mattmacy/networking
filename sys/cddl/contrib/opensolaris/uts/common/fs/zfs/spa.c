@@ -22,6 +22,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, 2018 by Delphix. All rights reserved.
+ * Copyright (c) 2011-2012 Spectra Logic Corporation.  All rights reserved.
  * Copyright (c) 2015, Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2013 Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
@@ -941,6 +942,20 @@ spa_get_errlists(spa_t *spa, avl_tree_t *last, avl_tree_t *scrub)
 }
 
 static void
+spa_zio_thread_init(void *context __unused)
+{
+
+	VERIFY(0 == dmu_thread_context_create());
+}
+
+static void
+spa_zio_thread_destroy(void *context)
+{
+
+	dmu_thread_context_destroy(context/*NOTUSED*/);
+}
+
+static void
 spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 {
 	const zio_taskq_info_t *ztip = &zio_taskqs[t][q];
@@ -1020,7 +1035,7 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 #endif
 
 			tq = taskq_create_proc(name, value, pri, 50,
-			    INT_MAX, spa->spa_proc, flags);
+				 INT_MAX, spa->spa_proc, flags, spa_zio_thread_init, spa_zio_thread_destroy);
 #ifdef SYSDC
 		}
 #endif
@@ -1804,7 +1819,7 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 
 	packed = kmem_alloc(nvsize, KM_SLEEP);
 	error = dmu_read(spa->spa_meta_objset, obj, 0, nvsize, packed,
-	    DMU_READ_PREFETCH);
+	    DMU_CTX_FLAG_PREFETCH);
 	if (error == 0)
 		error = nvlist_unpack(packed, nvsize, value, 0);
 	kmem_free(packed, nvsize);
@@ -4115,7 +4130,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 {
 	spa_t *spa;
 	spa_load_state_t state = SPA_LOAD_OPEN;
-	int error;
+	int error = 0;
 	int locked = B_FALSE;
 	int firstopen = B_FALSE;
 
@@ -4217,17 +4232,24 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 		spa->spa_last_ubsync_txg = 0;
 		spa->spa_load_txg = 0;
 		mutex_exit(&spa_namespace_lock);
-#ifdef __FreeBSD__
-#ifdef _KERNEL
-		if (firstopen)
-			zvol_create_minors(spa->spa_name);
-#endif
+#if defined(__FreeBSD__) && defined(_KERNEL)
+		if (firstopen) {
+			/*
+			 * Don't pass up errors from here.  The SPA was
+			 * still created and we can't reasonably unwind it
+			 * at this point.
+			 */
+			if (zvol_create_minors(spa->spa_name))
+				printf("ZFS WARNING: ZVOL device nodes for "
+					   "pool %s could not be created\n", pool);
+
+		}
 #endif
 	}
 
 	*spapp = spa;
 
-	return (0);
+	return (error);
 }
 
 int
@@ -5530,10 +5552,19 @@ spa_import(const char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 
 	mutex_exit(&spa_namespace_lock);
 
-#ifdef __FreeBSD__
-#ifdef _KERNEL
-	zvol_create_minors(pool);
+#if defined(__FreeBSD__) && defined(_KERNEL)
+	if (zvol_create_minors(pool)) {
+		/*
+		 * Don't pass up errors from here.  The SPA was
+		 * still created and we can't reasonably unwind it
+		 * at this point.
+		 */
+		printf("ZFS WARNING: Unable to create ZVOL block devices "
+			   "for pool %s\n", pool);
+	}
 #endif
+#ifdef notyet
+	spa_history_log_version(spa, LOG_POOL_IMPORT);
 #endif
 	return (0);
 }

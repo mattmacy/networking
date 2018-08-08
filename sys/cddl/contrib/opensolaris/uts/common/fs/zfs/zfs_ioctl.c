@@ -216,6 +216,7 @@ uint_t zfs_fsyncer_key;
 extern uint_t rrw_tsd_key;
 static uint_t zfs_allow_log_key;
 extern uint_t zfs_geom_probe_vdev_key;
+extern uint_t zfs_async_io_key;
 
 typedef int zfs_ioc_legacy_func_t(zfs_cmd_t *);
 typedef int zfs_ioc_func_t(const char *, nvlist_t *, nvlist_t *);
@@ -287,6 +288,7 @@ __dprintf(const char *file, const char *func, int line, const char *fmt, ...)
 	va_start(adx, fmt);
 	(void) vsnprintf(buf, sizeof (buf), fmt, adx);
 	va_end(adx);
+	printf("%s", buf);
 
 	/*
 	 * To get this data, use the zfs-dprintf probe as so:
@@ -3343,16 +3345,15 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	/*
 	 * It would be nice to do this atomically.
 	 */
-	if (error == 0) {
+	if (error == 0)
 		error = zfs_set_prop_nvlist(fsname, ZPROP_SRC_LOCAL,
 		    nvprops, outnvl);
-		if (error != 0)
-			(void) dsl_destroy_head(fsname);
-	}
 #ifdef __FreeBSD__
 	if (error == 0 && type == DMU_OST_ZVOL)
-		zvol_create_minors(fsname);
+	    error = zvol_create_minors(fsname);
 #endif
+	if (error)
+	    (void) dsl_destroy_head(fsname);
 	return (error);
 }
 
@@ -7009,6 +7010,7 @@ _fini(void)
 		(void) ddi_modclose(sharefs_mod);
 
 	tsd_destroy(&zfs_fsyncer_key);
+	tsd_destroy(&zfs_async_io_key);
 	ldi_ident_release(zfs_li);
 	zfs_li = NULL;
 	mutex_destroy(&zfs_share_lock);
@@ -7058,6 +7060,7 @@ zfs__init(void)
 	tsd_create(&rrw_tsd_key, rrw_tsd_destroy);
 	tsd_create(&zfs_allow_log_key, zfs_allow_log_destroy);
 	tsd_create(&zfs_geom_probe_vdev_key, NULL);
+	tsd_create(&zfs_async_io_key, dmu_thread_context_destroy);
 
 	printf("ZFS storage pool version: features support (" SPA_VERSION_STRING ")\n");
 	root_mount_rel(zfs_root_token);
@@ -7083,6 +7086,7 @@ zfs__fini(void)
 	tsd_destroy(&zfs_fsyncer_key);
 	tsd_destroy(&rrw_tsd_key);
 	tsd_destroy(&zfs_allow_log_key);
+	tsd_destroy(&zfs_async_io_key);
 
 	mutex_destroy(&zfs_share_lock);
 

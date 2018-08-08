@@ -218,6 +218,9 @@ extern int aok;
 
 #define	kpreempt(x)	sched_yield()
 
+#define	tsd_get(key)		NULL
+#define	tsd_set(key, value)	0
+
 typedef struct kthread kthread_t;
 
 #define	thread_create(stk, stksize, func, arg, len, pp, state, pri)	\
@@ -386,6 +389,7 @@ typedef enum kmem_cbrc {
 typedef struct taskq taskq_t;
 typedef uintptr_t taskqid_t;
 typedef void (task_func_t)(void *);
+typedef void (*taskq_callback_fn)(void *);
 
 typedef struct taskq_ent {
 	struct taskq_ent	*tqent_next;
@@ -413,8 +417,11 @@ typedef struct taskq_ent {
 extern taskq_t *system_taskq;
 
 extern taskq_t	*taskq_create(const char *, int, pri_t, int, int, uint_t);
-#define	taskq_create_proc(a, b, c, d, e, p, f) \
-	    (taskq_create(a, b, c, d, e, f))
+extern taskq_t	*taskq_create_with_callbacks(const char *, int, pri_t, int, int,
+    uint_t, taskq_callback_fn, taskq_callback_fn);
+
+#define	taskq_create_proc(a, b, c, d, e, p, f, g, h) \
+	    (taskq_create_with_callbacks(a, b, c, d, e, f, g, h))
 #define	taskq_create_sysdc(a, b, d, e, p, dc, f) \
 	    (taskq_create(a, b, maxclsyspri, d, e, f))
 extern taskqid_t taskq_dispatch(taskq_t *, task_func_t, void *, uint_t);

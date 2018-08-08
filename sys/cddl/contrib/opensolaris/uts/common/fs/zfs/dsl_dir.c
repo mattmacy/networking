@@ -175,7 +175,7 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 	err = dmu_bonus_hold(dp->dp_meta_objset, ddobj, tag, &dbuf);
 	if (err != 0)
 		return (err);
-	dd = dmu_buf_get_user(dbuf);
+	dd = (dsl_dir_t *)dmu_buf_get_user(dbuf);
 #ifdef ZFS_DEBUG
 	{
 		dmu_object_info_t doi;

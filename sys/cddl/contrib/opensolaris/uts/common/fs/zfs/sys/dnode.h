@@ -103,6 +103,10 @@ extern "C" {
 #define	DNODES_PER_LEVEL_SHIFT	(DN_MAX_INDBLKSHIFT - SPA_BLKPTRSHIFT)
 #define	DNODES_PER_LEVEL	(1ULL << DNODES_PER_LEVEL_SHIFT)
 
+/* Next level for a given dnode and txg */
+#define	DN_NEXT_LEVEL(dn, txg) \
+	(dn)->dn_next_nlevels[(txg) & TXG_MASK]
+
 /* The +2 here is a cheesy way to round up */
 #define	DN_MAX_LEVELS	(2 + ((DN_MAX_OFFSET_SHIFT - SPA_MINBLOCKSHIFT) / \
 	(DN_MIN_INDBLKSHIFT - SPA_BLKPTRSHIFT)))
@@ -293,6 +297,7 @@ boolean_t dnode_add_ref(dnode_t *dn, void *ref);
 void dnode_rele(dnode_t *dn, void *ref);
 void dnode_rele_and_unlock(dnode_t *dn, void *tag, boolean_t evicting);
 void dnode_setdirty(dnode_t *dn, dmu_tx_t *tx);
+void dnode_set_dirtyctx(dnode_t *dn, dmu_tx_t *tx, void *tag);
 void dnode_sync(dnode_t *dn, dmu_tx_t *tx);
 void dnode_allocate(dnode_t *dn, dmu_object_type_t ot, int blocksize, int ibs,
     dmu_object_type_t bonustype, int bonuslen, dmu_tx_t *tx);
@@ -323,6 +328,12 @@ boolean_t dnode_needs_remap(const dnode_t *dn);
 #define	DNODE_META_IS_CACHEABLE(_dn)					\
 	((_dn)->dn_objset->os_primary_cache == ZFS_CACHE_ALL ||		\
 	(_dn)->dn_objset->os_primary_cache == ZFS_CACHE_METADATA)
+
+#define	DNODE_VERIFY_DIRTYCTX(dn, tx)					\
+	ASSERT((dn)->dn_object == DMU_META_DNODE_OBJECT ||		\
+	    (dn)->dn_dirtyctx == DN_UNDIRTIED ||			\
+	    (dn)->dn_dirtyctx ==					\
+	    (dmu_tx_is_syncing(tx) ? DN_DIRTY_SYNC : DN_DIRTY_OPEN))
 
 #ifdef ZFS_DEBUG
 
