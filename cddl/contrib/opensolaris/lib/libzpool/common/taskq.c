@@ -55,6 +55,8 @@ struct taskq {
 	int		tq_maxalloc_wait;
 	taskq_ent_t	*tq_freelist;
 	taskq_ent_t	tq_task;
+	taskq_callback_fn	tq_ctor;
+	taskq_callback_fn	tq_dtor;
 };
 
 static taskq_ent_t *
@@ -224,6 +226,9 @@ taskq_thread(void *arg)
 	taskq_ent_t *t;
 	boolean_t prealloc;
 
+	if (tq->tq_ctor != NULL)
+		tq->tq_ctor(tq);
+
 	mutex_enter(&tq->tq_lock);
 	while (tq->tq_flags & TASKQ_ACTIVE) {
 		if ((t = tq->tq_task.tqent_next) == &tq->tq_task) {
@@ -248,6 +253,15 @@ taskq_thread(void *arg)
 		if (!prealloc)
 			task_free(tq, t);
 	}
+	/*
+	 * This thread is on its way out, so just drop the lock temporarily
+	 * in order to call the shutdown callback.  This allows the callback
+	 * to look at the taskqueue, even just before it dies.
+	 */
+	mutex_exit(&tq->tq_lock);
+	if (tq->tq_dtor != NULL)
+		tq->tq_dtor(tq);
+	mutex_enter(&tq->tq_lock);
 	tq->tq_nthreads--;
 	cv_broadcast(&tq->tq_wait_cv);
 	mutex_exit(&tq->tq_lock);
@@ -256,8 +270,9 @@ taskq_thread(void *arg)
 
 /*ARGSUSED*/
 taskq_t *
-taskq_create(const char *name, int nthreads, pri_t pri,
-	int minalloc, int maxalloc, uint_t flags)
+taskq_create_with_callbacks(const char *name, int nthreads, pri_t pri,
+	int minalloc, int maxalloc, uint_t flags, taskq_callback_fn ctor,
+	taskq_callback_fn dtor)
 {
 	taskq_t *tq = kmem_zalloc(sizeof (taskq_t), KM_SLEEP);
 	int t;
@@ -291,6 +306,8 @@ taskq_create(const char *name, int nthreads, pri_t pri,
 	tq->tq_task.tqent_next = &tq->tq_task;
 	tq->tq_task.tqent_prev = &tq->tq_task;
 	tq->tq_threadlist = kmem_alloc(nthreads * sizeof (thread_t), KM_SLEEP);
+	tq->tq_ctor = ctor;
+	tq->tq_dtor = dtor;
 
 	if (flags & TASKQ_PREPOPULATE) {
 		mutex_enter(&tq->tq_lock);
@@ -304,6 +321,15 @@ taskq_create(const char *name, int nthreads, pri_t pri,
 		    tq, THR_BOUND, &tq->tq_threadlist[t]);
 
 	return (tq);
+}
+
+/*ARGSUSED*/
+taskq_t *
+taskq_create(const char *name, int nthreads, pri_t pri,
+	int minalloc, int maxalloc, uint_t flags)
+{
+	return (taskq_create_with_callbacks(name, nthreads, pri, minalloc,
+	    maxalloc, flags, NULL, NULL));
 }
 
 void
