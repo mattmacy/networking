@@ -216,16 +216,32 @@ extern int aok;
 /*
  * Threads
  */
+#define TS_RUN          0x00000002
+#define TS_JOINABLE     0x00000004
+
 #define	curthread	((void *)(uintptr_t)thr_self())
 
 #define	kpreempt(x)	sched_yield()
 
 typedef struct kthread kthread_t;
+#define thread_create(stk, stksize, func, arg, len, pp, state, pri)     \
+        zk_thread_create(func, arg, state)
 
-#define	thread_create(stk, stksize, func, arg, len, pp, state, pri)	\
-	zk_thread_create(func, arg)
 #define	thread_exit() thr_exit(NULL)
-#define thread_join(t)  pthread_join((pthread_t)(t), NULL)
+
+static __inline int
+thread_join(void *t)
+{
+	void *result;
+	int rc;
+	/* XXX some error codes just mean it's exited already */
+	rc = pthread_join((pthread_t)(t), &result);
+	if (rc) {
+		printf("join failed: rc: %d result: %p\n", rc, result);
+		abort();
+	}
+	return (0);
+}
 
 #define	newproc(f, a, cid, pri, ctp, pid)	(ENOSYS)
 
@@ -240,7 +256,7 @@ extern struct proc p0;
 
 #define	PS_NONE		-1
 
-extern kthread_t *zk_thread_create(void (*func)(void*), void *arg);
+extern kthread_t *zk_thread_create(void (*func)(void*), void *arg, int state);
 
 #define	issig(why)	(FALSE)
 #define	ISSIG(thr, why)	(FALSE)
