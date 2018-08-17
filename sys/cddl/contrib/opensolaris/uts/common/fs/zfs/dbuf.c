@@ -1637,8 +1637,8 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		DBUF_STAT_BUMP(hash_misses);
 
 		/* Skip the wait per the caller's request. */
-		mutex_enter(&db->db_mtx);
 		if ((flags & DB_RF_NEVERWAIT) == 0) {
+			mutex_enter(&db->db_mtx);
 			while (db->db_state == DB_READ ||
 			    db->db_state == DB_FILL) {
 				ASSERT(db->db_state == DB_READ ||
@@ -1649,8 +1649,8 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 			}
 			if (db->db_state == DB_UNCACHED)
 				err = SET_ERROR(EIO);
+			mutex_exit(&db->db_mtx);
 		}
-		mutex_exit(&db->db_mtx);
 	}
 
 	return (err);
@@ -1827,7 +1827,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 void
 dbuf_new_size(dmu_buf_impl_t *db, int size, dmu_tx_t *tx)
 {
-	arc_buf_t *buf, *obuf;
+	arc_buf_t *buf, *old_buf;
 	int osize = db->db.db_size;
 	arc_buf_contents_t type = DBUF_GET_BUFC_TYPE(db);
 	dnode_t *dn;
@@ -1856,15 +1856,15 @@ dbuf_new_size(dmu_buf_impl_t *db, int size, dmu_tx_t *tx)
 	buf = arc_alloc_buf(dn->dn_objset->os_spa, db, type, size);
 
 	/* copy old block data to the new block */
-	obuf = db->db_buf;
-	bcopy(obuf->b_data, buf->b_data, MIN(osize, size));
+	old_buf = db->db_buf;
+	bcopy(old_buf->b_data, buf->b_data, MIN(osize, size));
 	/* zero the remainder */
 	if (size > osize)
 		bzero((uint8_t *)buf->b_data + osize, size - osize);
 
 	mutex_enter(&db->db_mtx);
 	dbuf_set_data(db, buf);
-	arc_buf_destroy(obuf, db);
+	arc_buf_destroy(old_buf, db);
 	db->db.db_size = size;
 
 	if (db->db_level == 0) {
@@ -4508,7 +4508,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 	uint64_t txg = tx->tx_txg;
 	zbookmark_phys_t zb;
 	zio_prop_t zp;
-	zio_t *zio;
+	zio_t *pio; /* parent I/O */
 	int wp_flag = 0;
 
 	ASSERT(dmu_tx_is_syncing(tx));
@@ -4545,7 +4545,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		 * our block pointer, so the parent must be released.
 		 */
 		ASSERT(arc_released(parent->db_buf));
-		zio = parent->db_data_pending->dr_zio;
+		pio = parent->db_data_pending->dr_zio;
 	} else {
 		/* Our parent is the dnode itself. */
 		ASSERT((db->db_level == dn->dn_phys->dn_nlevels-1 &&
@@ -4554,12 +4554,12 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		if (db->db_blkid != DMU_SPILL_BLKID)
 			ASSERT3P(db->db_blkptr, ==,
 			    &dn->dn_phys->dn_blkptr[db->db_blkid]);
-		zio = dn->dn_zio;
+		pio = dn->dn_zio;
 	}
 
 	ASSERT(db->db_level == 0 || data == db->db_buf);
 	ASSERT3U(db->db_blkptr->blk_birth, <=, txg);
-	ASSERT(zio);
+	ASSERT(pio);
 
 	SET_BOOKMARK(&zb, os->os_dsl_dataset ?
 	    os->os_dsl_dataset->ds_object : DMU_META_OBJSET,
@@ -4589,9 +4589,9 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		abd_t *contents = (data != NULL) ?
 		    abd_get_from_buf(data->b_data, arc_buf_size(data)) : NULL;
 
-		dr->dr_zio = zio_write(zio, os->os_spa, txg,
-		    &dr->dr_bp_copy, contents, db->db.db_size, db->db.db_size,
-		    &zp, dbuf_write_override_ready, NULL, NULL,
+		dr->dr_zio = zio_write(pio, os->os_spa, txg, &dr->dr_bp_copy,
+		    contents, db->db.db_size, db->db.db_size, &zp,
+		    dbuf_write_override_ready, NULL, NULL,
 		    dbuf_write_override_done,
 		    dr, ZIO_PRIORITY_ASYNC_WRITE, ZIO_FLAG_MUSTSUCCEED, &zb);
 		mutex_enter(&db->db_mtx);
@@ -4602,7 +4602,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 	} else if (db->db_state == DB_NOFILL) {
 		ASSERT(zp.zp_checksum == ZIO_CHECKSUM_OFF ||
 		    zp.zp_checksum == ZIO_CHECKSUM_NOPARITY);
-		dr->dr_zio = zio_write(zio, os->os_spa, txg,
+		dr->dr_zio = zio_write(pio, os->os_spa, txg,
 		    &dr->dr_bp_copy, NULL, db->db.db_size, db->db.db_size, &zp,
 		    dbuf_write_nofill_ready, NULL, NULL,
 		    dbuf_write_nofill_done, db,
@@ -4620,7 +4620,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		if (db->db_level != 0)
 			children_ready_cb = dbuf_write_children_ready;
 
-		dr->dr_zio = arc_write(zio, os->os_spa, txg,
+		dr->dr_zio = arc_write(pio, os->os_spa, txg,
 		    &dr->dr_bp_copy, data, DBUF_IS_L2CACHEABLE(db),
 		    &zp, dbuf_write_ready,
 		    children_ready_cb, dbuf_write_physdone,
