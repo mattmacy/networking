@@ -213,6 +213,8 @@ typedef struct ztest_shared_ds {
 	uint64_t	zd_seq;
 } ztest_shared_ds_t;
 
+#define dmu_assign_arcbuf_by_dbuf dmu_assign_arcbuf
+
 static ztest_shared_ds_t *ztest_shared_ds;
 #define	ZTEST_GET_SHARED_DS(d) (&ztest_shared_ds[d])
 
@@ -372,7 +374,9 @@ ztest_info_t ztest_info[] = {
 	ZTI_INIT(ztest_dmu_read_write, 1, &zopt_always),
 	ZTI_INIT(ztest_dmu_write_parallel, 10, &zopt_always),
 	ZTI_INIT(ztest_dmu_object_alloc_free, 1, &zopt_always),
+#ifdef notyet
 	ZTI_INIT(ztest_dmu_object_next_chunk, 1, &zopt_sometimes),
+#endif
 	ZTI_INIT(ztest_dmu_commit_callbacks, 1, &zopt_always),
 	ZTI_INIT(ztest_zap, 30, &zopt_always),
 	ZTI_INIT(ztest_zap_parallel, 100, &zopt_always),
@@ -4243,6 +4247,7 @@ ztest_dmu_object_alloc_free(ztest_ds_t *zd, uint64_t id)
 	umem_free(od, size);
 }
 
+#ifdef notyet
 /*
  * Rewind the global allocator to verify object allocation backfilling.
  */
@@ -4262,6 +4267,7 @@ ztest_dmu_object_next_chunk(ztest_ds_t *zd, uint64_t id)
 	os->os_obj_next_chunk = P2ALIGN(object, dnodes_per_chunk);
 	mutex_exit(&os->os_obj_lock);
 }
+#endif
 
 #undef OD_ARRAY_SIZE
 #define	OD_ARRAY_SIZE	2
