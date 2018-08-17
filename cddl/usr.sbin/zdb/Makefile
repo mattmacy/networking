@@ -27,6 +27,6 @@ LIBADD=	nvpair umem uutil zfs zpool
 
 # Since there are many asserts in this program, it makes no sense to compile
 # it without debugging.
-CFLAGS+=	-g -DDEBUG=1
+CFLAGS+=	-g -DDEBUG=1 -O0
 
 .include <bsd.prog.mk>
