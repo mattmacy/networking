@@ -5682,6 +5682,7 @@ main(int argc, char **argv)
 	}
 
 	aok = (dump_opt['A'] == 1) || (dump_opt['A'] > 2);
+
 	zfs_recover = (dump_opt['A'] > 1);
 
 	printf("argc: %d optind: %d\n", argc, optind);

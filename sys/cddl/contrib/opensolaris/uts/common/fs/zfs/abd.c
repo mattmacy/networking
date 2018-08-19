@@ -290,7 +290,7 @@ abd_free_struct(abd_t *abd)
 abd_t *
 abd_alloc(size_t size, boolean_t is_metadata)
 {
-	if (!zfs_abd_scatter_enabled)
+	if (!zfs_abd_scatter_enabled || size < zfs_abd_chunk_size)
 		return (abd_alloc_linear(size, is_metadata));
 
 	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
@@ -395,6 +395,9 @@ abd_free_linear(abd_t *abd)
 void
 abd_free(abd_t *abd)
 {
+	if (abd == NULL)
+		return;
+
 	abd_verify(abd);
 	ASSERT3P(abd->abd_parent, ==, NULL);
 	ASSERT(abd->abd_flags & ABD_FLAG_OWNER);
@@ -486,7 +489,7 @@ abd_get_offset_impl(abd_t *sabd, size_t off, size_t size)
 		    chunkcnt * sizeof (void *));
 	}
 
-	abd->abd_size = sabd->abd_size - off;
+	abd->abd_size = size;
 	abd->abd_parent = sabd;
 	refcount_create(&abd->abd_children);
 	(void) refcount_add_many(&sabd->abd_children, abd->abd_size, abd);
@@ -546,6 +549,8 @@ abd_get_from_buf(void *buf, size_t size)
 void
 abd_put(abd_t *abd)
 {
+	if (abd == NULL)
+		return;
 	abd_verify(abd);
 	ASSERT(!(abd->abd_flags & ABD_FLAG_OWNER));
 
@@ -749,7 +754,8 @@ abd_iter_map(struct abd_iter *aiter)
 	} else {
 		size_t index = abd_iter_scatter_chunk_index(aiter);
 		offset = abd_iter_scatter_chunk_offset(aiter);
-		aiter->iter_mapsize = zfs_abd_chunk_size - offset;
+		aiter->iter_mapsize = MIN(zfs_abd_chunk_size - offset,
+								   aiter->iter_abd->abd_size - aiter->iter_pos);
 		paddr = aiter->iter_abd->abd_u.abd_scatter.abd_chunks[index];
 	}
 	aiter->iter_mapaddr = (char *)paddr + offset;
