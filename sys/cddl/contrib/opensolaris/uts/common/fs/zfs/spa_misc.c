@@ -298,6 +298,12 @@ boolean_t zfs_recover = B_FALSE;
  */
 boolean_t zfs_free_leak_on_eio = B_FALSE;
 
+#if defined(ZFS_DEBUG) || !defined(_KERNEL)
+uint64_t zfs_deadman_synctime_ms = 30000ULL;
+uint64_t zfs_deadman_ziotime_ms = 15000ULL;
+uint64_t zfs_deadman_checktime_ms = 3000ULL;
+#else
+>>>>>>> 56e1de9649d... reconcile with upstream fix trim handling some
 /*
  * Expiration time in milliseconds. This value has two meanings. First it is
  * used to determine when the spa_deadman() logic should fire. By default the
