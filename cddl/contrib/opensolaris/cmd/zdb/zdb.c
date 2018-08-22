@@ -5132,13 +5132,6 @@ name:
 	return (NULL);
 }
 
-/* ARGSUSED */
-static int
-random_get_pseudo_bytes_cb(void *buf, size_t len, void *unused)
-{
-	return (random_get_pseudo_bytes(buf, len));
-}
-
 /*
  * Read a block from a pool and print it out.  The syntax of the
  * block descriptor is:
@@ -5419,90 +5412,6 @@ zdb_embedded_block(char *thing)
 	}
 	zdb_dump_block_raw(buf, BPE_GET_LSIZE(&bp), 0);
 	free(buf);
-}
-
-static boolean_t
-pool_match(nvlist_t *cfg, char *tgt)
-{
-	uint64_t v, guid = strtoull(tgt, NULL, 0);
-	char *s;
-
-	if (guid != 0) {
-		if (nvlist_lookup_uint64(cfg, ZPOOL_CONFIG_POOL_GUID, &v) == 0)
-			return (v == guid);
-	} else {
-		if (nvlist_lookup_string(cfg, ZPOOL_CONFIG_POOL_NAME, &s) == 0)
-			return (strcmp(s, tgt) == 0);
-	}
-	return (B_FALSE);
-}
-
-static char *
-find_zpool(char **target, nvlist_t **configp, int dirc, char **dirv)
-{
-	nvlist_t *pools;
-	nvlist_t *match = NULL;
-	char *name = NULL;
-	char *sepp = NULL;
-	char sep = '\0';
-	int count = 0;
-	importargs_t args;
-
-	bzero(&args, sizeof (args));
-	args.paths = dirc;
-	args.path = dirv;
-	args.can_be_active = B_TRUE;
-
-	if ((sepp = strpbrk(*target, "/@")) != NULL) {
-		sep = *sepp;
-		*sepp = '\0';
-	}
-
-	pools = zpool_search_import(g_zfs, &args);
-
-	if (pools != NULL) {
-		nvpair_t *elem = NULL;
-		while ((elem = nvlist_next_nvpair(pools, elem)) != NULL) {
-			verify(nvpair_value_nvlist(elem, configp) == 0);
-			if (pool_match(*configp, *target)) {
-				count++;
-				if (match != NULL) {
-					/* print previously found config */
-					if (name != NULL) {
-						(void) printf("%s\n", name);
-						dump_nvlist(match, 8);
-						name = NULL;
-					}
-					(void) printf("%s\n",
-					    nvpair_name(elem));
-					dump_nvlist(*configp, 8);
-				} else {
-					match = *configp;
-					name = nvpair_name(elem);
-				}
-			}
-		}
-	}
-	if (count > 1)
-		(void) fatal("\tMatched %d pools - use pool GUID "
-		    "instead of pool name or \n"
-		    "\tpool name part of a dataset name to select pool", count);
-
-	if (sepp)
-		*sepp = sep;
-	/*
-	 * If pool GUID was specified for pool id, replace it with pool name
-	 */
-	if (name && (strstr(*target, name) != *target)) {
-		int sz = 1 + strlen(name) + ((sepp) ? strlen(sepp) : 0);
-
-		*target = umem_alloc(sz, UMEM_NOFAIL);
-		(void) snprintf(*target, sz, "%s%s", name, sepp ? sepp : "");
-	}
-
-	*configp = name ? match : NULL;
-
-	return (name);
 }
 
 int
