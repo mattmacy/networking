@@ -33,6 +33,7 @@
 # define _ZFS_FREEBSD_CRYPTO_H
 
 # include <sys/errno.h>
+# include <sys/mutex.h>
 # ifdef _KERNEL
 #  include <opencrypto/cryptodev.h>
 #  include <crypto/sha2/sha256.h>
@@ -53,6 +54,13 @@ typedef void *crypto_session_t;	/* sigh */
 #define CRYPTO_BYTES2BITS(n) ((n) << 3)
 
 struct zio_crypt_info;
+
+typedef struct freebsd_crypt_session {
+#ifdef _KERNEL
+	struct mtx		session_lock;
+#endif
+	crypto_session_t	session;
+} freebsd_crypt_session_t;
 
 /*
  * Unused types to minimize code differences.
@@ -84,10 +92,11 @@ void crypto_mac_init(struct hmac_ctx *ctx, const crypto_key_t *key);
 void crypto_mac_update(struct hmac_ctx *ctx, const void *data, size_t data_size);
 void crypto_mac_final(struct hmac_ctx *ctx, void *out_data, size_t out_data_size);
 
-int freebsd_crypt_newsession(crypto_session_t *sessp, struct zio_crypt_info *, crypto_key_t *);
-void freebsd_crypt_freesession(crypto_session_t sess);
+int freebsd_crypt_newsession(freebsd_crypt_session_t *sessp,
+    struct zio_crypt_info *, crypto_key_t *);
+void freebsd_crypt_freesession(freebsd_crypt_session_t *sessp);
 
-int freebsd_crypt_uio(boolean_t, crypto_session_t *, struct zio_crypt_info *,
+int freebsd_crypt_uio(boolean_t, freebsd_crypt_session_t *, struct zio_crypt_info *,
     uio_t *, crypto_key_t *, uint8_t *, size_t, size_t);
 
 #endif /* _ZFS_FREEBSD_CRYPTO_H */

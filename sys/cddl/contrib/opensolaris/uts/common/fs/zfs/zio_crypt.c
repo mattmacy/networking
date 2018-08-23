@@ -241,7 +241,8 @@ zio_crypt_key_destroy(zio_crypt_key_t *key)
 
 	/* free crypto templates */
 #ifdef __FreeBSD__
-	freebsd_crypt_freesession(key->zk_session);
+	freebsd_crypt_freesession(&key->zk_session);
+	bzero(&key->zk_session, sizeof(key->zk_session));
 #else
 	crypto_destroy_ctx_template(key->zk_current_tmpl);
 	crypto_destroy_ctx_template(key->zk_hmac_tmpl);
@@ -374,7 +375,7 @@ zio_crypt_key_change_salt(zio_crypt_key_t *key)
 	key->zk_salt_count = 0;
 
 #ifdef __FreeBSD__
-	freebsd_crypt_freesession(key->zk_session);
+	freebsd_crypt_freesession(&key->zk_session);
 	ret = freebsd_crypt_newsession(&key->zk_session,
 	    &zio_crypt_table[key->zk_crypt], &key->zk_current_key);
 	if (ret != 0)
@@ -451,7 +452,7 @@ int failed_decrypt_size;
  * 
  */
 static int
-zio_do_crypt_uio_opencrypto(boolean_t encrypt, crypto_session_t *sess,
+zio_do_crypt_uio_opencrypto(boolean_t encrypt, freebsd_crypt_session_t *sess,
     uint64_t crypt, crypto_key_t *key, uint8_t *ivbuf, uint_t datalen,
     uio_t *uio, uint_t auth_len)
 {
@@ -2261,7 +2262,7 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 	uint8_t enc_keydata[MASTER_KEY_MAX_LEN];
 	crypto_key_t tmp_ckey, *ckey = NULL;
 #ifdef __FreeBSD__
-	crypto_session_t *tmpl;
+	freebsd_crypt_session_t *tmpl = NULL;
 #else
 	crypto_ctx_template_t tmpl;
 #endif
