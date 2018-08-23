@@ -1031,7 +1031,6 @@ zfs_crypto_attempt_load_keys(libzfs_handle_t *hdl, char *fsname)
 	zfs_handle_t *zhp = NULL;
 	loadkey_cbdata_t cb = { 0 };
 
-	fprintf(stderr, "%s(%p, %s)\n", __FUNCTION__, hdl, fsname);
 	zhp = zfs_open(hdl, fsname, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME);
 	if (zhp == NULL) {
 		ret = ENOENT;
