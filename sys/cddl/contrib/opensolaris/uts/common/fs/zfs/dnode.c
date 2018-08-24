@@ -1829,7 +1829,7 @@ dnode_free_range(dnode_t *dn, uint64_t off, uint64_t len, dmu_tx_t *tx)
 			caddr_t data;
 
 			/* don't dirty if it isn't on disk and isn't dirty */
-			if (db->db_last_dirty ||
+			if (!list_is_empty(&db->db_dirty_records) ||
 			    (db->db_blkptr && !BP_IS_HOLE(db->db_blkptr))) {
 				rw_exit(&dn->dn_struct_rwlock);
 				dmu_buf_will_dirty(&db->db, tx);
@@ -1865,7 +1865,7 @@ dnode_free_range(dnode_t *dn, uint64_t off, uint64_t len, dmu_tx_t *tx)
 		if (dbuf_hold_impl(dn, 0, dbuf_whichblock(dn, 0, off+len),
 		    TRUE, FALSE, FTAG, &db) == 0) {
 			/* don't dirty if not on disk and not dirty */
-			if (db->db_last_dirty ||
+			if (!list_is_empty(&db->db_dirty_records)  ||
 			    (db->db_blkptr && !BP_IS_HOLE(db->db_blkptr))) {
 				rw_exit(&dn->dn_struct_rwlock);
 				dmu_buf_will_dirty(&db->db, tx);
