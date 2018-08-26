@@ -1164,7 +1164,7 @@ zvol_open(struct g_provider *pp, int flag, int count)
 		 * to use a zvol as a vdev.  Deadlocks can result if another
 		 * thread has spa_namespace_lock
 		 */
-		return (EOPNOTSUPP);
+		return (SET_ERROR(EOPNOTSUPP));
 	}
 	/*
 	 * Protect against recursively entering spa_namespace_lock
@@ -1646,7 +1646,7 @@ zvol_strategy(struct bio *bp)
 	case BIO_DELETE:
 		break;
 	default:
-		error = EOPNOTSUPP;
+		error = SET_ERROR(EOPNOTSUPP);
 		goto out;
 	}
 
@@ -1762,7 +1762,7 @@ unlock:
 #else	/* !illumos */
 	bp->bio_completed = bp->bio_length - resid;
 	if (bp->bio_completed < bp->bio_length && off > volsize)
-		error = EINVAL;
+		error = SET_ERROR(EINVAL);
 
 	if (sync) {
 sync:
@@ -2878,7 +2878,7 @@ zvol_create_snapshots(objset_t *os, const char *name)
 		len = snprintf(sname, MAXPATHLEN, "%s@", name);
 		if (len >= MAXPATHLEN) {
 			dmu_objset_rele(os, FTAG);
-			error = ENAMETOOLONG;
+			error = SET_ERROR(ENAMETOOLONG);
 			break;
 		}
 
@@ -2943,7 +2943,7 @@ zvol_create_minors(const char *name)
 	if (snprintf(osname, MAXPATHLEN, "%s/", name) >= MAXPATHLEN) {
 		dmu_objset_rele(os, FTAG);
 		kmem_free(osname, MAXPATHLEN);
-		return (ENOENT);
+		return (SET_ERROR(ENOENT));
 	}
 	p = osname + strlen(osname);
 	len = MAXPATHLEN - (p - osname);
@@ -3182,7 +3182,7 @@ zvol_d_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct threa
 		    length <= 0) {
 			printf("%s: offset=%jd length=%jd\n", __func__, offset,
 			    length);
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 			break;
 		}
 

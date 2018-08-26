@@ -191,7 +191,7 @@ freebsd_crypt_newsession(freebsd_crypt_session_t *sessp,
 			xauth = &auth_hash_nist_gmac_aes_256;
 			break;
 		default:
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 			goto bad;
 		}
 		break;
@@ -208,7 +208,7 @@ freebsd_crypt_newsession(freebsd_crypt_session_t *sessp,
 			xauth = &auth_hash_ccm_cbc_mac_256;
 			break;
 		default:
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 			goto bad;
 			break;
 		}
@@ -329,7 +329,7 @@ p	printf("}\n");
 			xauth = &auth_hash_nist_gmac_aes_256;
 			break;
 		default:
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 			goto bad;
 		}
 		break;
@@ -346,7 +346,7 @@ p	printf("}\n");
 			xauth = &auth_hash_ccm_cbc_mac_256;
 			break;
 		default:
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 			goto bad;
 			break;
 		}
@@ -366,7 +366,7 @@ p	printf("}\n");
 	if (input_sessionp == NULL) {
 		session = kmem_alloc(sizeof(*session), KM_SLEEP);
 		if (session == NULL) {
-			error = ENOMEM;
+			error = SET_ERROR(ENOMEM);
 			goto out;
 		}
 		bzero(session, sizeof(*session));
@@ -381,7 +381,7 @@ p	printf("}\n");
 	
 	crp = crypto_getreq(2);
 	if (crp == NULL) {
-		error = ENOMEM;
+		error = SET_ERROR(ENOMEM);
 		goto bad;
 	}
 

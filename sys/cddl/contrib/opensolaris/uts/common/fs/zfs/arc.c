@@ -479,9 +479,9 @@ sysctl_vfs_zfs_arc_free_target(SYSCTL_HANDLER_ARGS)
 		return (err);
 
 	if (val < minfree)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	if (val > vm_cnt.v_page_count)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	zfs_arc_free_target = val;
 
@@ -1267,7 +1267,7 @@ sysctl_vfs_zfs_arc_meta_limit(SYSCTL_HANDLER_ARGS)
 		return (err);
 
         if (val <= 0 || val > arc_c_max)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	arc_meta_limit = val;
 	return (0);
@@ -1285,7 +1285,7 @@ sysctl_vfs_zfs_arc_no_grow_shift(SYSCTL_HANDLER_ARGS)
 		return (err);
 
         if (val >= arc_shrink_shift)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	arc_no_grow_shift = val;
 	return (0);
@@ -1309,11 +1309,11 @@ sysctl_vfs_zfs_arc_max(SYSCTL_HANDLER_ARGS)
 	}
 
 	if (val < arc_abs_min || val > kmem_size())
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	if (val < arc_c_min)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	if (zfs_arc_meta_limit > 0 && val < zfs_arc_meta_limit)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	arc_c_max = val;
 
@@ -1352,7 +1352,7 @@ sysctl_vfs_zfs_arc_min(SYSCTL_HANDLER_ARGS)
 	}
 
 	if (val < arc_abs_min || val > arc_c_max)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	arc_c_min = val;
 
@@ -7868,7 +7868,7 @@ arc_kstat_update(kstat_t *ksp, int rw)
 	arc_stats_t *as = ksp->ks_data;
 
 	if (rw == KSTAT_WRITE) {
-		return (EACCES);
+		return (SET_ERROR(EACCES));
 	} else {
 		arc_kstat_update_state(arc_anon,
 		    &as->arcstat_anon_size,

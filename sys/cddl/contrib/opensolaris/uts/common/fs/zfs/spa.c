@@ -703,7 +703,7 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 				}
 			}
 			if (strlen(strval) > ZPROP_MAX_COMMENT)
-				error = E2BIG;
+				error = SET_ERROR(E2BIG);
 			break;
 
 		case ZPOOL_PROP_DEDUPDITTO:
@@ -2240,7 +2240,7 @@ spa_load_verify(spa_t *spa)
 		return (error);
 	}
 
-	return (verify_ok ? 0 : EIO);
+	return (verify_ok ? 0 : SET_ERROR(EIO));
 }
 
 /*
@@ -2719,7 +2719,8 @@ spa_ld_select_uberblock(spa_t *spa, spa_import_type_t type)
 	if (ub->ub_txg == 0) {
 		nvlist_free(label);
 		spa_load_failed(spa, "no valid uberblock found");
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, ENXIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(ENXIO)));
 	}
 
 	spa_load_note(spa, "using uberblock with txg=%llu",
@@ -2732,7 +2733,8 @@ spa_ld_select_uberblock(spa_t *spa, spa_import_type_t type)
 		nvlist_free(label);
 		spa_load_failed(spa, "version %llu is not supported",
 		    (u_longlong_t)ub->ub_version);
-		return (spa_vdev_err(rvd, VDEV_AUX_VERSION_NEWER, ENOTSUP));
+		return (spa_vdev_err(rvd, VDEV_AUX_VERSION_NEWER,
+		    SET_ERROR(ENOTSUP)));
 	}
 
 	if (ub->ub_version >= SPA_VERSION_FEATURES) {
@@ -2745,7 +2747,7 @@ spa_ld_select_uberblock(spa_t *spa, spa_import_type_t type)
 		if (label == NULL) {
 			spa_load_failed(spa, "label config unavailable");
 			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
-			    ENXIO));
+			    SET_ERROR(ENXIO)));
 		}
 
 		if (nvlist_lookup_nvlist(label, ZPOOL_CONFIG_FEATURES_FOR_READ,
@@ -2754,7 +2756,7 @@ spa_ld_select_uberblock(spa_t *spa, spa_import_type_t type)
 			spa_load_failed(spa, "invalid label: '%s' missing",
 			    ZPOOL_CONFIG_FEATURES_FOR_READ);
 			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
-			    ENXIO));
+			    SET_ERROR(ENXIO)));
 		}
 
 		/*
@@ -2793,7 +2795,7 @@ spa_ld_select_uberblock(spa_t *spa, spa_import_type_t type)
 			nvlist_free(unsup_feat);
 			spa_load_failed(spa, "some features are unsupported");
 			return (spa_vdev_err(rvd, VDEV_AUX_UNSUP_FEAT,
-			    ENOTSUP));
+			    SET_ERROR(ENOTSUP)));
 		}
 
 		nvlist_free(unsup_feat);
@@ -2825,7 +2827,8 @@ spa_ld_open_rootbp(spa_t *spa)
 	if (error != 0) {
 		spa_load_failed(spa, "unable to open rootbp in dsl_pool_init "
 		    "[error=%d]", error);
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 	spa->spa_meta_objset = spa->spa_dsl_pool->dp_meta_objset;
 
@@ -2844,7 +2847,8 @@ spa_ld_trusted_config(spa_t *spa, spa_import_type_t type,
 
 	if (spa_dir_prop(spa, DMU_POOL_CONFIG, &spa->spa_config_object, B_TRUE)
 	    != 0)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 
 	/*
 	 * If we're assembling a pool from a split, the config provided is
@@ -2855,10 +2859,10 @@ spa_ld_trusted_config(spa_t *spa, spa_import_type_t type,
 
 	healthy_tvds = spa_healthy_core_tvds(spa);
 
-	if (load_nvlist(spa, spa->spa_config_object, &mos_config)
-	    != 0) {
+	if (load_nvlist(spa, spa->spa_config_object, &mos_config) != 0) {
 		spa_load_failed(spa, "unable to retrieve MOS config");
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 
 	/*
@@ -2973,7 +2977,7 @@ spa_ld_trusted_config(spa_t *spa, spa_import_type_t type,
 				spa_load_failed(spa, "config was already "
 				    "provided from MOS. Aborting.");
 				return (spa_vdev_err(rvd,
-				    VDEV_AUX_CORRUPT_DATA, EIO));
+				    VDEV_AUX_CORRUPT_DATA, SET_ERROR(EIO)));
 			}
 			spa_load_note(spa, "spa must be reloaded using MOS "
 			    "config");
@@ -2983,7 +2987,8 @@ spa_ld_trusted_config(spa_t *spa, spa_import_type_t type,
 
 	error = spa_check_for_missing_logs(spa);
 	if (error != 0)
-		return (spa_vdev_err(rvd, VDEV_AUX_BAD_GUID_SUM, ENXIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_BAD_GUID_SUM,
+		    SET_ERROR(ENXIO)));
 
 	if (rvd->vdev_guid_sum != spa->spa_uberblock.ub_guid_sum) {
 		spa_load_failed(spa, "uberblock guid sum doesn't match MOS "
@@ -2991,7 +2996,7 @@ spa_ld_trusted_config(spa_t *spa, spa_import_type_t type,
 		    (u_longlong_t)spa->spa_uberblock.ub_guid_sum,
 		    (u_longlong_t)rvd->vdev_guid_sum);
 		return (spa_vdev_err(rvd, VDEV_AUX_BAD_GUID_SUM,
-		    ENXIO));
+		    SET_ERROR(ENXIO)));
 	}
 
 	return (0);
@@ -3011,7 +3016,8 @@ spa_ld_open_indirect_vdev_metadata(spa_t *spa)
 	if (error != 0) {
 		spa_load_failed(spa, "spa_remove_init failed [error=%d]",
 		    error);
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 
 	/*
@@ -3039,17 +3045,20 @@ spa_ld_check_features(spa_t *spa, boolean_t *missing_feat_writep)
 
 		if (spa_dir_prop(spa, DMU_POOL_FEATURES_FOR_READ,
 		    &spa->spa_feat_for_read_obj, B_TRUE) != 0) {
-			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+			    SET_ERROR(EIO)));
 		}
 
 		if (spa_dir_prop(spa, DMU_POOL_FEATURES_FOR_WRITE,
 		    &spa->spa_feat_for_write_obj, B_TRUE) != 0) {
-			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+			    SET_ERROR(EIO)));
 		}
 
 		if (spa_dir_prop(spa, DMU_POOL_FEATURE_DESCRIPTIONS,
 		    &spa->spa_feat_desc_obj, B_TRUE) != 0) {
-			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+			    SET_ERROR(EIO)));
 		}
 
 		enabled_feat = fnvlist_alloc();
@@ -3106,7 +3115,7 @@ spa_ld_check_features(spa_t *spa, boolean_t *missing_feat_writep)
 		    spa_writeable(spa))) {
 			spa_load_failed(spa, "pool uses unsupported features");
 			return (spa_vdev_err(rvd, VDEV_AUX_UNSUP_FEAT,
-			    ENOTSUP));
+			    SET_ERROR(ENOTSUP)));
 		}
 
 		/*
@@ -3128,7 +3137,7 @@ spa_ld_check_features(spa_t *spa, boolean_t *missing_feat_writep)
 				    "for feature %s [error=%d]",
 				    spa_feature_table[i].fi_guid, error);
 				return (spa_vdev_err(rvd,
-				    VDEV_AUX_CORRUPT_DATA, EIO));
+				    VDEV_AUX_CORRUPT_DATA, SET_ERROR(EIO)));
 			}
 		}
 	}
@@ -3136,7 +3145,8 @@ spa_ld_check_features(spa_t *spa, boolean_t *missing_feat_writep)
 	if (spa_feature_is_active(spa, SPA_FEATURE_ENABLED_TXG)) {
 		if (spa_dir_prop(spa, DMU_POOL_FEATURE_ENABLED_TXG,
 		    &spa->spa_feat_enabled_txg_obj, B_TRUE) != 0)
-			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+			    SET_ERROR(EIO)));
 	}
 
 	return (0);
@@ -3153,7 +3163,8 @@ spa_ld_load_special_directories(spa_t *spa)
 	spa->spa_is_initializing = B_FALSE;
 	if (error != 0) {
 		spa_load_failed(spa, "dsl_pool_open failed [error=%d]", error);
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 
 	return (0);
@@ -3178,16 +3189,19 @@ spa_ld_get_props(spa_t *spa)
 	} else if (error != 0) {
 		spa_load_failed(spa, "unable to retrieve checksum salt from "
 		    "MOS [error=%d]", error);
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 
 	if (spa_dir_prop(spa, DMU_POOL_SYNC_BPOBJ, &obj, B_TRUE) != 0)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	error = bpobj_open(&spa->spa_deferred_bpobj, spa->spa_meta_objset, obj);
 	if (error != 0) {
 		spa_load_failed(spa, "error opening deferred-frees bpobj "
 		    "[error=%d]", error);
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 
 	/*
@@ -3197,12 +3211,14 @@ spa_ld_get_props(spa_t *spa)
 	 */
 	error = spa_dir_prop(spa, DMU_POOL_DEFLATE, &spa->spa_deflate, B_FALSE);
 	if (error != 0 && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 
 	error = spa_dir_prop(spa, DMU_POOL_CREATION_VERSION,
 	    &spa->spa_creation_version, B_FALSE);
 	if (error != 0 && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 
 	/*
 	 * Load the persistent error log.  If we have an older pool, this will
@@ -3211,12 +3227,14 @@ spa_ld_get_props(spa_t *spa)
 	error = spa_dir_prop(spa, DMU_POOL_ERRLOG_LAST, &spa->spa_errlog_last,
 	    B_FALSE);
 	if (error != 0 && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 
 	error = spa_dir_prop(spa, DMU_POOL_ERRLOG_SCRUB,
 	    &spa->spa_errlog_scrub, B_FALSE);
 	if (error != 0 && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 
 	/*
 	 * Load the history object.  If we have an older pool, this
@@ -3224,7 +3242,8 @@ spa_ld_get_props(spa_t *spa)
 	 */
 	error = spa_dir_prop(spa, DMU_POOL_HISTORY, &spa->spa_history, B_FALSE);
 	if (error != 0 && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 
 	/*
 	 * Load the per-vdev ZAP map. If we have an older pool, this will not
@@ -3237,7 +3256,8 @@ spa_ld_get_props(spa_t *spa)
 	nvlist_t *mos_config;
 	if (load_nvlist(spa, spa->spa_config_object, &mos_config) != 0) {
 		spa_load_failed(spa, "unable to retrieve MOS config");
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 
 	error = spa_dir_prop(spa, DMU_POOL_VDEV_ZAP_MAP,
@@ -3249,7 +3269,8 @@ spa_ld_get_props(spa_t *spa)
 		spa->spa_avz_action = AVZ_ACTION_INITIALIZE;
 		ASSERT0(vdev_count_verify_zaps(spa->spa_root_vdev));
 	} else if (error != 0) {
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	} else if (!nvlist_exists(mos_config, ZPOOL_CONFIG_HAS_PER_VDEV_ZAPS)) {
 		/*
 		 * An older version of ZFS overwrote the sentinel value, so
@@ -3270,7 +3291,8 @@ spa_ld_get_props(spa_t *spa)
 	error = spa_dir_prop(spa, DMU_POOL_PROPS, &spa->spa_pool_props_object,
 	    B_FALSE);
 	if (error && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 
 	if (error == 0) {
 		uint64_t autoreplace;
@@ -3320,13 +3342,15 @@ spa_ld_open_aux_vdevs(spa_t *spa, spa_import_type_t type)
 	error = spa_dir_prop(spa, DMU_POOL_SPARES, &spa->spa_spares.sav_object,
 	    B_FALSE);
 	if (error != 0 && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	if (error == 0 && type != SPA_IMPORT_ASSEMBLE) {
 		ASSERT(spa_version(spa) >= SPA_VERSION_SPARES);
 		if (load_nvlist(spa, spa->spa_spares.sav_object,
 		    &spa->spa_spares.sav_config) != 0) {
 			spa_load_failed(spa, "error loading spares nvlist");
-			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+			    SET_ERROR(EIO)));
 		}
 
 		spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
@@ -3342,13 +3366,15 @@ spa_ld_open_aux_vdevs(spa_t *spa, spa_import_type_t type)
 	error = spa_dir_prop(spa, DMU_POOL_L2CACHE,
 	    &spa->spa_l2cache.sav_object, B_FALSE);
 	if (error != 0 && error != ENOENT)
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	if (error == 0 && type != SPA_IMPORT_ASSEMBLE) {
 		ASSERT(spa_version(spa) >= SPA_VERSION_L2CACHE);
 		if (load_nvlist(spa, spa->spa_l2cache.sav_object,
 		    &spa->spa_l2cache.sav_config) != 0) {
 			spa_load_failed(spa, "error loading l2cache nvlist");
-			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+			return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+			    SET_ERROR(EIO)));
 		}
 
 		spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
@@ -3415,7 +3441,8 @@ spa_ld_load_dedup_tables(spa_t *spa)
 	error = ddt_load(spa);
 	if (error != 0) {
 		spa_load_failed(spa, "ddt_load failed [error=%d]", error);
-		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
+		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA,
+		    SET_ERROR(EIO)));
 	}
 
 	return (0);
@@ -3436,7 +3463,7 @@ spa_ld_verify_logs(spa_t *spa, spa_import_type_t type, char **ereport)
 				*ereport = FM_EREPORT_ZFS_LOG_REPLAY;
 				spa_load_failed(spa, "spa_check_logs failed");
 				return (spa_vdev_err(rvd, VDEV_AUX_BAD_LOG,
-				    ENXIO));
+				    SET_ERROR(ENXIO)));
 			}
 		}
 	}
@@ -3917,7 +3944,7 @@ spa_load_impl(spa_t *spa, spa_import_type_t type, char **ereport)
 		 * information and can return to userland.
 		 */
 		return (spa_vdev_err(spa->spa_root_vdev, VDEV_AUX_UNSUP_FEAT,
-		    ENOTSUP));
+		    SET_ERROR(ENOTSUP)));
 	}
 
 	/*
@@ -5444,7 +5471,7 @@ spa_import_rootpool(const char *name)
 		nvlist_free(config);
 		cmn_err(CE_NOTE, "Cannot find the pool label for '%s'",
 		    name);
-		return (EIO);
+		return (SET_ERROR(EIO));
 	} else {
 		VERIFY(nvlist_dup(spa->spa_config, &config, KM_SLEEP) == 0);
 	}
@@ -5974,7 +6001,7 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 		nl2cache = 0;
 
 	if (vd->vdev_children == 0 && nspares == 0 && nl2cache == 0)
-		return (spa_vdev_exit(spa, vd, txg, EINVAL));
+		return (spa_vdev_exit(spa, vd, txg, SET_ERROR(EINVAL)));
 
 	if (vd->vdev_children != 0 &&
 	    (error = vdev_create(vd, txg, B_FALSE)) != 0)
@@ -5999,11 +6026,13 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 			tvd = vd->vdev_child[c];
 			if (spa->spa_vdev_removal != NULL &&
 			    tvd->vdev_ashift != spa->spa_max_ashift) {
-				return (spa_vdev_exit(spa, vd, txg, EINVAL));
+				return (spa_vdev_exit(spa, vd, txg,
+				    SET_ERROR(EINVAL)));
 			}
 			/* Fail if top level vdev is raidz */
 			if (tvd->vdev_ops == &vdev_raidz_ops) {
-				return (spa_vdev_exit(spa, vd, txg, EINVAL));
+				return (spa_vdev_exit(spa, vd, txg,
+				    SET_ERROR(EINVAL)));
 			}
 			/*
 			 * Need the top level mirror to be
@@ -6015,7 +6044,7 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 					vdev_t *cvd = tvd->vdev_child[cid];
 					if (!cvd->vdev_ops->vdev_op_leaf) {
 						return (spa_vdev_exit(spa, vd,
-						    txg, EINVAL));
+						    txg, SET_ERROR(EINVAL)));
 					}
 				}
 			}
@@ -6115,27 +6144,27 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 	}
 
 	if (spa->spa_vdev_removal != NULL)
-		return (spa_vdev_exit(spa, NULL, txg, EBUSY));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EBUSY)));
 
 	if (oldvd == NULL)
-		return (spa_vdev_exit(spa, NULL, txg, ENODEV));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(ENODEV)));
 
 	if (!oldvd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_exit(spa, NULL, txg, ENOTSUP));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(ENOTSUP)));
 
 	pvd = oldvd->vdev_parent;
 
 	if ((error = spa_config_parse(spa, &newrootvd, nvroot, NULL, 0,
 	    VDEV_ALLOC_ATTACH)) != 0)
-		return (spa_vdev_exit(spa, NULL, txg, EINVAL));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EINVAL)));
 
 	if (newrootvd->vdev_children != 1)
-		return (spa_vdev_exit(spa, newrootvd, txg, EINVAL));
+		return (spa_vdev_exit(spa, newrootvd, txg, SET_ERROR(EINVAL)));
 
 	newvd = newrootvd->vdev_child[0];
 
 	if (!newvd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_exit(spa, newrootvd, txg, EINVAL));
+		return (spa_vdev_exit(spa, newrootvd, txg, SET_ERROR(EINVAL)));
 
 	if ((error = vdev_create(newrootvd, txg, replacing)) != 0)
 		return (spa_vdev_exit(spa, newrootvd, txg, error));
@@ -6144,7 +6173,7 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 	 * Spares can't replace logs
 	 */
 	if (oldvd->vdev_top->vdev_islog && newvd->vdev_isspare)
-		return (spa_vdev_exit(spa, newrootvd, txg, ENOTSUP));
+		return (spa_vdev_exit(spa, newrootvd, txg, SET_ERROR(ENOTSUP)));
 
 	if (!replacing) {
 		/*
@@ -6153,7 +6182,8 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 		 */
 		if (pvd->vdev_ops != &vdev_mirror_ops &&
 		    pvd->vdev_ops != &vdev_root_ops)
-			return (spa_vdev_exit(spa, newrootvd, txg, ENOTSUP));
+			return (spa_vdev_exit(spa, newrootvd, txg,
+			    SET_ERROR(ENOTSUP)));
 
 		pvops = &vdev_mirror_ops;
 	} else {
@@ -6164,7 +6194,8 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 		if (pvd->vdev_ops == &vdev_spare_ops &&
 		    oldvd->vdev_isspare &&
 		    !spa_has_spare(spa, newvd->vdev_guid))
-			return (spa_vdev_exit(spa, newrootvd, txg, ENOTSUP));
+			return (spa_vdev_exit(spa, newrootvd, txg,
+			    SET_ERROR(ENOTSUP)));
 
 		/*
 		 * If the source is a hot spare, and the parent isn't already a
@@ -6176,10 +6207,12 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 		 */
 		if (pvd->vdev_ops == &vdev_replacing_ops &&
 		    spa_version(spa) < SPA_VERSION_MULTI_REPLACE) {
-			return (spa_vdev_exit(spa, newrootvd, txg, ENOTSUP));
+			return (spa_vdev_exit(spa, newrootvd, txg,
+			    SET_ERROR(ENOTSUP)));
 		} else if (pvd->vdev_ops == &vdev_spare_ops &&
 		    newvd->vdev_isspare != oldvd->vdev_isspare) {
-			return (spa_vdev_exit(spa, newrootvd, txg, ENOTSUP));
+			return (spa_vdev_exit(spa, newrootvd, txg,
+			    SET_ERROR(ENOTSUP)));
 		}
 
 		if (newvd->vdev_isspare)
@@ -6192,14 +6225,16 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 	 * Make sure the new device is big enough.
 	 */
 	if (newvd->vdev_asize < vdev_get_min_asize(oldvd))
-		return (spa_vdev_exit(spa, newrootvd, txg, EOVERFLOW));
+		return (spa_vdev_exit(spa, newrootvd, txg,
+		    SET_ERROR(EOVERFLOW)));
 
 	/*
 	 * The new device cannot have a higher alignment requirement
 	 * than the top-level vdev.
 	 */
 	if (newvd->vdev_ashift > oldvd->vdev_top->vdev_ashift)
-		return (spa_vdev_exit(spa, newrootvd, txg, EDOM));
+		return (spa_vdev_exit(spa, newrootvd, txg,
+		    SET_ERROR(EDOM)));
 
 	/*
 	 * If this is an in-place replacement, update oldvd's path and devid
@@ -6343,10 +6378,10 @@ spa_vdev_detach(spa_t *spa, uint64_t guid, uint64_t pguid, int replace_done)
 	}
 
 	if (vd == NULL)
-		return (spa_vdev_exit(spa, NULL, txg, ENODEV));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(ENODEV)));
 
 	if (!vd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_exit(spa, NULL, txg, ENOTSUP));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(ENOTSUP)));
 
 	pvd = vd->vdev_parent;
 
@@ -6364,14 +6399,14 @@ spa_vdev_detach(spa_t *spa, uint64_t guid, uint64_t pguid, int replace_done)
 	 * that C's parent is still the replacing vdev R.
 	 */
 	if (pvd->vdev_guid != pguid && pguid != 0)
-		return (spa_vdev_exit(spa, NULL, txg, EBUSY));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EBUSY)));
 
 	/*
 	 * Only 'replacing' or 'spare' vdevs can be replaced.
 	 */
 	if (replace_done && pvd->vdev_ops != &vdev_replacing_ops &&
 	    pvd->vdev_ops != &vdev_spare_ops)
-		return (spa_vdev_exit(spa, NULL, txg, ENOTSUP));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(ENOTSUP)));
 
 	ASSERT(pvd->vdev_ops != &vdev_spare_ops ||
 	    spa_version(spa) >= SPA_VERSION_SPARES);
@@ -6382,14 +6417,14 @@ spa_vdev_detach(spa_t *spa, uint64_t guid, uint64_t pguid, int replace_done)
 	if (pvd->vdev_ops != &vdev_replacing_ops &&
 	    pvd->vdev_ops != &vdev_mirror_ops &&
 	    pvd->vdev_ops != &vdev_spare_ops)
-		return (spa_vdev_exit(spa, NULL, txg, ENOTSUP));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(ENOTSUP)));
 
 	/*
 	 * If this device has the only valid copy of some data,
 	 * we cannot safely detach it.
 	 */
 	if (vdev_dtl_required(vd))
-		return (spa_vdev_exit(spa, NULL, txg, EBUSY));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EBUSY)));
 
 	ASSERT(pvd->vdev_children >= 2);
 
@@ -6681,7 +6716,7 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 
 	/* check new spa name before going any further */
 	if (spa_lookup(newname) != NULL)
-		return (spa_vdev_exit(spa, NULL, txg, EEXIST));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EEXIST)));
 
 	/*
 	 * scan through all the children to ensure they're all mirrors
@@ -6689,7 +6724,7 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 	if (nvlist_lookup_nvlist(config, ZPOOL_CONFIG_VDEV_TREE, &nvl) != 0 ||
 	    nvlist_lookup_nvlist_array(nvl, ZPOOL_CONFIG_CHILDREN, &child,
 	    &children) != 0)
-		return (spa_vdev_exit(spa, NULL, txg, EINVAL));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EINVAL)));
 
 	/* first, check to ensure we've got the right child count */
 	rvd = spa->spa_root_vdev;
@@ -6707,12 +6742,12 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 		lastlog = 0;
 	}
 	if (children != (lastlog != 0 ? lastlog : rvd->vdev_children))
-		return (spa_vdev_exit(spa, NULL, txg, EINVAL));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EINVAL)));
 
 	/* next, ensure no spare or cache devices are part of the split */
 	if (nvlist_lookup_nvlist(nvl, ZPOOL_CONFIG_SPARES, &tmp) == 0 ||
 	    nvlist_lookup_nvlist(nvl, ZPOOL_CONFIG_L2CACHE, &tmp) == 0)
-		return (spa_vdev_exit(spa, NULL, txg, EINVAL));
+		return (spa_vdev_exit(spa, NULL, txg, SET_ERROR(EINVAL)));
 
 	vml = kmem_zalloc(children * sizeof (vdev_t *), KM_SLEEP);
 	glist = kmem_zalloc(children * sizeof (uint64_t), KM_SLEEP);
@@ -7099,10 +7134,10 @@ spa_vdev_set_common(spa_t *spa, uint64_t guid, const char *value,
 	spa_vdev_state_enter(spa, SCL_ALL);
 
 	if ((vd = spa_lookup_by_guid(spa, guid, B_TRUE)) == NULL)
-		return (spa_vdev_state_exit(spa, NULL, ENOENT));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENOENT)));
 
 	if (!vd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_state_exit(spa, NULL, ENOTSUP));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENOTSUP)));
 
 	if (ispath) {
 		if (strcmp(value, vd->vdev_path) != 0) {

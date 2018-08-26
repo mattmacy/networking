@@ -850,7 +850,7 @@ vdev_geom_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 
 	if (cp == NULL) {
 		ZFS_LOG(1, "Vdev %s not found.", vd->vdev_path);
-		error = ENOENT;
+		error = SET_ERROR(ENOENT);
 	} else {
 		struct consumer_priv_t *priv;
 		struct consumer_vdev_elem *elem;

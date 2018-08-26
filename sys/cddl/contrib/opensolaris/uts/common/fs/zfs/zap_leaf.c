@@ -467,7 +467,7 @@ zap_leaf_lookup_closest(zap_leaf_t *l,
 		}
 	}
 
-	return (bestcd == -1U ? ENOENT : 0);
+	return (bestcd == -1U ? SET_ERROR(ENOENT) : 0);
 }
 
 int
@@ -566,7 +566,7 @@ zap_entry_create(zap_leaf_t *l, zap_name_t *zn, uint32_t cd,
 	int numchunks = 1 + ZAP_LEAF_ARRAY_NCHUNKS(zn->zn_key_orig_numints *
 	    zn->zn_key_intlen) + ZAP_LEAF_ARRAY_NCHUNKS(valuelen);
 	if (numchunks > ZAP_LEAF_NUMCHUNKS(l))
-		return (E2BIG);
+		return (SET_ERROR(E2BIG));
 
 	if (cd == ZAP_NEED_CD) {
 		/* find the lowest unused cd */
