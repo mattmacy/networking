@@ -929,7 +929,7 @@ vdev_label_init(vdev_t *vd, uint64_t crtxg, vdev_labeltype_t reason)
 		nvlist_free(label);
 		abd_free(vp_abd);
 		/* EFAULT means nvlist_pack ran out of room */
-		return (error == EFAULT ? ENAMETOOLONG : EINVAL);
+		return (error == EFAULT ? SET_ERROR(ENAMETOOLONG) : EINVAL);
 	}
 
 	/*
@@ -1020,7 +1020,7 @@ vdev_label_write_pad2(vdev_t *vd, const char *buf, size_t size)
 	if (!vd->vdev_ops->vdev_op_leaf)
 		return (ENODEV);
 	if (vdev_is_dead(vd))
-		return (ENXIO);
+		return (SET_ERROR(ENXIO));
 
 	ASSERT(spa_config_held(spa, SCL_ALL, RW_WRITER) == SCL_ALL);
 

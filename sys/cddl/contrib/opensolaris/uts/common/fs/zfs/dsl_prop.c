@@ -74,7 +74,7 @@ int
 dsl_prop_get_dd(dsl_dir_t *dd, const char *propname,
     int intsz, int numints, void *buf, char *setpoint, boolean_t snapshot)
 {
-	int err = ENOENT;
+	int err;
 	dsl_dir_t *target = dd;
 	objset_t *mos = dd->dd_pool->dp_meta_objset;
 	zfs_prop_t prop;
@@ -93,14 +93,21 @@ dsl_prop_get_dd(dsl_dir_t *dd, const char *propname,
 	inheritstr = kmem_asprintf("%s%s", propname, ZPROP_INHERIT_SUFFIX);
 	recvdstr = kmem_asprintf("%s%s", propname, ZPROP_RECVD_SUFFIX);
 
+	if (dd == NULL) {
+		err = SET_ERROR(ENOENT);
+		goto out;
+	}
+
 	/*
 	 * Note: dd may become NULL, therefore we shouldn't dereference it
 	 * after this loop.
 	 */
 	for (; dd != NULL; dd = dd->dd_parent) {
 		if (dd != target || snapshot) {
-			if (!inheritable)
+			if (!inheritable) {
+				err = SET_ERROR(ENOENT);
 				break;
+			}
 			inheriting = B_TRUE;
 		}
 
@@ -148,6 +155,7 @@ dsl_prop_get_dd(dsl_dir_t *dd, const char *propname,
 		err = SET_ERROR(ENOENT);
 	}
 
+out:
 	if (err == ENOENT)
 		err = dodefault(prop, intsz, numints, buf);
 
@@ -835,7 +843,7 @@ dsl_props_set_check(void *arg, dmu_tx_t *tx)
 			    SPA_VERSION_STMF_PROP ?
 			    ZAP_OLDMAXVALUELEN : ZAP_MAXVALUELEN)) {
 				dsl_dataset_rele(ds, FTAG);
-				return (E2BIG);
+				return (SET_ERROR(E2BIG));
 			}
 		}
 	}

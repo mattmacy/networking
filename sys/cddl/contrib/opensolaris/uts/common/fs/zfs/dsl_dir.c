@@ -1076,7 +1076,7 @@ dsl_dir_get_filesystem_count(dsl_dir_t *dd, uint64_t *count)
 		return (zap_lookup(os, dd->dd_object, DD_FIELD_FILESYSTEM_COUNT,
 		    sizeof (*count), 1, count));
 	} else {
-		return (ENOENT);
+		return (SET_ERROR(ENOENT));
 	}
 }
 
@@ -1088,7 +1088,7 @@ dsl_dir_get_snapshot_count(dsl_dir_t *dd, uint64_t *count)
 		return (zap_lookup(os, dd->dd_object, DD_FIELD_SNAPSHOT_COUNT,
 		    sizeof (*count), 1, count));
 	} else {
-		return (ENOENT);
+		return (SET_ERROR(ENOENT));
 	}
 }
 
@@ -1100,7 +1100,7 @@ dsl_dir_get_remaptxg(dsl_dir_t *dd, uint64_t *count)
 		return (zap_lookup(os, dd->dd_object, DD_FIELD_LAST_REMAP_TXG,
 		    sizeof (*count), 1, count));
 	} else {
-		return (ENOENT);
+		return (SET_ERROR(ENOENT));
 	}
 }
 
@@ -1282,7 +1282,7 @@ dsl_dir_tempreserve_impl(dsl_dir_t *dd, uint64_t asize, boolean_t netfree,
 	uint64_t txg = tx->tx_txg;
 	uint64_t quota;
 	struct tempreserve *tr;
-	int retval = EDQUOT;
+	int retval = 0;
 	uint64_t ref_rsrv = 0;
 
 	ASSERT3U(txg, !=, 0);
@@ -1343,7 +1343,7 @@ dsl_dir_tempreserve_impl(dsl_dir_t *dd, uint64_t asize, boolean_t netfree,
 
 		if (avail < quota) {
 			quota = avail;
-			retval = ENOSPC;
+			retval = SET_ERROR(ENOSPC);
 		}
 	}
 
@@ -1356,13 +1356,15 @@ dsl_dir_tempreserve_impl(dsl_dir_t *dd, uint64_t asize, boolean_t netfree,
 	if (used_on_disk + est_inflight >= quota) {
 		if (est_inflight > 0 || used_on_disk < quota ||
 		    (retval == ENOSPC && used_on_disk < quota + deferred))
-			retval = ERESTART;
+			retval = SET_ERROR(ERESTART);
+		else
+			retval = SET_ERROR(EDQUOT);
 		dprintf_dd(dd, "failing: used=%lluK inflight = %lluK "
 		    "quota=%lluK tr=%lluK err=%d\n",
 		    used_on_disk>>10, est_inflight>>10,
 		    quota>>10, asize>>10, retval);
 		mutex_exit(&dd->dd_lock);
-		return (SET_ERROR(retval));
+		return (retval);
 	}
 
 	/* We need to up our estimated delta before dropping dd_lock */

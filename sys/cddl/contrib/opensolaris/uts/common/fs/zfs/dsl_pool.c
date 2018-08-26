@@ -219,7 +219,7 @@ sysctl_zfs_dirty_data_max_percent(SYSCTL_HANDLER_ARGS)
 		return (err);
 
 	if (val < 0 || val > 100)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	zfs_dirty_data_max_percent = val;
 
@@ -237,7 +237,7 @@ sysctl_zfs_delay_min_dirty_percent(SYSCTL_HANDLER_ARGS)
 		return (err);
 
 	if (val < zfs_vdev_async_write_active_max_dirty_percent)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	zfs_delay_min_dirty_percent = val;
 
@@ -256,7 +256,7 @@ sysctl_zfs_delay_scale(SYSCTL_HANDLER_ARGS)
 		return (err);
 
 	if (val > UINT64_MAX / zfs_dirty_data_max)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	zfs_delay_scale = val;
 

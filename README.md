@@ -8,7 +8,6 @@ NOTES:
 TODO (either simple or required for async cow):
 - refactor out txg thread name change
 - refactor out txg / sync context changes (probable conflict upstream)
-- refactor out SET_ERRORs
 - refactor out dmu context changes
 - refactor out dbuf dirty state changes
 - port forward async cow specific bits

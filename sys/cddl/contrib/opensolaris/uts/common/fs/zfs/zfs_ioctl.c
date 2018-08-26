@@ -681,7 +681,7 @@ zfs_secpolicy_setprop(const char *dsname, zfs_prop_t prop, nvpair_t *propval,
 				return (err);
 		}
 #else
-		return (EOPNOTSUPP);
+		return (SET_ERROR(EOPNOTSUPP));
 #endif
 		break;
 	}
@@ -2440,7 +2440,7 @@ zfs_ioc_snapshot_list_next(zfs_cmd_t *zc)
 
 	error = dmu_objset_hold(zc->zc_name, FTAG, &os);
 	if (error != 0) {
-		return (error == ENOENT ? ESRCH : error);
+		return (error == ENOENT ? SET_ERROR(ESRCH) : error);
 	}
 
 	/*
@@ -2818,7 +2818,7 @@ zfs_check_userprops(const char *fsname, nvlist_t *nvl)
 			return (SET_ERROR(ENAMETOOLONG));
 
 		if (strlen(fnvpair_value_string(pair)) >= ZAP_MAXVALUELEN)
-			return (E2BIG);
+			return (SET_ERROR(E2BIG));
 	}
 	return (0);
 }
@@ -3613,13 +3613,13 @@ zfs_ioc_nextboot(const char *unused, nvlist_t *innvl, nvlist_t *outnvl)
 
 	if (nvlist_lookup_uint64(innvl,
 	    ZPOOL_CONFIG_POOL_GUID, &pool_guid) != 0)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	if (nvlist_lookup_uint64(innvl,
 	    ZPOOL_CONFIG_GUID, &vdev_guid) != 0)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	if (nvlist_lookup_string(innvl,
 	    "command", &command) != 0)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	mutex_enter(&spa_namespace_lock);
 	spa = spa_by_guid(pool_guid, vdev_guid);
@@ -3627,16 +3627,16 @@ zfs_ioc_nextboot(const char *unused, nvlist_t *innvl, nvlist_t *outnvl)
 		strcpy(name, spa_name(spa));
 	mutex_exit(&spa_namespace_lock);
 	if (spa == NULL)
-		return (ENOENT);
+		return (SET_ERROR(ENOENT));
 
 	if ((error = spa_open(name, &spa, FTAG)) != 0)
 		return (error);
 	spa_vdev_state_enter(spa, SCL_ALL);
 	vd = spa_lookup_by_guid(spa, vdev_guid, B_TRUE);
 	if (vd == NULL) {
-		(void) spa_vdev_state_exit(spa, NULL, ENXIO);
+		(void) spa_vdev_state_exit(spa, NULL, SET_ERROR(ENXIO));
 		spa_close(spa, FTAG);
-		return (ENODEV);
+		return (SET_ERROR(ENODEV));
 	}
 	error = vdev_label_write_pad2(vd, command, strlen(command));
 	(void) spa_vdev_state_exit(spa, NULL, 0);
@@ -3875,7 +3875,7 @@ zfs_ioc_channel_program(const char *poolname, nvlist_t *innvl,
 	nvpair_t *nvarg = NULL;
 
 	if (0 != nvlist_lookup_string(innvl, ZCP_ARG_PROGRAM, &program)) {
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	}
 	if (0 != nvlist_lookup_boolean_value(innvl, ZCP_ARG_SYNC, &sync_flag)) {
 		sync_flag = B_TRUE;
@@ -3887,13 +3887,13 @@ zfs_ioc_channel_program(const char *poolname, nvlist_t *innvl,
 		memlimit = ZCP_DEFAULT_MEMLIMIT;
 	}
 	if (0 != nvlist_lookup_nvpair(innvl, ZCP_ARG_ARGLIST, &nvarg)) {
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	}
 
 	if (instrlimit == 0 || instrlimit > zfs_lua_max_instrlimit)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	if (memlimit == 0 || memlimit > zfs_lua_max_memlimit)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	return (zcp_eval(poolname, program, sync_flag, instrlimit, memlimit,
 	    nvarg, outnvl));
@@ -5061,9 +5061,10 @@ zfs_ioc_clear(zfs_cmd_t *zc)
 	} else {
 		vd = spa_lookup_by_guid(spa, zc->zc_guid, B_TRUE);
 		if (vd == NULL) {
-			(void) spa_vdev_state_exit(spa, NULL, ENODEV);
+			error = SET_ERROR(ENODEV);
+			(void) spa_vdev_state_exit(spa, NULL, error);
 			spa_close(spa, FTAG);
-			return (SET_ERROR(ENODEV));
+			return (error);
 		}
 	}
 
@@ -5432,7 +5433,7 @@ zfs_ioc_share(zfs_cmd_t *zc)
 	return (error);
 
 #else	/* !illumos */
-	return (ENOSYS);
+	return (SET_ERROR(ENOSYS));
 #endif	/* illumos */
 }
 
@@ -5691,7 +5692,7 @@ zfs_ioc_smb_acl(zfs_cmd_t *zc)
 
 	return (error);
 #else	/* !illumos */
-	return (EOPNOTSUPP);
+	return (SET_ERROR(EOPNOTSUPP));
 #endif	/* illumos */
 }
 
@@ -6700,7 +6701,7 @@ zfsdev_ioctl(struct cdev *dev, u_long zcmd, caddr_t arg, int flag,
 		case sizeof(zfs_cmd_v15_t):
 			if (cmd >= sizeof(zfs_ioctl_v15_to_v28) /
 			    sizeof(zfs_ioctl_v15_to_v28[0]))
-				return (EINVAL);
+				return (SET_ERROR(EINVAL));
 
 			cflag = ZFS_CMD_COMPAT_V15;
 			vecnum = zfs_ioctl_v15_to_v28[cmd];
@@ -6712,10 +6713,10 @@ zfsdev_ioctl(struct cdev *dev, u_long zcmd, caddr_t arg, int flag,
 			if (vecnum == ZFS_IOC_COMPAT_PASS)
 				return (0);
 			else if (vecnum == ZFS_IOC_COMPAT_FAIL)
-				return (ENOTSUP);
+				return (SET_ERROR(ENOTSUP));
 			break;
 		default:
-			return (EINVAL);
+			return (SET_ERROR(EINVAL));
 		}
 	}
 
@@ -7250,7 +7251,7 @@ zfs__fini(void)
 {
 	if (spa_busy() || zfs_busy() || zvol_busy() ||
 	    zio_injection_enabled) {
-		return (EBUSY);
+		return (SET_ERROR(EBUSY));
 	}
 
 	zfsdev_fini();
@@ -7303,7 +7304,7 @@ zfs_modevent(module_t mod, int type, void *unused __unused)
 	default:
 		break;
 	}
-	return (EOPNOTSUPP);
+	return (SET_ERROR(EOPNOTSUPP));
 }
 
 static moduledata_t zfs_mod = {

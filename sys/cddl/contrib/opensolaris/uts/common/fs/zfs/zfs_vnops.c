@@ -983,7 +983,7 @@ zfs_write(vnode_t *vp, uio_t *uio, int ioflag, cred_t *cr, caller_context_t *ct)
 	if (vn_rlimit_fsize(vp, uio, uio->uio_td)) {
 		zfs_range_unlock(rl);
 		ZFS_EXIT(zfsvfs);
-		return (EFBIG);
+		return (SET_ERROR(EFBIG));
 	}
 
 	if (woff >= limit) {
@@ -3842,7 +3842,7 @@ zfs_rename(vnode_t *sdvp, vnode_t **svpp, struct componentname *scnp,
 		if ((scnp->cn_namelen == 1 && scnp->cn_nameptr[0] == '.') ||
 		    sdzp == szp ||
 		    (scnp->cn_flags | tcnp->cn_flags) & ISDOTDOT) {
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 			goto unlockout;
 		}
 
@@ -4482,7 +4482,7 @@ zfs_pathconf(vnode_t *vp, int cmd, ulong_t *valp, cred_t *cr,
 		return (0);
 
 	default:
-		return (EOPNOTSUPP);
+		return (SET_ERROR(EOPNOTSUPP));
 	}
 }
 
@@ -4933,7 +4933,7 @@ zfs_freebsd_access(ap)
 	 */
 	if (error == 0 && (ap->a_accmode & VEXEC) != 0 && vp->v_type != VDIR &&
 	    (zp->z_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
-		error = EACCES;
+		error = SET_ERROR(EACCES);
 	}
 
 	return (error);
@@ -5177,7 +5177,7 @@ zfs_freebsd_setattr(ap)
 		int error;
 
 		if (zfsvfs->z_use_fuids == B_FALSE)
-			return (EOPNOTSUPP);
+			return (SET_ERROR(EOPNOTSUPP));
 
 		fflags = vap->va_flags;
 		/*
@@ -5190,7 +5190,7 @@ zfs_freebsd_setattr(ap)
 		if ((fflags & ~(SF_IMMUTABLE|SF_APPEND|SF_NOUNLINK|UF_ARCHIVE|
 		     UF_NODUMP|UF_SYSTEM|UF_HIDDEN|UF_READONLY|UF_REPARSE|
 		     UF_OFFLINE|UF_SPARSE)) != 0)
-			return (EOPNOTSUPP);
+			return (SET_ERROR(EOPNOTSUPP));
 		/*
 		 * Unprivileged processes are not permitted to unset system
 		 * flags, or modify flags if any system flags are set.
@@ -5217,11 +5217,11 @@ zfs_freebsd_setattr(ap)
 				return (error);
 			if (zflags &
 			    (ZFS_IMMUTABLE | ZFS_APPENDONLY | ZFS_NOUNLINK)) {
-				return (EPERM);
+				return (SET_ERROR(EPERM));
 			}
 			if (fflags &
 			    (SF_IMMUTABLE | SF_APPEND | SF_NOUNLINK)) {
-				return (EPERM);
+				return (SET_ERROR(EPERM));
 			}
 		}
 
@@ -5344,7 +5344,7 @@ zfs_freebsd_link(ap)
 	vnode_t *tdvp = ap->a_tdvp;
 
 	if (tdvp->v_mount != vp->v_mount)
-		return (EXDEV);
+		return (SET_ERROR(EXDEV));
 
 	ASSERT(cnp->cn_flags & SAVENAME);
 
@@ -5435,7 +5435,7 @@ zfs_freebsd_pathconf(ap)
 			*ap->a_retval = PIPE_BUF;
 			return (0);
 		}
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	default:
 		return (vop_stdpathconf(ap));
 	}
@@ -5458,10 +5458,10 @@ zfs_create_attrname(int attrnamespace, const char *name, char *attrname,
 
 	/* We don't allow '/' character in attribute name. */
 	if (strchr(name, '/') != NULL)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	/* We don't allow attribute names that start with "freebsd:" string. */
 	if (strncmp(name, "freebsd:", 8) == 0)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	bzero(attrname, size);
 
@@ -5486,11 +5486,11 @@ zfs_create_attrname(int attrnamespace, const char *name, char *attrname,
 		break;
 	case EXTATTR_NAMESPACE_EMPTY:
 	default:
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	}
 	if (snprintf(attrname, size, "%s%s%s%s", prefix, namespace, suffix,
 	    name) >= size) {
-		return (ENAMETOOLONG);
+		return (SET_ERROR(ENAMETOOLONG));
 	}
 	return (0);
 }
@@ -5837,7 +5837,7 @@ zfs_freebsd_getacl(ap)
 	vsecattr_t      vsecattr;
 
 	if (ap->a_type != ACL_TYPE_NFS4)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	vsecattr.vsa_mask = VSA_ACE | VSA_ACECNT;
 	if (error = zfs_getsecattr(ap->a_vp, &vsecattr, 0, ap->a_cred, NULL))
@@ -5866,13 +5866,13 @@ zfs_freebsd_setacl(ap)
 	aclent_t	*aaclp;
 
 	if (ap->a_type != ACL_TYPE_NFS4)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	if (ap->a_aclp == NULL)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	if (ap->a_aclp->acl_cnt < 1 || ap->a_aclp->acl_cnt > MAX_ACL_ENTRIES)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	/*
 	 * With NFSv4 ACLs, chmod(2) may need to add additional entries,
@@ -5881,7 +5881,7 @@ zfs_freebsd_setacl(ap)
 	 * cause chmod(2) to run out of ACL entries.
 	 */
 	if (ap->a_aclp->acl_cnt * 2 + 6 > ACL_MAX_ENTRIES)
-		return (ENOSPC);
+		return (SET_ERROR(ENOSPC));
 
 	error = acl_nfs4_check(ap->a_aclp, ap->a_vp->v_type == VDIR);
 	if (error != 0)
@@ -5911,7 +5911,7 @@ zfs_freebsd_aclcheck(ap)
 	} */ *ap;
 {
 
-	return (EOPNOTSUPP);
+	return (SET_ERROR(EOPNOTSUPP));
 }
 
 static int

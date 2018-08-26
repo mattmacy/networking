@@ -140,7 +140,7 @@ zfs_getquota(zfsvfs_t *zfsvfs, uid_t id, int isgroup, struct dqblk64 *dqp)
 	quotaobj = isgroup ? zfsvfs->z_groupquota_obj : zfsvfs->z_userquota_obj;
 
 	if (quotaobj == 0 || zfsvfs->z_replay) {
-		error = ENOENT;
+		error = SET_ERROR(ENOENT);
 		goto done;
 	}
 	(void)sprintf(buf, "%llx", (longlong_t)id);
@@ -197,7 +197,7 @@ zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg)
 			id = td->td_ucred->cr_rgid;
 			break;
 		default:
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 			goto done;
 		}
 	}
@@ -216,7 +216,7 @@ zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg)
 		else if (type == GRPQUOTA)
 			quota_type = ZFS_PROP_GROUPQUOTA;
 		else
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 		break;
 	case Q_GETQUOTA:
 	case Q_GETQUOTA32:
@@ -225,7 +225,7 @@ zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg)
 		else if (type == GRPQUOTA)
 			quota_type = ZFS_PROP_GROUPUSED;
 		else
-			error = EINVAL;
+			error = SET_ERROR(EINVAL);
 		break;
 	}
 
@@ -243,7 +243,7 @@ zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg)
 	 * See zfs_set_userquota() to set a quota.
 	 */
 	if ((u_int)type >= MAXQUOTAS) {
-		error = EINVAL;
+		error = SET_ERROR(EINVAL);
 		goto done;
 	}
 
@@ -257,7 +257,7 @@ zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg)
 		error = 0;
 		break;
 	case Q_QUOTAOFF:
-		error = ENOTSUP;
+		error = SET_ERROR(ENOTSUP);
 		break;
 	case Q_SETQUOTA:
 		error = copyin(&dqblk, arg, sizeof(dqblk));
@@ -271,7 +271,7 @@ zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg)
 			error = copyout(&dqblk, arg, sizeof(dqblk));
 		break;
 	default:
-		error = EINVAL;
+		error = SET_ERROR(EINVAL);
 		break;
 	}
 done:
@@ -580,7 +580,7 @@ zfs_register_callbacks(vfs_t *vfsp)
 	 * mount point, which isn't really supported.
 	 */
 	if (dmu_objset_is_snapshot(os))
-		return (EOPNOTSUPP);
+		return (SET_ERROR(EOPNOTSUPP));
 
 	/*
 	 * The act of registering our callbacks will destroy any mount
@@ -1651,7 +1651,7 @@ zfs_check_global_label(const char *dsname, const char *hexsl)
 		if (dsl_prop_get_integer(dsname,
 		    zfs_prop_to_name(ZFS_PROP_READONLY), &rdonly, NULL))
 			return (SET_ERROR(EACCES));
-		return (rdonly ? 0 : EACCES);
+		return (rdonly ? 0 : SET_ERROR(EACCES));
 	}
 	return (SET_ERROR(EACCES));
 }
@@ -1673,8 +1673,6 @@ zfs_mount_label_policy(vfs_t *vfsp, char *osname)
 	bslabel_t	*mnt_sl;
 	bslabel_t	ds_sl;
 	char		ds_hexsl[MAXNAMELEN];
-
-	retv = EACCES;				/* assume the worst */
 
 	/*
 	 * Start by getting the dataset label if it exists.
@@ -1737,6 +1735,8 @@ zfs_mount_label_policy(vfs_t *vfsp, char *osname)
 		    zfs_prop_to_name(ZFS_PROP_MLSLABEL),
 		    ZPROP_SRC_LOCAL, str) == 0)
 			retv = 0;
+		else
+			retv = SET_ERROR(EACCES);
 		if (str != NULL)
 			kmem_free(str, strlen(str) + 1);
 	} else if (hexstr_to_label(ds_hexsl, &ds_sl) == 0) {
@@ -1751,7 +1751,8 @@ zfs_mount_label_policy(vfs_t *vfsp, char *osname)
 		else if (bldominates(mnt_sl, &ds_sl)) {
 			vfs_setmntopt(vfsp, MNTOPT_RO, NULL, 0);
 			retv = 0;
-		}
+		} else
+			retv = SET_ERROR(EACCES);
 	}
 
 	label_rele(mnt_tsl);
@@ -1874,11 +1875,11 @@ getpoolname(const char *osname, char *poolname)
 	p = strchr(osname, '/');
 	if (p == NULL) {
 		if (strlen(osname) >= MAXNAMELEN)
-			return (ENAMETOOLONG);
+			return (SET_ERROR(ENAMETOOLONG));
 		(void) strcpy(poolname, osname);
 	} else {
 		if (p - osname >= MAXNAMELEN)
-			return (ENAMETOOLONG);
+			return (SET_ERROR(ENAMETOOLONG));
 		(void) strncpy(poolname, osname, p - osname);
 		poolname[p - osname] = '\0';
 	}
@@ -2351,13 +2352,13 @@ zfs_vget(vfs_t *vfsp, ino_t ino, int flags, vnode_t **vpp)
 	 */
 	if (ino == ZFSCTL_INO_ROOT || ino == ZFSCTL_INO_SNAPDIR ||
 	    (zfsvfs->z_shares_dir != 0 && ino == zfsvfs->z_shares_dir))
-		return (EOPNOTSUPP);
+		return (SET_ERROR(EOPNOTSUPP));
 
 	ZFS_ENTER(zfsvfs);
 	err = zfs_zget(zfsvfs, ino, &zp);
 	if (err == 0 && zp->z_unlinked) {
 		vrele(ZTOV(zp));
-		err = EINVAL;
+		err = SET_ERROR(EINVAL);
 	}
 	if (err == 0)
 		*vpp = ZTOV(zp);
@@ -2800,7 +2801,7 @@ zfs_get_zplprop(objset_t *os, zfs_prop_t prop, uint64_t *value)
 	 * different string.
 	 */
 	const char *pname;
-	int error = ENOENT;
+	int error;
 	if (prop == ZFS_PROP_VERSION) {
 		pname = ZPL_VERSION_STR;
 	} else {
@@ -2810,6 +2811,8 @@ zfs_get_zplprop(objset_t *os, zfs_prop_t prop, uint64_t *value)
 	if (os != NULL) {
 		ASSERT3U(os->os_phys->os_type, ==, DMU_OST_ZFS);
 		error = zap_lookup(os, MASTER_NODE_OBJ, pname, 8, 1, value);
+	} else {
+		error = SET_ERROR(ENOENT);
 	}
 
 	if (error == ENOENT) {
