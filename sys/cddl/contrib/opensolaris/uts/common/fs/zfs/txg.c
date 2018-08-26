@@ -547,7 +547,8 @@ txg_sync_thread(void *arg)
 		txg = tx->tx_quiesced_txg;
 		tx->tx_quiesced_txg = 0;
 		tx->tx_syncing_txg = txg;
-		DTRACE_PROBE2(txg__syncing, dsl_pool_t *, dp, uint64_t, txg);
+		DTRACE_PROBE3(txg__syncing, dsl_pool_t *, dp, uint64_t, txg,
+		    uint64_t, dsl_pool_dirty_size(dp, txg));
 		cv_broadcast(&tx->tx_quiesce_more_cv);
 
 		dprintf("txg=%llu quiesce_txg=%llu sync_txg=%llu\n",

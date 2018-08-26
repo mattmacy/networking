@@ -956,6 +956,15 @@ dsl_pool_need_dirty_delay(dsl_pool_t *dp)
 	return (rv);
 }
 
+uint64_t
+dsl_pool_dirty_size(dsl_pool_t *dp, uint64_t txg)
+{
+
+	if (txg <= TXG_SIZE)
+		return (dp->dp_dirty_total);
+	return (dp->dp_dirty_pertxg[txg & TXG_MASK]);
+}
+
 void
 dsl_pool_dirty_space(dsl_pool_t *dp, int64_t space, dmu_tx_t *tx)
 {
