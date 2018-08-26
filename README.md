@@ -1,3 +1,41 @@
+SpectraLogic async COW and dbuf refactoring:
+-------------------------------------------
+
+NOTES:
+- spa async stuff still needed?  this is for config updates?
+- spa history logging stuff might have gone upstream already
+
+TODO (either simple or required for async cow):
+- refactor out txg thread name change
+- refactor out txg / sync context changes (probable conflict upstream)
+- refactor out SET_ERRORs
+- refactor out dmu context changes
+- refactor out dbuf dirty state changes
+- port forward async cow specific bits
+
+TODO LATER:
+- device arrival/departure notifications
+- runtime tunable KMEM_DEBUG stuff
+- lowmem improvements (may have been implemented another way elsewhere)
+- bitbucket & zero region optimizations for vdev i/o aggregation
+- any/all useful userland tool improvements
+- znode kstats?
+- SMR related changes?  these are incomplete iirc
+- making invalid data non-fatal events
+  - zfs_panic_recover -> DTRACE_INVALID_BP, etc.
+- nosuspend stuff (prevents locking up other pools due to one)
+- security descriptor / SID support for vfs/zfs
+- vdev_file optimizations
+- spare handling improvements
+
+DROP:
+- zrlock change (already sent upstream and ignored, seems unnoticed)
+- all the zvol-related changes (including callbacks), just too much.  or
+  maybe replace with a simpler update to current zvol layer?
+- all ctldir changes (replaced by avg's work upstream)
+
+===================================================================
+
 FreeBSD Source:
 ---------------
 This is the top level of the FreeBSD source directory.  This file
