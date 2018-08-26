@@ -180,7 +180,6 @@ static int __dbuf_hold_impl(struct dbuf_hold_impl_data *dh);
 static boolean_t dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
 static void dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx);
 static int dbuf_read_verify_dnode_crypt(dmu_buf_impl_t *db, uint32_t flags);
-static void dbuf_dirty_record_cleanup_ranges(dbuf_dirty_record_t *dr);
 #ifndef __lint
 extern inline void dmu_buf_init_user(dmu_buf_user_t *dbu,
     dmu_buf_evict_func_t *evict_func_sync,
@@ -1668,6 +1667,18 @@ dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn, uint32_t flags)
 	return (B_FALSE);
 }
 
+static void
+dbuf_read_cached_done(zio_t *zio, const zbookmark_phys_t *zb, int err,
+    const blkptr_t *bp, arc_buf_t *buf, void *priv)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)priv;
+	if (buf != NULL) {
+		ASSERT(arc_buf_frozen(buf) && !arc_released(buf));
+		db->db_state = DB_READ; /* for read_complete */
+		dbuf_read_complete(db, buf, /*is_hole_read*/B_FALSE);
+	}
+}
+
 /*
  * This function ensures that, when doing a decrypting read of a block,
  * we make sure we have decrypted the dnode associated with it. We must do
@@ -1725,26 +1736,41 @@ dbuf_read_verify_dnode_crypt(dmu_buf_impl_t *db, uint32_t flags)
 	return (err);
 }
 
+/**
+ * \brief Actually read (or issue I/O for) a dbuf's block.
+ *
+ * \param db	The dbuf to read.
+ * \param zio	The parent zio to associate with.
+ * \param flags	Pointer to the read flags.
+ *
+ * \note	Flags will be modified to include DB_RF_CACHED if the call
+ *		returns with the dbuf cached.
+ * \note	The dbuf mutex will be dropped in all cases except if the
+ *		DB_RF_CACHED flag is set.
+ * \note	The DB_RF_CACHED flag has the effect of performing a
+ *		cached-only read.
+ */
 static int
-dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
+dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 {
 	dnode_t *dn;
+	spa_t *spa;
 	zbookmark_phys_t zb;
 	arc_flags_t aflags = ARC_FLAG_NOWAIT;
 	int zio_flags, err = 0;
+	arc_buf_t *pbuf;
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
 	ASSERT(!refcount_is_zero(&db->db_holds));
-	/* We need the struct_rwlock to prevent db_blkptr from changing. */
-	ASSERT(RW_LOCK_HELD(&dn->dn_struct_rwlock));
 	ASSERT(MUTEX_HELD(&db->db_mtx));
-	ASSERT(db->db_state == DB_UNCACHED);
-	ASSERT(db->db_buf == NULL);
+	ASSERT(db->db_state == DB_UNCACHED || (db->db_state & DB_PARTIAL));
 
-	if (dbuf_read_bonus(db, dn, flags, &err) || dbuf_read_hole(db, dn, flags) || err) {
+	if (dbuf_read_bonus(db, dn, *flags, &err) || dbuf_read_hole(db, dn, *flags) || err) {
 		DB_DNODE_EXIT(db);
-		mutex_exit(&db->db_mtx);
+		*flags |= DB_RF_CACHED;
+		if ((*flags & DB_RF_CACHED_ONLY) == 0)
+			mutex_exit(&db->db_mtx);
 		return (err);
 	}
 	SET_BOOKMARK(&zb, dmu_objset_id(db->db_objset),
@@ -1763,7 +1789,24 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		return (SET_ERROR(EIO));
 	}
 
-	err = dbuf_read_verify_dnode_crypt(db, flags);
+	spa = dn->dn_objset->os_spa;
+	if (*flags & DB_RF_CACHED_ONLY) {
+		ASSERT(db->db_state == DB_UNCACHED && db->db_buf == NULL &&
+		    db->db_dirtycnt == 0);
+		aflags = ARC_FLAG_CACHED_ONLY;
+		err = arc_read(/*pio*/NULL, spa, db->db_blkptr,
+		    dbuf_read_cached_done, db, /*priority*/0, /*zio_flags*/0,
+		    &aflags, /*zb*/NULL);
+		if (aflags & ARC_FLAG_CACHED)
+			*flags |= DB_RF_CACHED;
+		DB_DNODE_EXIT(db);
+		db->db_state = DB_CACHED;
+		mutex_exit(&db->db_mtx);
+		/* Cache lookups never drop the dbuf mutex. */
+		return (err);
+	}
+
+	err = dbuf_read_verify_dnode_crypt(db, *flags);
 	if (err != 0) {
 		DB_DNODE_EXIT(db);
 		mutex_exit(&db->db_mtx);
@@ -1775,20 +1818,29 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	DBUF_STATE_CHANGE(db, =, DB_READ, "read issued");
 	mutex_exit(&db->db_mtx);
 
+	/*
+	 * db_blkptr is protected by both the dbuf mutex and the associated
+	 * struct_rwlock.  The caller must acquire struct_rwlock before
+	 * reads that may sleep without the dbuf mutex held.
+	 */
+	ASSERT(RW_LOCK_HELD(&dn->dn_struct_rwlock));
+
 	if (DBUF_IS_L2CACHEABLE(db))
 		aflags |= ARC_FLAG_L2CACHE;
 
 	dbuf_add_ref(db, NULL);
 
-	zio_flags = (flags & DB_RF_CANFAIL) ?
+	zio_flags = (*flags & DB_RF_CANFAIL) ?
 	    ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED;
 
-	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_PROTECTED(db->db_blkptr))
+	if ((*flags & DB_RF_NO_DECRYPT) && BP_IS_PROTECTED(db->db_blkptr))
 		zio_flags |= ZIO_FLAG_RAW;
 
 	err = arc_read(zio, db->db_objset->os_spa, db->db_blkptr,
 	    dbuf_read_done, db, ZIO_PRIORITY_SYNC_READ, zio_flags,
 	    &aflags, &zb);
+	if (err == 0 && (aflags & ARC_FLAG_CACHED))
+		*flags |= DB_RF_CACHED;
 
 	return (err);
 }
@@ -1942,7 +1994,7 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 			zio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
 			need_wait = B_TRUE;
 		}
-		err = dbuf_read_impl(db, zio, flags);
+		err = dbuf_read_impl(db, zio, &flags);
 
 		/* dbuf_read_impl has dropped db_mtx for us */
 
@@ -2560,7 +2612,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
  * XXX: This should be replaced with a larger dbuf_dirty_record_destroy()
  *      that cleans up an entire dirty record.
  */
-static void
+void
 dbuf_dirty_record_cleanup_ranges(dbuf_dirty_record_t *dr)
 {
 	dbuf_dirty_leaf_record_t *dl;
