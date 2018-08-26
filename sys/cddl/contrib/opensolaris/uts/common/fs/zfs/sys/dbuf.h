@@ -55,33 +55,191 @@ extern "C" {
 #define	DB_RF_NEVERWAIT		(1 << 4)
 #define	DB_RF_CACHED		(1 << 5)
 #define	DB_RF_NO_DECRYPT	(1 << 6)
+#define	DB_RF_CACHED_ONLY	(1 << 7)
 
-/*
- * The simplified state transition diagram for dbufs looks like:
+ /**
+  * The simplified state transition diagram for dbufs looks like:
+  * 
+  *\verbatim
+		+-> PARTIAL_FILL <---> PARTIAL-+
+		|		 	  |    |
+		+---------->READ_FILL<----[----+
+		|		^	  |
+		|		|	  |
+		|		V	  |
+		+-----------> READ ------+[-------+
+		|			 ||	  |
+		|			 VV	  V
+    (alloc)-->UNCACHED----------------->FILL--->CACHED----> EVICTING-->(free)
+		|						^
+		|						|
+		+--------------------> NOFILL ------------------+
+ \endverbatim
  *
- *		+----> READ ----+
- *		|		|
- *		|		V
- *  (alloc)-->UNCACHED	     CACHED-->EVICTING-->(free)
- *		|		^	 ^
- *		|		|	 |
- *		+----> FILL ----+	 |
- *		|			 |
- *		|			 |
- *		+--------> NOFILL -------+
+ * Reader State Transitions:
+ * UNCACHED ->  READ:		Access to a block that does not have an
+ *				active dbuf.  A read is issued to media
+ *				upon an ARC or L2ARC miss.
  *
- * DB_SEARCH is an invalid state for a dbuf. It is used by dbuf_free_range
- * to find all dbufs in a range of a dnode and must be less than any other
- * dbuf_states_t (see comment on dn_dbufs in dnode.h).
- */
+ * READ -> CACHED:		Data satisfied from the ARC, L2ARC, or
+ *				a read of the media.  No writes occurred.
+ *
+ * PARTIAL -> READ:		Access to a block that has been partially
+ *				written but has yet to have the read
+ *				needed to resolve the COW fault issued.
+ *				The read is issued to media.  The ARC and
+ *				L2ARC are not involved since they were
+ *				checked for a hit at the time of the first
+ *				write to this buffer.
+ *
+ * Writer State Transitions:
+ * UNCACHED ->  FILL:		Access to a block that does not have an
+ *				active dbuf.  Writer is filling the entire
+ *				block.
+ *
+ * UNCACHED -> PARTIAL_FILL:	Access to a block that does not have an
+ *				active dbuf.  Writer is filling a portion
+ *				of the block starting at the beginning or
+ *				end.  The read needed to resolve the COW
+ *				fault is deferred until we see that the
+ *				writer will not fill this whole buffer.
+ *
+ * UNCACHED -> READ_FILL:	Access to a block that does not have an
+ *				active dbuf.  Writer is filling a portion
+ *				of the block and we have enough information
+ *				to expect that the buffer will not be fully
+ *				written.  The read needed to resolve the COW
+ *				fault is issued asynchronously.
+ *
+ * READ -> READ_FILL:		Access to a block that has an active dbuf
+ *				and a read has already been issued for the
+ *				original buffer contents.  A COW fault may
+ *				not have occurred, if the buffer was not
+ *				already dirty.  Writer is filling a portion
+ *				of the buffer.
+ *
+ * PARTIAL -> PARTIAL_FILL:	Access to a block that has an active dbuf
+ *				with an outstanding COW fault.  Writer is
+ *				filling a portion of the block and we have
+ *				enough information to expect that the buffer
+ *				will eventually be fully written.
+ *
+ * PARTIAL -> READ_FILL:	Access to a block that has an active dbuf
+ *				with an outstanding COW fault.  Writer is
+ *				filling a portion of the block and we have
+ *				enough information to expect that the buffer
+ *				will not be fully written, causing a read
+ *				to be issued.
+ *
+ * PARTIAL -> FILL:		Access to a block that has an active dbuf
+ *				with an outstanding COW fault.  Writer is
+ *				filling enough of the buffer to avoid the
+ *				read for this fault entirely.
+ *
+ * READ -> FILL:		Access to a block that has an active dbuf
+ *				with an outstanding COW fault, and a read
+ *				has been issued.  Write is filling enough of
+ *				the buffer to obsolete the read.
+ *
+ * I/O Complete Transitions:
+ * FILL -> CACHED:		The thread modifying the buffer has completed
+ *				its work.  The buffer can now be accessed by
+ *				other threads.
+ *
+ * PARTIAL_FILL -> PARTIAL:	The write thread modifying the buffer has
+ *				completed its work.  The buffer can now be
+ *				accessed by other threads.  No read has been
+ *				issued to resolve the COW fault.
+ * 
+ * READ_FILL -> READ:		The write thread modifying the buffer has
+ *				completed its work.  The buffer can now be
+ *				accessed by other threads.  A read is
+ *				outstanding to resolve the COW fault.
+ *
+ * The READ, PARITIAL_FILL, and READ_FILL states indicate the data associated
+ * with a dbuf is volatile and a new client must wait for the current consumer
+ * to exit the dbuf from that state prior to accessing the data.
+ * 
+ * The PARITIAL_FILL, PARTIAL, READ_FILL, and READ states are used for
+ * deferring any reads required for resolution of Copy-On-Write faults.
+ * A PARTIAL dbuf has accumulated write data in its dirty records
+ * that must be merged into the existing data for the record once the
+ * record is read.  A READ dbuf is a dbuf for which a synchronous or
+ * async read has been issued.  If the dbuf has dirty records, this read
+ * is required to resolve the COW fault before those dirty records can be
+ * committed to disk.  The FILL variants of these two states indicate that
+ * either new write data is being added to the dirty records for this dbuf,
+ * or the read has completed and the write and read data are being merged.
+ *
+ * Writers must block on dbufs in any of the FILL states.
+ *
+ * Synchronous readers must block on dbufs in the READ,  and any
+ * of the FILL states.  Further, a reader must transition a dbuf from the
+ * UNCACHED or PARTIAL state to the READ state by issuing a read, before
+ * blocking.
+ *
+ * The transition from PARTIAL to READ is also triggered by writers that
+ * perform a discontiguous write to the buffer, meaning that there is
+ * little chance for a latter writer to completely fill the buffer.
+ * Since the read cannot be avoided, it is issued immediately.
+  */
 typedef enum dbuf_states {
-	DB_SEARCH = -1,
-	DB_UNCACHED,
-	DB_FILL,
-	DB_NOFILL,
-	DB_READ,
-	DB_CACHED,
-	DB_EVICTING
+	DB_SEARCH 		= 0x1000,
+
+        /**
+	 * Dbuf has no valid data.
+	 */
+	DB_UNCACHED		= 0x01,
+
+	/**
+	 * The Dbuf's contents are being modified by an active thread.
+	 * This state can be combined with PARTIAL or READ.  When
+	 * just in the DB_FILL state, the entire buffer's contents are
+	 * being supplied by the writer.  When combined with the other
+	 * states, the buffer is only being partially dirtied.
+	 */
+	DB_FILL			= 0x02,
+
+	/**
+	 * Dbuf has been partially dirtied by writers.  No read has been
+	 * issued to resolve the COW fault.
+	 */
+	DB_PARTIAL		= 0x04,
+
+	/**
+	 * A NULL DBuf associated with swap backing store.
+	 */
+	DB_NOFILL		= 0x08,
+
+	/**
+	 * A read has been issued for an uncached buffer with no
+	 * outstanding dirty data (i.e. Not PARTIAL).
+	 */
+	DB_READ			= 0x10,
+
+	/**
+	 * The entire contents of this dbuf are valid.  The buffer
+	 * may still be dirty.
+	 */
+	DB_CACHED		= 0x20,
+
+	/**
+	 * The Dbuf is in the process of being freed.
+	 */
+	DB_EVICTING		= 0x40,
+
+	/**
+	 * Dbuf has been partially dirtied by writers and a
+	 * thread is actively modifying the dbuf.
+	 */
+	DB_PARTIAL_FILL		= DB_PARTIAL|DB_FILL,
+
+	/**
+	 * Dbuf has been partially dirtied by writers, a read
+	 * has been issued to resolve the COW fault, and a
+	 * thread is actively modifying the dbuf.
+	 */
+	DB_READ_FILL		= DB_READ|DB_FILL
 } dbuf_states_t;
 
 typedef enum dbuf_cached_state {
@@ -126,6 +284,9 @@ typedef struct dbuf_dirty_leaf_record {
 	 * pointer even if it gets COW'd in a subsequent transaction group.
 	 */
 	arc_buf_t *dr_data;
+	blkptr_t dr_overridden_by;
+	override_states_t dr_override_state;
+	uint8_t dr_copies;
 
 	/*
 	 * List of the ranges that dr_data's contents are valid for.
@@ -133,9 +294,6 @@ typedef struct dbuf_dirty_leaf_record {
 	 * only cover part of it, and no read has filled in the gaps yet.
 	 */
 	list_t write_ranges;
-	blkptr_t dr_overridden_by;
-	override_states_t dr_override_state;
-	uint8_t dr_copies;
 	boolean_t dr_nopwrite;
 	boolean_t dr_has_raw_params;
 
@@ -255,6 +413,12 @@ typedef struct dmu_buf_impl {
 	/** List of dirty records for the buffer sorted newest to oldest. */
 	list_t db_dirty_records;
 
+	/**
+	 * List of DMU buffer sets dependent on this dbuf.
+	 * See dmu_context_node_t, the indirect list entry structure used.
+	 */
+	list_t db_dmu_buf_sets;
+
 	/*
 	 * Our link on the owner dnodes's dn_dbufs list.
 	 * Protected by its dn_dbufs_mtx.
@@ -292,6 +456,9 @@ typedef struct dmu_buf_impl {
 	uint8_t db_pending_evict;
 
 	uint8_t db_dirtycnt;
+
+	uint8_t db_advice:3;
+	uint8_t db_is_ephemeral:1;
 } dmu_buf_impl_t;
 
 /* Note: the dbuf hash table is exposed only for the mdb module */
@@ -334,6 +501,7 @@ dmu_buf_impl_t *dbuf_find(struct objset *os, uint64_t object, uint8_t level,
     uint64_t blkid);
 
 int dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags);
+void dbuf_transition_to_read(dmu_buf_impl_t *db);
 void dmu_buf_will_not_fill(dmu_buf_t *db, dmu_tx_t *tx);
 void dmu_buf_will_fill(dmu_buf_t *db, dmu_tx_t *tx);
 void dmu_buf_fill_done(dmu_buf_t *db, dmu_tx_t *tx);
@@ -369,6 +537,7 @@ void dbuf_stats_destroy(void);
 
 void dbuf_init(void);
 void dbuf_fini(void);
+void dbuf_dirty_record_cleanup_ranges(dbuf_dirty_record_t *dr);
 
 boolean_t dbuf_is_metadata(dmu_buf_impl_t *db);
 
