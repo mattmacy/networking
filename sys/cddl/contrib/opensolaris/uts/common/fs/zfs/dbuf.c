@@ -151,6 +151,7 @@ dbuf_stats_t dbuf_stats = {
 static uint64_t dirty_writes_lost;
 
 #define DEBUG_COUNTER_INC(x)
+#define DEBUG_REFCOUNT_INC(x)
 #define DEBUG_REFCOUNT_DEC(x)
 
 struct dbuf_hold_impl_data {
@@ -1041,6 +1042,16 @@ dbuf_verify(dmu_buf_impl_t *db)
 			}
 		}
 	}
+	/*
+	 * XXX
+	 * We may need to modify the state check here if something may be
+	 * in DB_FILL and have dirty parts, depending on how db_state
+	 * semantics are changed.
+	 *
+	 * XXX
+	 * Why does this ignore DB_FILL in the first place?  DB_FILL
+	 * still dirties the buffer and must be sunk too.
+	 */
 	if ((db->db_blkptr == NULL || BP_IS_HOLE(db->db_blkptr)) &&
 	    (db->db_buf == NULL || db->db_buf->b_data) &&
 	    db->db.db_data && db->db_blkid != DMU_BONUS_BLKID &&
@@ -1582,7 +1593,7 @@ dbuf_read_done(zio_t *zio, const zbookmark_phys_t *zb, int err,
  * was taken.
  */
 static boolean_t
-dbuf_read_bonus(dmu_buf_impl_t *db, dnode_t *dn, uint32_t flags, int *err)
+dbuf_read_bonus(dmu_buf_impl_t *db, dnode_t *dn, uint32_t *flags, int *err)
 {
 	arc_flags_t aflags = ARC_FLAG_NOWAIT;
 	int bonuslen, max_bonuslen;
@@ -1590,7 +1601,7 @@ dbuf_read_bonus(dmu_buf_impl_t *db, dnode_t *dn, uint32_t flags, int *err)
 	*err = 0;
 	if (db->db_blkid != DMU_BONUS_BLKID)
 		return (B_FALSE);
-	*err = dbuf_read_verify_dnode_crypt(db, flags);
+	*err = dbuf_read_verify_dnode_crypt(db, *flags);
 	if (*err != 0)
 		return (B_FALSE);
 
@@ -1634,11 +1645,22 @@ dbuf_handle_partial_hole(dmu_buf_impl_t *db, dnode_t *dn)
  * drops the mutex.  Returns whether any action was taken.
  */
 static boolean_t
-dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn, uint32_t flags)
+dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn, uint32_t *flags)
 {
 	int is_hole;
 
 	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	/*
+	 * If the dbuf isn't UNCACHED, then presumably the caller is trying
+	 * to perform a resolving read.
+	 */
+	if (db->db_state != DB_UNCACHED) {
+		ASSERT(db->db_level == 0);
+		ASSERT(db->db_state & (DB_PARTIAL|DB_FILL|DB_READ));
+		ASSERT(db->db_dirtycnt > 0);
+		return (B_FALSE);
+	}
 
 	is_hole = db->db_blkptr == NULL || BP_IS_HOLE(db->db_blkptr);
 	/*
@@ -1652,16 +1674,18 @@ dbuf_read_hole(dmu_buf_impl_t *db, dnode_t *dn, uint32_t flags)
 		    BP_IS_HOLE(db->db_blkptr);
 
 	if (is_hole) {
-		dbuf_set_data(db, dbuf_alloc_arcbuf(db));
-		bzero(db->db.db_data, db->db.db_size);
+		arc_buf_t *buf;
 
+		buf = dbuf_alloc_arcbuf(db);
+		bzero(buf->b_data, db->db.db_size);
 		if (db->db_blkptr != NULL && db->db_level > 0 &&
 		    BP_IS_HOLE(db->db_blkptr) &&
 		    db->db_blkptr->blk_birth != 0) {
 			dbuf_handle_partial_hole(db, dn);
 		}
 
-		DBUF_STATE_CHANGE(db, =, DB_CACHED, "hole read satisfied");
+		DBUF_STATE_CHANGE(db, =, DB_READ, "hole read satisfied");
+		dbuf_read_complete(db, buf, /*is_hole_read*/B_TRUE);
 		return (B_TRUE);
 	}
 	return (B_FALSE);
@@ -1766,15 +1790,13 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	ASSERT(db->db_state == DB_UNCACHED || (db->db_state & DB_PARTIAL));
 
-	if (dbuf_read_bonus(db, dn, *flags, &err) || dbuf_read_hole(db, dn, *flags) || err) {
+	if (dbuf_read_bonus(db, dn, flags, &err) || dbuf_read_hole(db, dn, flags) || err) {
 		DB_DNODE_EXIT(db);
 		*flags |= DB_RF_CACHED;
 		if ((*flags & DB_RF_CACHED_ONLY) == 0)
 			mutex_exit(&db->db_mtx);
 		return (err);
 	}
-	SET_BOOKMARK(&zb, dmu_objset_id(db->db_objset),
-	    db->db.db_object, db->db_level, db->db_blkid);
 
 	/*
 	 * All bps of an encrypted os should have the encryption bit set.
@@ -1827,6 +1849,10 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 
 	if (DBUF_IS_L2CACHEABLE(db))
 		aflags |= ARC_FLAG_L2CACHE;
+
+	SET_BOOKMARK(&zb, db->db_objset->os_dsl_dataset ?
+	    db->db_objset->os_dsl_dataset->ds_object : DMU_META_OBJSET,
+	    db->db.db_object, db->db_level, db->db_blkid);
 
 	dbuf_add_ref(db, NULL);
 
@@ -2108,6 +2134,148 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
 }
 
 /*
+ * Disassociate the frontend for any older transaction groups of a
+ * dbuf that is inside a range being freed.  The primary purpose is to
+ * ensure that the state of any dirty records affected by the operation
+ * remain consistent.
+ */
+static void
+dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
+    dmu_tx_t *tx)
+{
+	dbuf_dirty_record_t *dr;
+
+	dr = list_head(&db->db_dirty_records);
+	if (dr == NULL)
+		return;
+
+	if (dr->dr_txg == tx->tx_txg) {
+		/*
+		 * This buffer is "in-use", re-adjust the file size to reflect
+		 * that this buffer may contain new data when we sync.
+		 */
+		if (db->db_blkid != DMU_SPILL_BLKID &&
+		    db->db_blkid > dn->dn_maxblkid)
+			dn->dn_maxblkid = db->db_blkid;
+		/* Handle intermediate dmu_sync() calls. */
+		dbuf_unoverride(dr);
+
+		/*
+		 * If this buffer is still waiting on data for a RMW merge, that
+		 * data no longer applies to this buffer.  Transition to cached.
+		 */
+		dbuf_dirty_record_cleanup_ranges(dr);
+	} else {
+		if (db->db_state & DB_PARTIAL) {
+			/*
+			 * Schedule resolution for the older transaction
+			 * group's dirty record before we change the dbuf's
+			 * state and lose track of the PARTIAL state.
+			 */
+			dbuf_transition_to_read(db);
+		}
+		/* Disassociate the frontend if necessary. */
+		if (dr->dt.dl.dr_data == db->db_buf) {
+			arc_buf_t *buf;
+
+			buf = dbuf_alloc_arcbuf(db);
+			if (refcount_count(&db->db_holds) > db->db_dirtycnt) {
+
+				/*
+				 * Frontend being referenced by a user, but
+				 * this dirty record has yet to be processed
+				 * by the syncer.
+				 */
+				ASSERT(dr != db->db_data_pending);
+				if (db->db_state & DB_READ) {
+					/*
+					 * The reader has yet to access the
+					 * frontend (it must wait for the
+					 * READ->CACHED transition), so it
+					 * is safe to replace the frontend.
+					 */
+					dbuf_set_data(db, buf);
+				} else {
+					/*
+					 * A reader is accessing the frontend,
+					 * so we cannot replace it.
+					 * Disassociate by replacing the
+					 * buffer used for future syncer
+					 * operations.
+					 */
+					bcopy(db->db.db_data, buf->b_data,
+					    db->db.db_size);
+					dr->dt.dl.dr_data = buf;
+				}
+			} else {
+				/*
+				 * Foreground is currently unreferenced, but
+				 * a future access that results in a READ
+				 * will confuse in-progress resolution of
+				 * dirty records for older transactions.
+				 * Provide a buffer so any future consumers
+				 * will see a dbuf in the CACHED state.
+				 */
+				dbuf_set_data(db, buf);
+			}
+		}
+	}
+}
+
+static boolean_t
+dbuf_free_range_already_freed(dmu_buf_impl_t *db)
+{
+	/* XXX add comment about why these are OK */
+	if (db->db_state == DB_UNCACHED || db->db_state == DB_NOFILL ||
+	    db->db_state == DB_EVICTING) {
+		ASSERT(db->db.db_data == NULL);
+		mutex_exit(&db->db_mtx);
+		return (B_TRUE);
+	}
+	return (B_FALSE);
+}
+
+static boolean_t
+dbuf_free_range_filler_will_free(dmu_buf_impl_t *db)
+{
+	if (db->db_state & DB_FILL) {
+		/*
+		 * If the buffer is currently being filled, then its
+		 * contents cannot be directly cleared.  Signal the filler
+		 * to have dbuf_fill_done perform the clear just before
+		 * transitioning the buffer to the CACHED state.
+		 */
+		db->db_freed_in_flight = TRUE;
+		mutex_exit(&db->db_mtx);
+		return (B_TRUE);
+	}
+	return (B_FALSE);
+}
+
+/*
+ * If a dbuf has no users, clear it.  Returns whether it was cleared.
+ */
+static boolean_t
+dbuf_clear_successful(dmu_buf_impl_t *db)
+{
+
+	if (refcount_count(&db->db_holds) == 0) {
+		/* All consumers are finished, so evict the buffer */
+		ASSERT(db->db_buf != NULL);
+		dbuf_destroy(db);
+		return (B_TRUE);
+	}
+	return (B_FALSE);
+}
+
+/**
+ * \brief Free a range of data blocks in a dnode.
+ *
+ * \param dn	Dnode which the range applies to.
+ * \param start	Starting block id of the range, inclusive.
+ * \param end	Ending block id of the range, inclusive.
+ * \param tx	Transaction to apply the free operation too.
+ *
  * Evict (if its unreferenced) or clear (if its referenced) any level-0
  * data blocks in the free range, so that any future readers will find
  * empty blocks.
@@ -2154,58 +2322,33 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 			continue;
 		}
 
-		if (db->db_state == DB_UNCACHED ||
-		    db->db_state == DB_NOFILL ||
-		    db->db_state == DB_EVICTING) {
-			ASSERT(db->db.db_data == NULL);
-			mutex_exit(&db->db_mtx);
-			continue;
-		}
-		if (db->db_state == DB_READ || db->db_state == DB_FILL) {
-			/* will be handled in dbuf_read_done or dbuf_rele */
-			db->db_freed_in_flight = TRUE;
-			mutex_exit(&db->db_mtx);
-			continue;
-		}
-		if (refcount_count(&db->db_holds) == 0) {
-			ASSERT(db->db_buf);
-			dbuf_destroy(db);
-			continue;
-		}
+
+		DBUF_VERIFY(db);
+		if (dbuf_free_range_already_freed(db) ||
+		    dbuf_free_range_filler_will_free(db) ||
+		    dbuf_clear_successful(db))
+			continue; /* db_mtx already exited */
+
 		/* The dbuf is referenced */
 
-		if (!list_is_empty(&db->db_dirty_records)) {
-			dbuf_dirty_record_t *dr = list_head(&db->db_dirty_records);
-
-
-			if (dr->dr_txg == txg) {
-				/*
-				 * This buffer is "in-use", re-adjust the file
-				 * size to reflect that this buffer may
-				 * contain new data when we sync.
-				 */
-				if (db->db_blkid != DMU_SPILL_BLKID &&
-				    db->db_blkid > dn->dn_maxblkid)
-					dn->dn_maxblkid = db->db_blkid;
-				dbuf_unoverride(dr);
-			} else {
-				/*
-				 * This dbuf is not dirty in the open context.
-				 * Either uncache it (if its not referenced in
-				 * the open context) or reset its contents to
-				 * empty.
-				 */
-				dbuf_fix_old_data(db, txg);
-			}
-		}
-		/* clear the contents if its cached */
-		if (db->db_state == DB_CACHED) {
-			ASSERT(db->db.db_data != NULL);
+		/*
+		 * The goal is to make the data that is visible in the current
+		 * transaction group all zeros, while preserving the data
+		 * as seen in any earlier transaction groups.
+		 */
+		dbuf_free_range_disassociate_frontend(db, dn, tx);
+		if (db->db_buf == NULL) {
+			ASSERT3U(db->db_state, ==, DB_READ);
+			dbuf_set_data(db, dbuf_alloc_arcbuf(db));
+		} else {
+			ASSERT(db->db_buf != NULL);
 			arc_release(db->db_buf, db);
-			bzero(db->db.db_data, db->db.db_size);
-			arc_buf_freeze(db->db_buf);
 		}
-
+		bzero(db->db.db_data, db->db.db_size);
+		arc_buf_freeze(db->db_buf);
+		DBUF_STATE_CHANGE(db, =, DB_CACHED, "zeroed by free");
+		DBUF_PROCESS_BUF_SETS(db, /*err*/0);
+		cv_broadcast(&db->db_changed);
 		mutex_exit(&db->db_mtx);
 	}
 
