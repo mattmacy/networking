@@ -576,7 +576,7 @@ dmu_tx_hold_space(dmu_tx_t *tx, uint64_t space)
 
 #ifdef ZFS_DEBUG
 void
-dmu_tx_dirty_buf(dmu_tx_t *tx, dmu_buf_impl_t *db)
+dmu_tx_verify_dirty_buf(dmu_tx_t *tx, dmu_buf_impl_t *db)
 {
 	boolean_t match_object = B_FALSE;
 	boolean_t match_offset = B_FALSE;

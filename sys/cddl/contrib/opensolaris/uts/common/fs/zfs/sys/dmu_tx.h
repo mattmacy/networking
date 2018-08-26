@@ -136,13 +136,13 @@ dmu_tx_t *dmu_tx_create_dd(dsl_dir_t *dd);
 int dmu_tx_is_syncing(dmu_tx_t *tx);
 int dmu_tx_private_ok(dmu_tx_t *tx);
 void dmu_tx_add_new_object(dmu_tx_t *tx, dnode_t *dn);
-void dmu_tx_dirty_buf(dmu_tx_t *tx, struct dmu_buf_impl *db);
+void dmu_tx_verify_dirty_buf(dmu_tx_t *tx, struct dmu_buf_impl *db);
 void dmu_tx_hold_space(dmu_tx_t *tx, uint64_t space);
 
 #ifdef ZFS_DEBUG
-#define	DMU_TX_DIRTY_BUF(tx, db)	dmu_tx_dirty_buf(tx, db)
+#define	DMU_TX_VERIFY_DIRTY_BUF(tx, db)	dmu_tx_verify_dirty_buf(tx, db)
 #else
-#define	DMU_TX_DIRTY_BUF(tx, db)
+#define	DMU_TX_VERIFY_DIRTY_BUF(tx, db)
 #endif
 
 #ifdef	__cplusplus

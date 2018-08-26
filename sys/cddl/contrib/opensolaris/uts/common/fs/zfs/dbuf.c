@@ -1921,7 +1921,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 
 	ASSERT(tx->tx_txg != 0);
 	ASSERT(!refcount_is_zero(&db->db_holds));
-	DMU_TX_DIRTY_BUF(tx, db);
+	DMU_TX_VERIFY_DIRTY_BUF(tx, db);
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
