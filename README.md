@@ -6,7 +6,6 @@ NOTES:
 - spa history logging stuff might have gone upstream already
 
 TODO (either simple or required for async cow):
-- refactor out txg thread name change
 - refactor out txg / sync context changes (probable conflict upstream)
 - refactor out dmu context changes
 - refactor out dbuf dirty state changes
