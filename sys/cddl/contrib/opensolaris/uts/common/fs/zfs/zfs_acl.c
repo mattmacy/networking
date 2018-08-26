@@ -2059,7 +2059,7 @@ zfs_zaccess_dataset_check(znode_t *zp, uint32_t v4_mode)
 	 */
 	if ((v4_mode & ACE_DELETE) &&
 	    (zp->z_pflags & ZFS_NOUNLINK)) {
-		return (EPERM);
+		return (SET_ERROR(EPERM));
 	}
 #endif
 

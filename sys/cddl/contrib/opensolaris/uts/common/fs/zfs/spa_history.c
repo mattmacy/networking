@@ -386,7 +386,7 @@ spa_history_log_nvl(spa_t *spa, nvlist_t *nvl)
 	nvlist_t *nvarg, *in_nvl = NULL;
 
 	if (spa_version(spa) < SPA_VERSION_ZPOOL_HISTORY)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	if (spa_version(spa) < SPA_VERSION_ZPOOL_HISTORY || !spa_writeable(spa))
 		return (SET_ERROR(EINVAL));

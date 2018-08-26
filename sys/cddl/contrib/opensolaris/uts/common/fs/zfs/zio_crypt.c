@@ -266,7 +266,7 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	ci = &zio_crypt_table[crypt];
 	if (ci->ci_crypt_type != ZC_TYPE_GCM &&
 	    ci->ci_crypt_type != ZC_TYPE_CCM)
-		return (ENOTSUP);
+		return (SET_ERROR(ENOTSUP));
 #endif
 	
 	keydata_len = zio_crypt_table[crypt].ci_keylen;
@@ -310,7 +310,7 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	ci = &zio_crypt_table[crypt];
 	if (ci->ci_crypt_type != ZC_TYPE_GCM &&
 	    ci->ci_crypt_type != ZC_TYPE_CCM)
-		return (ENOTSUP);
+		return (SET_ERROR(ENOTSUP));
 
 	ret = freebsd_crypt_newsession(&key->zk_session, ci, &key->zk_current_key);
 	if (ret)
@@ -463,7 +463,7 @@ zio_do_crypt_uio_opencrypto(boolean_t encrypt, freebsd_crypt_session_t *sess,
 	ci = &zio_crypt_table[crypt];
 	if (ci->ci_crypt_type != ZC_TYPE_GCM &&
 	    ci->ci_crypt_type != ZC_TYPE_CCM)
-		return (ENOTSUP);
+		return (SET_ERROR(ENOTSUP));
 
 
 	ret = freebsd_crypt_uio(encrypt, sess, ci, uio, key, ivbuf,

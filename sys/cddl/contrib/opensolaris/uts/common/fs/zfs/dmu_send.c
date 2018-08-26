@@ -390,7 +390,7 @@ dump_write_embedded(dmu_sendarg_t *dsp, uint64_t object, uint64_t offset,
 
 	if (dsp->dsa_pending_op != PENDING_NONE) {
 		if (dump_record(dsp, NULL, 0) != 0)
-			return (EINTR);
+			return (SET_ERROR(EINTR));
 		dsp->dsa_pending_op = PENDING_NONE;
 	}
 
@@ -410,7 +410,7 @@ dump_write_embedded(dmu_sendarg_t *dsp, uint64_t object, uint64_t offset,
 	decode_embedded_bp_compressed(bp, buf);
 
 	if (dump_record(dsp, buf, P2ROUNDUP(drrw->drr_psize, 8)) != 0)
-		return (EINTR);
+		return (SET_ERROR(EINTR));
 	return (0);
 }
 
@@ -1151,7 +1151,7 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *to_ds,
 		err = do_dump(dsp, to_data);
 		to_data = get_next_record(&to_arg.q, to_data);
 		if (issig(JUSTLOOKING) && issig(FORREAL))
-			err = EINTR;
+			err = SET_ERROR(EINTR);
 	}
 
 	if (err != 0) {
@@ -1539,14 +1539,14 @@ recv_begin_check_existing_impl(dmu_recv_begin_arg_t *drba, dsl_dataset_t *ds,
 	    dsl_dir_phys(ds->ds_dir)->dd_child_dir_zapobj, recv_clone_name,
 	    8, 1, &val);
 	if (error != ENOENT)
-		return (error == 0 ? EBUSY : error);
+		return (error == 0 ? SET_ERROR(EBUSY) : error);
 
 	/* new snapshot name must not exist */
 	error = zap_lookup(dp->dp_meta_objset,
 	    dsl_dataset_phys(ds)->ds_snapnames_zapobj,
 	    drba->drba_cookie->drc_tosnap, 8, 1, &val);
 	if (error != ENOENT)
-		return (error == 0 ? EEXIST : error);
+		return (error == 0 ? SET_ERROR(EEXIST) : error);
 
 	/*
 	 * Check snapshot limit before receiving. We'll recheck again at the
@@ -2841,15 +2841,15 @@ receive_write_embedded(struct receive_writer_arg *rwa,
 	uint32_t flags = 0;
 
 	if (drrwe->drr_offset + drrwe->drr_length < drrwe->drr_offset)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	if (drrwe->drr_psize > BPE_PAYLOAD_SIZE)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	if (drrwe->drr_etype >= NUM_BP_EMBEDDED_TYPES)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 	if (drrwe->drr_compression >= ZIO_COMPRESS_FUNCTIONS)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	if (drrwe->drr_object > rwa->max_object)
 		rwa->max_object = drrwe->drr_object;

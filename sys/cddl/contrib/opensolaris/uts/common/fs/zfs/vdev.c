@@ -109,7 +109,7 @@ sysctl_vfs_zfs_max_auto_ashift(SYSCTL_HANDLER_ARGS)
 		return (err);
 
 	if (val > SPA_MAXASHIFT || val < zfs_min_auto_ashift)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	zfs_max_auto_ashift = val;
 
@@ -133,7 +133,7 @@ sysctl_vfs_zfs_min_auto_ashift(SYSCTL_HANDLER_ARGS)
 		return (err);
 
 	if (val < SPA_MINASHIFT || val > zfs_max_auto_ashift)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	zfs_min_auto_ashift = val;
 
@@ -1548,7 +1548,7 @@ vdev_open(vdev_t *vd)
 	 */
 	vd->vdev_reopening = B_FALSE;
 	if (zio_injection_enabled && error == 0)
-		error = zio_handle_device_injection(vd, NULL, ENXIO);
+		error = zio_handle_device_injection(vd, NULL, SET_ERROR(ENXIO));
 
 	if (error) {
 		if (vd->vdev_removed &&
@@ -2153,7 +2153,7 @@ vdev_create(vdev_t *vd, uint64_t txg, boolean_t isreplacing)
 
 	if (error || vd->vdev_state != VDEV_STATE_HEALTHY) {
 		vdev_close(vd);
-		return (error ? error : ENXIO);
+		return (error ? error : SET_ERROR(ENXIO));
 	}
 
 	/*
@@ -2770,8 +2770,10 @@ vdev_dtl_required(vdev_t *vd)
 	vd->vdev_cant_read = cant_read;
 	vdev_dtl_reassess(tvd, 0, 0, B_FALSE);
 
-	if (!required && zio_injection_enabled)
-		required = !!zio_handle_device_injection(vd, NULL, ECHILD);
+	if (!required && zio_injection_enabled) {
+		required = !!zio_handle_device_injection(vd, NULL,
+		    SET_ERROR(ECHILD));
+	}
 
 	return (required);
 }
@@ -3164,10 +3166,10 @@ vdev_fault(spa_t *spa, uint64_t guid, vdev_aux_t aux)
 	spa_vdev_state_enter(spa, SCL_NONE);
 
 	if ((vd = spa_lookup_by_guid(spa, guid, B_TRUE)) == NULL)
-		return (spa_vdev_state_exit(spa, NULL, ENODEV));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENODEV)));
 
 	if (!vd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_state_exit(spa, NULL, ENOTSUP));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENOTSUP)));
 
 	tvd = vd->vdev_top;
 
@@ -3220,10 +3222,10 @@ vdev_degrade(spa_t *spa, uint64_t guid, vdev_aux_t aux)
 	spa_vdev_state_enter(spa, SCL_NONE);
 
 	if ((vd = spa_lookup_by_guid(spa, guid, B_TRUE)) == NULL)
-		return (spa_vdev_state_exit(spa, NULL, ENODEV));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENODEV)));
 
 	if (!vd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_state_exit(spa, NULL, ENOTSUP));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENOTSUP)));
 
 	/*
 	 * If the vdev is already faulted, then don't do anything.
@@ -3257,10 +3259,10 @@ vdev_online(spa_t *spa, uint64_t guid, uint64_t flags, vdev_state_t *newstate)
 	spa_vdev_state_enter(spa, SCL_NONE);
 
 	if ((vd = spa_lookup_by_guid(spa, guid, B_TRUE)) == NULL)
-		return (spa_vdev_state_exit(spa, NULL, ENODEV));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENODEV)));
 
 	if (!vd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_state_exit(spa, NULL, ENOTSUP));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENOTSUP)));
 
 	wasoffline = (vd->vdev_offline || vd->vdev_tmpoffline);
 	oldstate = vd->vdev_state;
@@ -3330,10 +3332,10 @@ top:
 	spa_vdev_state_enter(spa, SCL_ALLOC);
 
 	if ((vd = spa_lookup_by_guid(spa, guid, B_TRUE)) == NULL)
-		return (spa_vdev_state_exit(spa, NULL, ENODEV));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENODEV)));
 
 	if (!vd->vdev_ops->vdev_op_leaf)
-		return (spa_vdev_state_exit(spa, NULL, ENOTSUP));
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENOTSUP)));
 
 	tvd = vd->vdev_top;
 	mg = tvd->vdev_mg;
@@ -3350,7 +3352,8 @@ top:
 		 */
 		if (!tvd->vdev_islog && vd->vdev_aux == NULL &&
 		    vdev_dtl_required(vd))
-			return (spa_vdev_state_exit(spa, NULL, EBUSY));
+			return (spa_vdev_state_exit(spa, NULL,
+			    SET_ERROR(EBUSY)));
 
 		/*
 		 * If the top-level is a slog and it has had allocations
@@ -3407,7 +3410,8 @@ top:
 		    vdev_is_dead(tvd)) {
 			vd->vdev_offline = B_FALSE;
 			vdev_reopen(tvd);
-			return (spa_vdev_state_exit(spa, NULL, EBUSY));
+			return (spa_vdev_state_exit(spa, NULL,
+			    SET_ERROR(EBUSY)));
 		}
 
 		/*
