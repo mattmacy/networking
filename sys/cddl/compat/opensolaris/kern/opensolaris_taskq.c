@@ -227,6 +227,8 @@ taskq_wait(taskq_t *tq)
 	taskqueue_drain_all(tq->tq_queue);
 }
 
+#ifdef notyet
+/* this variation causes a deadlock in scrub */
 void
 taskq_wait_id(taskq_t *tq, taskqid_t id)
 {
@@ -234,6 +236,14 @@ taskq_wait_id(taskq_t *tq, taskqid_t id)
 
 	taskqueue_drain(tq->tq_queue, &ent->tqent_task);
 }
+#else
+void
+taskq_wait_id(taskq_t *tq, taskqid_t id __unused)
+{
+	taskq_wait(tq);
+}
+#endif
+
 /*
  * The taskq_wait_outstanding() function should block until all tasks with a
  * lower taskqid than the passed 'id' have been completed.  Note that all
