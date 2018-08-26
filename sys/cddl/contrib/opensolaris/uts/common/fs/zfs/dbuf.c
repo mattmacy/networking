@@ -1961,31 +1961,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	    db->db_state == DB_CACHED || db->db_state == DB_FILL ||
 	    db->db_state == DB_NOFILL);
 
-	mutex_enter(&dn->dn_mtx);
-	/*
-	 * Don't set dirtyctx to SYNC if we're just modifying this as we
-	 * initialize the objset.
-	 */
-	if (dn->dn_dirtyctx == DN_UNDIRTIED) {
-		if (dn->dn_objset->os_dsl_dataset != NULL) {
-			rrw_enter(&dn->dn_objset->os_dsl_dataset->ds_bp_rwlock,
-			    RW_READER, FTAG);
-		}
-		if (!BP_IS_HOLE(dn->dn_objset->os_rootbp)) {
-			dn->dn_dirtyctx = (dmu_tx_is_syncing(tx) ?
-			    DN_DIRTY_SYNC : DN_DIRTY_OPEN);
-			ASSERT(dn->dn_dirtyctx_firstset == NULL);
-			dn->dn_dirtyctx_firstset = kmem_alloc(1, KM_SLEEP);
-		}
-		if (dn->dn_objset->os_dsl_dataset != NULL) {
-			rrw_exit(&dn->dn_objset->os_dsl_dataset->ds_bp_rwlock,
-			    FTAG);
-		}
-	}
-
-	if (tx->tx_txg > dn->dn_dirty_txg)
-		dn->dn_dirty_txg = tx->tx_txg;
-	mutex_exit(&dn->dn_mtx);
+	dnode_set_dirtyctx(dn, tx, db);
 
 	if (db->db_blkid == DMU_SPILL_BLKID)
 		dn->dn_have_spill = B_TRUE;
