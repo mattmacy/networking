@@ -266,6 +266,7 @@ void arc_buf_access(arc_buf_t *buf);
 void arc_release(arc_buf_t *buf, void *tag);
 int arc_released(arc_buf_t *buf);
 void arc_buf_freeze(arc_buf_t *buf);
+boolean_t arc_buf_frozen(arc_buf_t *buf);
 void arc_buf_thaw(arc_buf_t *buf);
 #ifdef ZFS_DEBUG
 int arc_referenced(arc_buf_t *buf);
