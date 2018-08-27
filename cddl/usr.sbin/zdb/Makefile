@@ -30,4 +30,6 @@ CFLAGS.gcc+= -fms-extensions
 # it without debugging.
 CFLAGS+=	-g -DDEBUG=1 -O0
 
+CAN_USE_STATIC_LIBZPOOL=	yes
+
 .include <bsd.prog.mk>

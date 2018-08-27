@@ -75,4 +75,6 @@ CSTD=	c99
 
 CFLAGS+=	-g -DDEBUG=1 -DZFS_DEBUG=1
 
+CAN_USE_STATIC_LIBZPOOL=	yes
+
 .include <bsd.lib.mk>

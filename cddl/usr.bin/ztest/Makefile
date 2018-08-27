@@ -30,4 +30,6 @@ CFLAGS+= -g -DDEBUG=1 -Wno-format -O0 -DZFS_DEBUG=1
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
+CAN_USE_STATIC_LIBZPOOL=	yes
+
 .include <bsd.prog.mk>
