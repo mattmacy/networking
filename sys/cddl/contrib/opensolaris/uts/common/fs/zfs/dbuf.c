@@ -4262,6 +4262,78 @@ dbuf_write_physdone(zio_t *zio, arc_buf_t *buf, void *arg)
 	dsl_pool_undirty_space(dp, delta, zio->io_txg);
 }
 
+static void
+dbuf_undirty_leaf(dbuf_dirty_record_t *dr)
+{
+	dmu_buf_impl_t *db = dr->dr_dbuf;
+
+	ASSERT(db->db_blkid != DMU_BONUS_BLKID);
+	ASSERT(dr->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
+	if (db->db_state != DB_NOFILL) {
+		if (dr->dt.dl.dr_data != db->db_buf)
+			arc_buf_destroy(dr->dt.dl.dr_data, db);
+	}
+}
+
+static void
+dbuf_undirty_indirect(dbuf_dirty_record_t *dr)
+{
+	dmu_buf_impl_t *db = dr->dr_dbuf;
+	dnode_t *dn;
+	int epbs;
+
+	DB_DNODE_ENTER(db);
+	dn = DB_DNODE(db);
+	ASSERT(list_head(&dr->dt.di.dr_children) == NULL);
+	ASSERT3U(db->db.db_size, ==, 1 << dn->dn_phys->dn_indblkshift);
+	if (!BP_IS_HOLE(db->db_blkptr)) {
+		epbs = dn->dn_phys->dn_indblkshift - SPA_BLKPTRSHIFT;
+		ASSERT3U(db->db_blkid, <=,
+		    dn->dn_phys->dn_maxblkid >> (db->db_level * epbs));
+		ASSERT3U(BP_GET_LSIZE(db->db_blkptr), ==, db->db.db_size);
+	}
+	DB_DNODE_EXIT(db);
+	mutex_destroy(&dr->dt.di.dr_mtx);
+	list_destroy(&dr->dt.di.dr_children);
+}
+
+static void
+dbuf_undirty_write(dbuf_dirty_record_t *dr, uint64_t txg)
+{
+	dmu_buf_impl_t *db = dr->dr_dbuf;
+
+	ASSERT(!list_link_active(&dr->dr_dirty_node));
+	/* There should be no older dirty records. */
+	ASSERT(list_next(&db->db_dirty_records, dr) == NULL);
+	list_remove(&db->db_dirty_records, dr);
+
+#ifdef ZFS_DEBUG
+	if (db->db_blkid == DMU_SPILL_BLKID) {
+		dnode_t *dn;
+
+		DB_DNODE_ENTER(db);
+		dn = DB_DNODE(db);
+		ASSERT(dn->dn_phys->dn_flags & DNODE_FLAG_SPILL_BLKPTR);
+		ASSERT(!(BP_IS_HOLE(db->db_blkptr)) &&
+		    db->db_blkptr == DN_SPILL_BLKPTR(dn->dn_phys));
+		DB_DNODE_EXIT(db);
+	}
+#endif
+
+	/* Clean up the dirty record. */
+	if (db->db_level == 0) {
+		dbuf_undirty_leaf(dr);
+	} else {
+		dbuf_undirty_indirect(dr);
+	}
+	kmem_free(dr, sizeof (dbuf_dirty_record_t));
+
+	cv_broadcast(&db->db_changed);
+	ASSERT(db->db_dirtycnt > 0);
+	db->db_dirtycnt -= 1;
+	db->db_data_pending = NULL;
+}
+
 /* ARGSUSED */
 static void
 dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
@@ -4271,7 +4343,6 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 	blkptr_t *bp = db->db_blkptr;
 	objset_t *os = db->db_objset;
 	dmu_tx_t *tx = os->os_synctx;
-	dbuf_dirty_record_t *dr;
 
 	ASSERT0(zio->io_error);
 	ASSERT(db->db_blkptr == bp);
@@ -4289,60 +4360,13 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 	}
 
 	mutex_enter(&db->db_mtx);
-
 	DBUF_VERIFY(db);
 
-	dr = db->db_data_pending;
-	ASSERT(!list_link_active(&dr->dr_dirty_node));
-	ASSERT(dr->dr_dbuf == db);
-	ASSERT(list_next(&db->db_dirty_records, dr) == NULL);
-	list_remove(&db->db_dirty_records, dr);
-
-#ifdef ZFS_DEBUG
-	if (db->db_blkid == DMU_SPILL_BLKID) {
-		dnode_t *dn;
-
-		DB_DNODE_ENTER(db);
-		dn = DB_DNODE(db);
-		ASSERT(dn->dn_phys->dn_flags & DNODE_FLAG_SPILL_BLKPTR);
-		ASSERT(!(BP_IS_HOLE(db->db_blkptr)) &&
-		    db->db_blkptr == DN_SPILL_BLKPTR(dn->dn_phys));
-		DB_DNODE_EXIT(db);
-	}
-#endif
-
-	if (db->db_level == 0) {
-		ASSERT(db->db_blkid != DMU_BONUS_BLKID);
-		ASSERT(dr->dt.dl.dr_override_state == DR_NOT_OVERRIDDEN);
-		if (db->db_state != DB_NOFILL) {
-			if (dr->dt.dl.dr_data != db->db_buf)
-				arc_buf_destroy(dr->dt.dl.dr_data, db);
-		}
-	} else {
-		dnode_t *dn;
-
-		DB_DNODE_ENTER(db);
-		dn = DB_DNODE(db);
-		ASSERT(list_head(&dr->dt.di.dr_children) == NULL);
-		ASSERT3U(db->db.db_size, ==, 1 << dn->dn_phys->dn_indblkshift);
-		if (!BP_IS_HOLE(db->db_blkptr)) {
-			int epbs =
-			    dn->dn_phys->dn_indblkshift - SPA_BLKPTRSHIFT;
-			ASSERT3U(db->db_blkid, <=,
-			    dn->dn_phys->dn_maxblkid >> (db->db_level * epbs));
-			ASSERT3U(BP_GET_LSIZE(db->db_blkptr), ==,
-			    db->db.db_size);
-		}
-		DB_DNODE_EXIT(db);
-		mutex_destroy(&dr->dt.di.dr_mtx);
-		list_destroy(&dr->dt.di.dr_children);
-	}
-	kmem_free(dr, sizeof (dbuf_dirty_record_t));
-
-	cv_broadcast(&db->db_changed);
-	ASSERT(db->db_dirtycnt > 0);
-	db->db_dirtycnt -= 1;
-	db->db_data_pending = NULL;
+	/*
+	 * Now that the write is completed, the dirty record it resolves is
+	 * no longer needed, so remove it.
+	 */
+	dbuf_undirty_write(db->db_data_pending, tx->tx_txg);
 	dbuf_rele_and_unlock(db, (void *)(uintptr_t)tx->tx_txg, B_FALSE);
 }
 
