@@ -2112,10 +2112,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 		dr->dr_accounted = db->db.db_size;
 	dr->dr_dbuf = db;
 	dr->dr_txg = tx->tx_txg;
-	if (dr_next == NULL)
-		list_insert_tail(&db->db_dirty_records, dr);
-	else if (dr_next == list_head(&db->db_dirty_records))
-		list_insert_before(&db->db_dirty_records, dr_next, dr);
+	list_insert_before(&db->db_dirty_records, dr_next, dr);
 
 	/*
 	 * We could have been freed_in_flight between the dbuf_noread
