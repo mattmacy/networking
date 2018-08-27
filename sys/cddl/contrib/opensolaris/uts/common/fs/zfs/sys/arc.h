@@ -259,6 +259,7 @@ arc_buf_t *arc_loan_raw_buf(spa_t *spa, uint64_t dsobj, boolean_t byteorder,
     enum zio_compress compression_type);
 void arc_return_buf(arc_buf_t *buf, void *tag);
 void arc_loan_inuse_buf(arc_buf_t *buf, void *tag);
+void arc_transfer_cache_state(arc_buf_t *from, arc_buf_t *to);
 void arc_buf_destroy(arc_buf_t *buf, void *tag);
 void arc_buf_info(arc_buf_t *buf, arc_buf_info_t *abi, int state_index);
 int arc_buf_size(arc_buf_t *buf);
