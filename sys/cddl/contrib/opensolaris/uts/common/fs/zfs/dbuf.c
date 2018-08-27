@@ -1965,13 +1965,116 @@ dbuf_redirty(dbuf_dirty_record_t *dr)
 	}
 }
 
+static void
+dbuf_dirty_parent(dnode_t *dn, dmu_buf_impl_t *db, dmu_tx_t *tx,
+    dbuf_dirty_record_t *dr)
+{
+	int drop_struct_lock = FALSE;
+	int txgoff = tx->tx_txg & TXG_MASK;
+	objset_t *os = dn->dn_objset;
+
+	if (db->db_blkid == DMU_BONUS_BLKID ||
+	    db->db_blkid == DMU_SPILL_BLKID) {
+		mutex_enter(&dn->dn_mtx);
+		ASSERT(!list_link_active(&dr->dr_dirty_node));
+		list_insert_tail(&dn->dn_dirty_records[txgoff], dr);
+		mutex_exit(&dn->dn_mtx);
+		dnode_setdirty(dn, tx);
+		return;
+	}
+
+	/*
+	 * The dn_struct_rwlock prevents db_blkptr from changing
+	 * due to a write from syncing context completing
+	 * while we are running, so we want to acquire it before
+	 * looking at db_blkptr.
+	 */
+	if (!RW_WRITE_HELD(&dn->dn_struct_rwlock)) {
+		rw_enter(&dn->dn_struct_rwlock, RW_READER);
+		drop_struct_lock = TRUE;
+	}
+
+	/*
+	 * We need to hold the dn_struct_rwlock to make this assertion,
+	 * because it protects dn_phys / dn_next_nlevels from changing.
+	 */
+	ASSERT((dn->dn_phys->dn_nlevels == 0 && db->db_level == 0) ||
+	    dn->dn_phys->dn_nlevels > db->db_level ||
+	    dn->dn_next_nlevels[txgoff] > db->db_level ||
+	    dn->dn_next_nlevels[(tx->tx_txg-1) & TXG_MASK] > db->db_level ||
+	    dn->dn_next_nlevels[(tx->tx_txg-2) & TXG_MASK] > db->db_level);
+
+	/*
+	 * If we are overwriting a dedup BP, then unless it is snapshotted,
+	 * when we get to syncing context we will need to decrement its
+	 * refcount in the DDT.  Prefetch the relevant DDT block so that
+	 * syncing context won't have to wait for the i/o.
+	 */
+	ddt_prefetch(os->os_spa, db->db_blkptr);
+
+	if (db->db_level == 0) {
+		ASSERT(!db->db_objset->os_raw_receive ||
+		    dn->dn_maxblkid >= db->db_blkid);
+		dnode_new_blkid(dn, db->db_blkid, tx, drop_struct_lock);
+		ASSERT(dn->dn_maxblkid >= db->db_blkid);
+	}
+
+	if (db->db_level+1 < dn->dn_nlevels) {
+		dmu_buf_impl_t *parent = db->db_parent;
+		dbuf_dirty_record_t *di;
+		int parent_held = FALSE;
+
+		if (db->db_parent == NULL || db->db_parent == dn->dn_dbuf) {
+			int epbs = dn->dn_indblkshift - SPA_BLKPTRSHIFT;
+
+			parent = dbuf_hold_level(dn, db->db_level+1,
+			    db->db_blkid >> epbs, FTAG);
+			ASSERT(parent != NULL);
+			parent_held = TRUE;
+		}
+		if (drop_struct_lock)
+			rw_exit(&dn->dn_struct_rwlock);
+		ASSERT3U(db->db_level+1, ==, parent->db_level);
+		di = dbuf_dirty(parent, tx);
+		if (parent_held)
+			dbuf_rele(parent, FTAG);
+
+		mutex_enter(&db->db_mtx);
+		/*
+		 * Since we've dropped the mutex, it's possible that
+		 * dbuf_undirty() might have changed this out from under us.
+		 */
+		if (list_head(&db->db_dirty_records) == dr ||
+		    dn->dn_object == DMU_META_DNODE_OBJECT) {
+			mutex_enter(&di->dt.di.dr_mtx);
+			ASSERT3U(di->dr_txg, ==, tx->tx_txg);
+			ASSERT(!list_link_active(&dr->dr_dirty_node));
+			list_insert_tail(&di->dt.di.dr_children, dr);
+			mutex_exit(&di->dt.di.dr_mtx);
+			dr->dr_parent = di;
+		}
+		mutex_exit(&db->db_mtx);
+	} else {
+		ASSERT(db->db_level+1 == dn->dn_nlevels);
+		ASSERT(db->db_blkid < dn->dn_nblkptr);
+		ASSERT(db->db_parent == NULL || db->db_parent == dn->dn_dbuf);
+		mutex_enter(&dn->dn_mtx);
+		ASSERT(!list_link_active(&dr->dr_dirty_node));
+		list_insert_tail(&dn->dn_dirty_records[txgoff], dr);
+		mutex_exit(&dn->dn_mtx);
+		if (drop_struct_lock)
+			rw_exit(&dn->dn_struct_rwlock);
+	}
+
+	dnode_setdirty(dn, tx);
+}
+
 dbuf_dirty_record_t *
 dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
 	dnode_t *dn;
 	objset_t *os;
 	dbuf_dirty_record_t *dr, *dr_next;
-	int drop_struct_lock = FALSE;
 	int txgoff = tx->tx_txg & TXG_MASK;
 
 	ASSERT(tx->tx_txg != 0);
@@ -2139,101 +2242,8 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 
 	mutex_exit(&db->db_mtx);
 
-	if (db->db_blkid == DMU_BONUS_BLKID ||
-	    db->db_blkid == DMU_SPILL_BLKID) {
-		mutex_enter(&dn->dn_mtx);
-		ASSERT(!list_link_active(&dr->dr_dirty_node));
-		list_insert_tail(&dn->dn_dirty_records[txgoff], dr);
-		mutex_exit(&dn->dn_mtx);
-		dnode_setdirty(dn, tx);
-		DB_DNODE_EXIT(db);
-		return (dr);
-	}
+	dbuf_dirty_parent(dn, db, tx, dr);
 
-	/*
-	 * The dn_struct_rwlock prevents db_blkptr from changing
-	 * due to a write from syncing context completing
-	 * while we are running, so we want to acquire it before
-	 * looking at db_blkptr.
-	 */
-	if (!RW_WRITE_HELD(&dn->dn_struct_rwlock)) {
-		rw_enter(&dn->dn_struct_rwlock, RW_READER);
-		drop_struct_lock = TRUE;
-	}
-
-	/*
-	 * We need to hold the dn_struct_rwlock to make this assertion,
-	 * because it protects dn_phys / dn_next_nlevels from changing.
-	 */
-	ASSERT((dn->dn_phys->dn_nlevels == 0 && db->db_level == 0) ||
-	    dn->dn_phys->dn_nlevels > db->db_level ||
-	    dn->dn_next_nlevels[txgoff] > db->db_level ||
-	    dn->dn_next_nlevels[(tx->tx_txg-1) & TXG_MASK] > db->db_level ||
-	    dn->dn_next_nlevels[(tx->tx_txg-2) & TXG_MASK] > db->db_level);
-
-	/*
-	 * If we are overwriting a dedup BP, then unless it is snapshotted,
-	 * when we get to syncing context we will need to decrement its
-	 * refcount in the DDT.  Prefetch the relevant DDT block so that
-	 * syncing context won't have to wait for the i/o.
-	 */
-	ddt_prefetch(os->os_spa, db->db_blkptr);
-
-	if (db->db_level == 0) {
-		ASSERT(!db->db_objset->os_raw_receive ||
-		    dn->dn_maxblkid >= db->db_blkid);
-		dnode_new_blkid(dn, db->db_blkid, tx, drop_struct_lock);
-		ASSERT(dn->dn_maxblkid >= db->db_blkid);
-	}
-
-	if (db->db_level+1 < dn->dn_nlevels) {
-		dmu_buf_impl_t *parent = db->db_parent;
-		dbuf_dirty_record_t *di;
-		int parent_held = FALSE;
-
-		if (db->db_parent == NULL || db->db_parent == dn->dn_dbuf) {
-			int epbs = dn->dn_indblkshift - SPA_BLKPTRSHIFT;
-
-			parent = dbuf_hold_level(dn, db->db_level+1,
-			    db->db_blkid >> epbs, FTAG);
-			ASSERT(parent != NULL);
-			parent_held = TRUE;
-		}
-		if (drop_struct_lock)
-			rw_exit(&dn->dn_struct_rwlock);
-		ASSERT3U(db->db_level+1, ==, parent->db_level);
-		di = dbuf_dirty(parent, tx);
-		if (parent_held)
-			dbuf_rele(parent, FTAG);
-
-		mutex_enter(&db->db_mtx);
-		/*
-		 * Since we've dropped the mutex, it's possible that
-		 * dbuf_undirty() might have changed this out from under us.
-		 */
-		if (list_head(&db->db_dirty_records) == dr ||
-		    dn->dn_object == DMU_META_DNODE_OBJECT) {
-			mutex_enter(&di->dt.di.dr_mtx);
-			ASSERT3U(di->dr_txg, ==, tx->tx_txg);
-			ASSERT(!list_link_active(&dr->dr_dirty_node));
-			list_insert_tail(&di->dt.di.dr_children, dr);
-			mutex_exit(&di->dt.di.dr_mtx);
-			dr->dr_parent = di;
-		}
-		mutex_exit(&db->db_mtx);
-	} else {
-		ASSERT(db->db_level+1 == dn->dn_nlevels);
-		ASSERT(db->db_blkid < dn->dn_nblkptr);
-		ASSERT(db->db_parent == NULL || db->db_parent == dn->dn_dbuf);
-		mutex_enter(&dn->dn_mtx);
-		ASSERT(!list_link_active(&dr->dr_dirty_node));
-		list_insert_tail(&dn->dn_dirty_records[txgoff], dr);
-		mutex_exit(&dn->dn_mtx);
-		if (drop_struct_lock)
-			rw_exit(&dn->dn_struct_rwlock);
-	}
-
-	dnode_setdirty(dn, tx);
 	DB_DNODE_EXIT(db);
 	return (dr);
 }
@@ -3278,9 +3288,10 @@ __dbuf_hold_impl(struct dbuf_hold_impl_data *dh)
 	 * of it in case we decide we want to dirty it again in this txg.
 	 */
 	if (dh->dh_db->db_level == 0 &&
-	    dh->dh_db->db_blkid != DMU_BONUS_BLKID &&
 	    dh->dh_dn->dn_object != DMU_META_DNODE_OBJECT &&
 	    dh->dh_db->db_state == DB_CACHED && dh->dh_db->db_data_pending) {
+		/* dbuf_sync_bonus does not set db_data_pending. */
+		ASSERT(dh->dh_db->db_blkid != DMU_BONUS_BLKID);
 		dh->dh_dr = dh->dh_db->db_data_pending;
 		if (dh->dh_dr->dt.dl.dr_data == dh->dh_db->db_buf)
 			dbuf_hold_copy(dh);
