@@ -159,10 +159,9 @@ static uint64_t dirty_writes_lost;
 struct dbuf_hold_impl_data {
 	/* Function arguments */
 	dnode_t *dh_dn;
-	uint8_t dh_level;
 	uint64_t dh_blkid;
-	boolean_t dh_fail_sparse;
-	boolean_t dh_fail_uncached;
+	dmu_buf_set_t *dh_dbs;
+	dbuf_dirty_record_t *dh_dr;
 	void *dh_tag;
 	dmu_buf_impl_t **dh_dbp;
 	/* Local variables */
@@ -170,14 +169,16 @@ struct dbuf_hold_impl_data {
 	dmu_buf_impl_t *dh_parent;
 	blkptr_t *dh_bp;
 	int dh_err;
-	dbuf_dirty_record_t *dh_dr;
 	int dh_depth;
+	boolean_t dh_fail_sparse;
+	boolean_t dh_fail_uncached;
+	uint8_t dh_level;
 };
 
 static void __dbuf_hold_impl_init(struct dbuf_hold_impl_data *dh,
     dnode_t *dn, uint8_t level, uint64_t blkid, boolean_t fail_sparse,
 	boolean_t fail_uncached,
-	void *tag, dmu_buf_impl_t **dbp, int depth);
+	void *tag, dmu_buf_impl_t **dbp, int depth, dmu_buf_set_t *buf_set);
 static int __dbuf_hold_impl(struct dbuf_hold_impl_data *dh);
 
 static boolean_t dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
@@ -1437,26 +1438,21 @@ dbuf_resolve_ranges(dmu_buf_impl_t *db, arc_buf_t *buf)
 	dbuf_syncer_split(db, db->db_data_pending, /*deferred_split*/B_TRUE);
 }
 
-#ifdef HAVE_BUF_SETS
 static void
 dbuf_process_buf_sets(dmu_buf_impl_t *db, boolean_t err)
 {
-	dmu_context_node_t *dcn, *next;
+	dmu_ctx_node_t *dcn, *next;
 
 	for (dcn = list_head(&db->db_dmu_buf_sets); dcn != NULL; dcn = next) {
 		next = list_next(&db->db_dmu_buf_sets, dcn);
 		dmu_buf_set_rele(dcn->buf_set, err);
-		dmu_context_node_remove(&db->db_dmu_buf_sets, dcn);
+		dmu_ctx_node_remove(&db->db_dmu_buf_sets, dcn);
 	}
 }
 #define	DBUF_PROCESS_BUF_SETS(db, err) do {		\
 	if (!list_is_empty(&(db)->db_dmu_buf_sets))	\
 		dbuf_process_buf_sets(db, err);		\
 } while (0)
-#else
-#define	DBUF_PROCESS_BUF_SETS(db, err)
-#endif
-
 
 static void
 dbuf_read_complete(dmu_buf_impl_t *db, arc_buf_t *buf, boolean_t is_hole_read)
@@ -2708,13 +2704,12 @@ dbuf_dirty_compute_state(dbuf_dirty_state_t *dds)
 	dmu_tx_t *tx = dds->dds_tx;
 	dbuf_dirty_record_t *dr, *newest;
 
-#ifdef HAVE_ASYNC
 	/* Only one filler allowed at a time. */
 	while (db->db_state & DB_FILL) {
 		ASSERT0(db->db_level);
 		cv_wait(&db->db_changed, &db->db_mtx);
 	}
-#endif
+
 	dbuf_dirty_verify(db, tx);
 	if (db->db_blkid == DMU_SPILL_BLKID)
 		dds->dds_dn->dn_have_spill = B_TRUE;
@@ -3012,7 +3007,6 @@ dbuf_dirty_record_add_range(dbuf_dirty_record_t *dr, int offset, int size)
 	} else {
 		/* If old_range is NULL, this does a list_insert_tail(). */
 		list_insert_before(&dl->write_ranges, old_range, range);
-		printf("add_range db=%p dr=%p\n", db, dr);
 		DEBUG_REFCOUNT_INC(dirty_ranges_in_flight);
 		DEBUG_COUNTER_INC(dirty_ranges_total);
 	}
@@ -3450,7 +3444,6 @@ dbuf_undirty_leaf(dbuf_dirty_record_t *dr)
 			 * retained in the cache after the last dbuf
 			 * reference is removed.
 			 */
-			printf("transfer cache state dr=%p db=%p\n", dr, db);
 			arc_transfer_cache_state(dr->dt.dl.dr_data, db->db_buf);
 		}
 #ifdef notyet
@@ -4069,11 +4062,11 @@ dbuf_findbp(dnode_t *dn, int level, uint64_t blkid, int fail_sparse,
 		int err;
 		if (dh == NULL) {
 			err = dbuf_hold_impl(dn, level+1,
-			    blkid >> epbs, fail_sparse, FALSE, NULL, parentp);
+			    blkid >> epbs, fail_sparse, FALSE, NULL, parentp, NULL);
 		} else {
 			__dbuf_hold_impl_init(dh + 1, dn, dh->dh_level + 1,
 			    blkid >> epbs, fail_sparse, FALSE, NULL,
-			    parentp, dh->dh_depth + 1);
+			    parentp, dh->dh_depth + 1, NULL);
 			err = __dbuf_hold_impl(dh + 1);
 		}
 		if (err)
@@ -4118,6 +4111,8 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 
 	list_create(&db->db_dirty_records, sizeof (dbuf_dirty_record_t),
 	    offsetof(dbuf_dirty_record_t, db_dirty_record_link));
+	list_create(&db->db_dmu_buf_sets, sizeof(dmu_ctx_node_t),
+	    offsetof(dmu_ctx_node_t, dcn_link));
 
 	db->db_objset = os;
 	db->db.db_object = dn->dn_object;
@@ -4379,7 +4374,7 @@ dbuf_prefetch(dnode_t *dn, int64_t level, uint64_t blkid, zio_priority_t prio,
 		dmu_buf_impl_t *db;
 
 		if (dbuf_hold_impl(dn, parent_level, parent_blkid,
-		    FALSE, TRUE, FTAG, &db) == 0) {
+			FALSE, TRUE, FTAG, &db, NULL) == 0) {
 			blkptr_t *bpp = db->db_buf->b_data;
 			bp = bpp[P2PHASE(curblkid, 1 << epbs)];
 			dbuf_rele(db, FTAG);
@@ -4589,6 +4584,14 @@ __dbuf_hold_impl(struct dbuf_hold_impl_data *dh)
 	}
 	(void) refcount_add(&dh->dh_db->db_holds, dh->dh_tag);
 	DBUF_VERIFY(dh->dh_db);
+	/* If a reading buffer set is associated, add the callback now. */
+	if (dh->dh_dbs != NULL && (dh->dh_dbs->dbs_dmu_ctx->dc_flags & DMU_CTX_FLAG_READ)) {
+		if (dh->dh_db->db_state == DB_CACHED) {
+			/* Dbuf is already at the desired state. */
+			dmu_buf_set_rele(dh->dh_dbs, /*err*/0);
+		} else
+			dmu_ctx_node_add(&dh->dh_db->db_dmu_buf_sets, dh->dh_dbs);
+	}
 	mutex_exit(&dh->dh_db->db_mtx);
 
 	/* NOTE: we can't rele the parent until after we drop the db_mtx */
@@ -4612,7 +4615,7 @@ __dbuf_hold_impl(struct dbuf_hold_impl_data *dh)
 int
 dbuf_hold_impl(dnode_t *dn, uint8_t level, uint64_t blkid,
     boolean_t fail_sparse, boolean_t fail_uncached,
-    void *tag, dmu_buf_impl_t **dbp)
+    void *tag, dmu_buf_impl_t **dbp, dmu_buf_set_t *buf_set)
 {
 	struct dbuf_hold_impl_data *dh;
 	int error;
@@ -4620,7 +4623,7 @@ dbuf_hold_impl(dnode_t *dn, uint8_t level, uint64_t blkid,
 	dh = kmem_alloc(sizeof (struct dbuf_hold_impl_data) *
 	    DBUF_HOLD_IMPL_MAX_DEPTH, KM_SLEEP);
 	__dbuf_hold_impl_init(dh, dn, level, blkid, fail_sparse,
-	    fail_uncached, tag, dbp, 0);
+		fail_uncached, tag, dbp, 0, buf_set);
 
 	error = __dbuf_hold_impl(dh);
 
@@ -4634,7 +4637,8 @@ static void
 __dbuf_hold_impl_init(struct dbuf_hold_impl_data *dh,
     dnode_t *dn, uint8_t level, uint64_t blkid,
     boolean_t fail_sparse, boolean_t fail_uncached,
-    void *tag, dmu_buf_impl_t **dbp, int depth)
+	void *tag, dmu_buf_impl_t **dbp, int depth,
+	dmu_buf_set_t *buf_set)
 {
 	dh->dh_dn = dn;
 	dh->dh_level = level;
@@ -4642,6 +4646,8 @@ __dbuf_hold_impl_init(struct dbuf_hold_impl_data *dh,
 
 	dh->dh_fail_sparse = fail_sparse;
 	dh->dh_fail_uncached = fail_uncached;
+
+	dh->dh_dbs = buf_set;
 
 	dh->dh_tag = tag;
 	dh->dh_dbp = dbp;
@@ -4665,7 +4671,8 @@ dmu_buf_impl_t *
 dbuf_hold_level(dnode_t *dn, int level, uint64_t blkid, void *tag)
 {
 	dmu_buf_impl_t *db;
-	int err = dbuf_hold_impl(dn, level, blkid, FALSE, FALSE, tag, &db);
+	int err = dbuf_hold_impl(dn, level, blkid, FALSE, FALSE, tag, &db,
+	    NULL);
 	return (err ? NULL : db);
 }
 
@@ -5229,7 +5236,6 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 		 */
 		ASSERT(arc_released(*datap));
 		dbuf_transition_to_read(db);
-		printf("transitioned to read %p\n", db);
 	}
 	/*
 	 * To be synced, we must be dirtied.  But we
@@ -5370,10 +5376,6 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 	dbuf_write(dr, *datap, tx);
 	if (resolve_pending &&
 	    dbuf_resolve_still_pending(dr)) {
-#ifndef _KERNEL
-		printf("def_write db=%p dr=%p\n", db, dr);
-		//abort();
-#endif
 		DB_DNODE_EXIT(db);
 		return;
 	}

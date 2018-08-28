@@ -361,7 +361,7 @@ extern void cv_broadcast(kcondvar_t *cv);
 #define	tsd_get(k) pthread_getspecific(k)
 #define	tsd_set(k, v) pthread_setspecific(k, v)
 #define	tsd_create(kp, d) pthread_key_create(kp, d)
-#define	tsd_destroy(kp) /* nothing */
+#define	tsd_destroy(kp) pthread_key_delete(*kp)
 
 /*
  * Kernel memory
@@ -445,6 +445,7 @@ extern void	taskq_dispatch_ent(taskq_t *, task_func_t, void *, uint_t,
 extern void	taskq_destroy(taskq_t *);
 extern void	taskq_wait(taskq_t *);
 extern void	taskq_wait_id(taskq_t *, taskqid_t);
+extern int	taskq_cancel_id(taskq_t *, taskqid_t);
 extern int	taskq_member(taskq_t *, void *);
 extern void	system_taskq_init(void);
 extern void	system_taskq_fini(void);

@@ -215,6 +215,7 @@ uint_t zfs_fsyncer_key;
 extern uint_t rrw_tsd_key;
 static uint_t zfs_allow_log_key;
 extern uint_t zfs_geom_probe_vdev_key;
+extern uint_t zfs_async_io_key;
 
 typedef int zfs_ioc_legacy_func_t(zfs_cmd_t *);
 typedef int zfs_ioc_func_t(const char *, nvlist_t *, nvlist_t *);
@@ -7162,6 +7163,7 @@ _fini(void)
 		(void) ddi_modclose(sharefs_mod);
 
 	tsd_destroy(&zfs_fsyncer_key);
+	tsd_destroy(&zfs_async_io_key);
 	ldi_ident_release(zfs_li);
 	zfs_li = NULL;
 	mutex_destroy(&zfs_share_lock);
@@ -7211,6 +7213,7 @@ zfs__init(void)
 	tsd_create(&rrw_tsd_key, rrw_tsd_destroy);
 	tsd_create(&zfs_allow_log_key, zfs_allow_log_destroy);
 	tsd_create(&zfs_geom_probe_vdev_key, NULL);
+	tsd_create(&zfs_async_io_key, dmu_thread_context_destroy);
 
 	printf("ZFS storage pool version: features support (" SPA_VERSION_STRING ")\n");
 	root_mount_rel(zfs_root_token);
@@ -7236,6 +7239,7 @@ zfs__fini(void)
 	tsd_destroy(&zfs_fsyncer_key);
 	tsd_destroy(&rrw_tsd_key);
 	tsd_destroy(&zfs_allow_log_key);
+	tsd_destroy(&zfs_async_io_key);
 
 	mutex_destroy(&zfs_share_lock);
 

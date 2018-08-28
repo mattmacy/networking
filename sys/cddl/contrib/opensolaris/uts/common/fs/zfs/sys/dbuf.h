@@ -415,7 +415,7 @@ typedef struct dmu_buf_impl {
 
 	/**
 	 * List of DMU buffer sets dependent on this dbuf.
-	 * See dmu_context_node_t, the indirect list entry structure used.
+	 * See dmu_ctx_node_t, the indirect list entry structure used.
 	 */
 	list_t db_dmu_buf_sets;
 
@@ -484,7 +484,7 @@ dmu_buf_impl_t *dbuf_hold_level(struct dnode *dn, int level, uint64_t blkid,
     void *tag);
 int dbuf_hold_impl(struct dnode *dn, uint8_t level, uint64_t blkid,
     boolean_t fail_sparse, boolean_t fail_uncached,
-    void *tag, dmu_buf_impl_t **dbp);
+    void *tag, dmu_buf_impl_t **dbp, dmu_buf_set_t *buf_set);
 
 void dbuf_prefetch(struct dnode *dn, int64_t level, uint64_t blkid,
     zio_priority_t prio, arc_flags_t aflags);
@@ -640,6 +640,28 @@ _NOTE(CONSTCOND) } while (0)
 
 #endif
 
+typedef struct dmu_ctx_node {
+
+	/** This entry's link in the list. */
+	list_node_t dcn_link;
+
+	/** This entry's buffer set pointer. */
+	dmu_buf_set_t *buf_set;
+
+} dmu_ctx_node_t;
+
+void dmu_ctx_node_add(list_t *list, dmu_buf_set_t *buf_set);
+void dmu_ctx_node_remove(list_t *list, dmu_ctx_node_t *dcn);
+
+/**
+ * \brief Thread-specific DMU callback state for processing async I/O's.
+ */
+typedef struct dmu_cb_state {
+
+	/** The list of IOs that are ready to be processed. */
+	list_t io_list;
+
+} dmu_cb_state_t;
 
 #ifdef	__cplusplus
 }

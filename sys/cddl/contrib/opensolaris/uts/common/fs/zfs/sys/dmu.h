@@ -338,6 +338,166 @@ typedef struct dmu_buf {
 	void *db_data;			/* data in buffer */
 } dmu_buf_t;
 
+
+/**
+ * \brief These structures are for DMU consumers that want async
+ * callbacks.
+ */
+struct dmu_ctx;
+struct dmu_buf_set;
+struct zio;
+typedef void (*dmu_ctx_callback_t)(struct dmu_ctx *);
+typedef int (*dmu_buf_set_callback_t)(struct dmu_buf_set *);
+typedef int (*dmu_buf_transfer_callback_t)(struct dmu_buf_set *, dmu_buf_t *,
+    uint64_t, uint64_t);
+
+typedef struct dmu_ctx {
+
+	/** The primary data associated with this context. */
+	uint64_t dc_size;		/**< Requested total I/O size. */
+	uint64_t dc_resid;		/**< Remaining bytes to process. */
+	uint64_t dc_dn_start;	/**< Starting block offset into the dnode. */
+	uint64_t dc_dn_offset;	/**< Current block offset. */
+	dmu_tx_t *dc_tx;		/**< Caller's transaction, if specified. */
+	void *dc_data_buf;		/**< UIO or char pointer */
+
+	/** The dnode held in association with this context. */
+	struct dnode *dc_dn;
+	objset_t *dc_os;		/**< Object set associated with the dnode. */
+	uint64_t dc_object;	/**< Object ID associated with the dnode. */
+
+	/** Number of buffer sets left to complete. */
+	volatile int dc_holds;
+
+	/** The tag used for this context. */
+	void *dc_tag;
+
+	/** The callback to call once an I/O completes entirely. */
+	dmu_ctx_callback_t dc_complete_cb;
+
+	/** The callback to call to transfer a buffer set. */
+	dmu_buf_set_callback_t dc_buf_set_transfer_cb;
+
+	/*
+	 * Method called to perform a transfer operation on a DMU
+	 * buffer.  For reads, this is set to dc_data_trasnfer_cb
+	 * (no additional setup or book keeping required for the
+	 * transfer).  For writes, this method wraps a call to
+	 * dc_data_transfer_cb with logic to manage the dirty state
+	 * of the DMU buffer.
+	 */
+	dmu_buf_transfer_callback_t dc_buf_transfer_cb;
+
+	/**
+	 * Method to copy a range of data into or out of a DMU buffer.
+	 * This is normally only set by dmu_ctx_init().
+	 */
+	dmu_buf_transfer_callback_t dc_data_transfer_cb;
+
+	/** Total number of bytes transferred. */
+	uint64_t dc_completed_size;
+
+	/** Flags for this DMU context. */
+	uint32_t dc_flags;
+#define	DMU_CTX_FLAG_READ	(1 << 1)
+#define	DMU_CTX_FLAG_UIO	(1 << 2)
+#define	DMU_CTX_FLAG_PREFETCH	(1 << 3)
+#define	DMU_CTX_FLAG_NO_HOLD	(1 << 4)
+#define	DMU_CTX_FLAG_SUN_PAGES	(1 << 5)
+#define	DMU_CTX_FLAG_NOFILL	(1 << 6)
+#define	DMU_CTX_FLAG_ASYNC	(1 << 7)
+
+#define	DMU_CTX_WRITER_FLAGS	(DMU_CTX_FLAG_SUN_PAGES|DMU_CTX_FLAG_NOFILL)
+#define	DMU_CTX_READER_FLAGS	(DMU_CTX_FLAG_PREFETCH)
+
+#define	DMU_CTX_BUF_IS_CHAR(dmu_ctx) \
+	(((dmu_ctx)->dc_flags & DMU_CTX_FLAG_UIO) == 0)
+
+	/** The number of errors that occurred. */
+	int dc_err;
+
+} dmu_ctx_t;
+
+typedef struct dmu_buf_set {
+
+	/** The DMU context that this buffer set is associated with. */
+	dmu_ctx_t *dbs_dmu_ctx;
+
+	/** Number of dmu_bufs associated with this context. */
+	int dbs_count;
+
+	/** Length of dbp; only used to free the correct size. */
+	int dbs_dbp_length;
+
+	/** Number of dmu_bufs left to complete. */
+	volatile int dbs_holds;
+
+	/** The starting offset, relative to the associated dnode. */
+	uint64_t dbs_dn_start;
+	/** The size of the I/O. */
+	uint64_t dbs_size;
+	/** The amount of data remaining to process for this buffer set. */
+	uint64_t dbs_resid;
+
+	/** For writes only, if the context doesn't have a transaction. */
+	dmu_tx_t *dbs_tx;
+#define	DMU_BUF_SET_TX(buf_set) \
+	((buf_set)->dbs_dmu_ctx->dc_tx ? (buf_set)->dbs_dmu_ctx->dc_tx : (buf_set)->dbs_tx)
+
+	/** The number of errors that occurred. */
+	int dbs_err;
+
+	/** The ZIO associated with this context. */
+	struct zio *dbs_zio;
+
+	/** The set of buffers themselves. */
+	struct dmu_buf *dbs_dbp[0];
+
+} dmu_buf_set_t;
+
+int dmu_buf_set_rele(dmu_buf_set_t *buf_set, boolean_t err);
+int dmu_ctx_init(dmu_ctx_t *dmu_ctx, struct dnode *dn, objset_t *os,
+    uint64_t object, uint64_t offset, uint64_t size, void *data_buf, void *tag,
+    uint32_t flags);
+void dmu_ctx_seek(dmu_ctx_t *dmu_ctx, uint64_t offset, uint64_t size,
+    void *data_buf);
+void dmu_ctx_rele(dmu_ctx_t *dmu_ctx);
+int dmu_buf_set_transfer(dmu_buf_set_t *buf_set);
+int dmu_buf_set_transfer_write(dmu_buf_set_t *buf_set);
+
+/* Optional context setters; use after calling dmu_ctx_init*(). */
+static inline void
+dmu_ctx_set_complete_cb(dmu_ctx_t *ctx, dmu_ctx_callback_t cb)
+{
+	ctx->dc_complete_cb = cb;
+}
+static inline void
+dmu_ctx_set_buf_set_transfer_cb(dmu_ctx_t *ctx,
+    dmu_buf_set_callback_t cb)
+{
+	ctx->dc_buf_set_transfer_cb = cb;
+}
+static inline void
+dmu_ctx_set_buf_transfer_cb(dmu_ctx_t *ctx,
+    dmu_buf_transfer_callback_t cb)
+{
+	ctx->dc_buf_transfer_cb = cb;
+}
+static inline void
+dmu_ctx_set_dmu_tx(dmu_ctx_t *ctx, dmu_tx_t *tx)
+{
+	ASSERT(tx != NULL && ((ctx->dc_flags & DMU_CTX_FLAG_READ) == 0));
+	dmu_ctx_set_buf_set_transfer_cb(ctx, dmu_buf_set_transfer);
+	ctx->dc_tx = tx;
+}
+
+/* DMU thread context handlers. */
+int dmu_thread_context_create(void);
+void dmu_thread_context_process(void);
+void dmu_thread_context_destroy(void *);
+
+struct dmu_buf_user;
+
 /*
  * The names of zap entries in the DIRECTORY_OBJECT of the MOS.
  */
@@ -590,7 +750,7 @@ void dmu_buf_rele_array(dmu_buf_t **, int numbufs, void *tag);
 
 typedef void dmu_buf_evict_func_t(void *user_ptr);
 
-/*
+/**
  * A DMU buffer user object may be associated with a dbuf for the
  * duration of its lifetime.  This allows the user of a dbuf (client)
  * to attach private data to a dbuf (e.g. in-core only data such as a
@@ -729,6 +889,8 @@ struct blkptr *dmu_buf_get_blkptr(dmu_buf_t *db);
  * (ie. you've called dmu_tx_hold_object(tx, db->db_object)).
  */
 void dmu_buf_will_dirty(dmu_buf_t *db, dmu_tx_t *tx);
+void dmu_buf_will_dirty_range(dmu_buf_t *db, dmu_tx_t *tx, int offset,
+    int size);
 void dmu_buf_set_crypt_params(dmu_buf_t *db_fake, boolean_t byteorder,
     const uint8_t *salt, const uint8_t *iv, const uint8_t *mac, dmu_tx_t *tx);
 
@@ -801,9 +963,9 @@ void dmu_tx_callback_register(dmu_tx_t *tx, dmu_tx_callback_func_t *dcb_func,
  * -1, the range from offset to end-of-file is freed.
  */
 int dmu_free_range(objset_t *os, uint64_t object, uint64_t offset,
-    uint64_t size, dmu_tx_t *tx);
+	uint64_t size, dmu_tx_t *tx);
 int dmu_free_long_range(objset_t *os, uint64_t object, uint64_t offset,
-    uint64_t size);
+	uint64_t size);
 int dmu_free_long_object(objset_t *os, uint64_t object);
 
 /*
@@ -819,11 +981,12 @@ int dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	void *buf, uint32_t flags);
 int dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
     uint32_t flags);
+int dmu_issue(dmu_ctx_t *dmu_ctx);
 void dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	const void *buf, dmu_tx_t *tx);
 void dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
     const void *buf, dmu_tx_t *tx);
-void dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
+int dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dmu_tx_t *tx);
 int dmu_read_uio(objset_t *os, uint64_t object, struct uio *uio, uint64_t size);
 int dmu_read_uio_dbuf(dmu_buf_t *zdb, struct uio *uio, uint64_t size);
