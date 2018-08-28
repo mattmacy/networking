@@ -466,6 +466,12 @@ boolean_t dnode_needs_remap(const dnode_t *dn);
 	((_dn)->dn_objset->os_primary_cache == ZFS_CACHE_ALL ||		\
 	(_dn)->dn_objset->os_primary_cache == ZFS_CACHE_METADATA)
 
+#define	DNODE_VERIFY_DIRTYCTX(dn, tx)					\
+	ASSERT((dn)->dn_object == DMU_META_DNODE_OBJECT ||		\
+	    (dn)->dn_dirtyctx == DN_UNDIRTIED ||			\
+	    (dn)->dn_dirtyctx ==					\
+	    (dmu_tx_is_syncing(tx) ? DN_DIRTY_SYNC : DN_DIRTY_OPEN))
+
 #ifdef ZFS_DEBUG
 
 /*
