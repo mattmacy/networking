@@ -1978,6 +1978,46 @@ dbuf_redirty(dbuf_dirty_record_t *dr)
 }
 
 static void
+dbuf_new_dirty_record_accounting(dnode_t *dn, dmu_buf_impl_t *db, dmu_tx_t *tx)
+{
+	objset_t *os = dn->dn_objset;
+
+	/*
+	 * Only valid if not already dirty in this transaction group.
+	 */
+	ASSERT(dn->dn_object == 0 ||
+	    dn->dn_dirtyctx == DN_UNDIRTIED || dn->dn_dirtyctx ==
+	    (dmu_tx_is_syncing(tx) ? DN_DIRTY_SYNC : DN_DIRTY_OPEN));
+
+	ASSERT3U(dn->dn_nlevels, >, db->db_level);
+
+	/*
+	 * We should only be dirtying in syncing context if it's the
+	 * mos or we're initializing the os or it's a special object.
+	 * However, we are allowed to dirty in syncing context provided
+	 * we already dirtied it in open context.  Hence we must make
+	 * this assertion only if we're not already dirty.
+	 */
+	os = dn->dn_objset;
+	VERIFY3U(tx->tx_txg, <=, spa_final_dirty_txg(os->os_spa));
+#ifdef DEBUG
+	if (dn->dn_objset->os_dsl_dataset != NULL)
+		rrw_enter(&os->os_dsl_dataset->ds_bp_rwlock, RW_READER, FTAG);
+	ASSERT(!dmu_tx_is_syncing(tx) || DMU_OBJECT_IS_SPECIAL(dn->dn_object) ||
+	    os->os_dsl_dataset == NULL || BP_IS_HOLE(os->os_rootbp));
+	if (dn->dn_objset->os_dsl_dataset != NULL)
+		rrw_exit(&os->os_dsl_dataset->ds_bp_rwlock, FTAG);
+#endif
+	ASSERT(db->db.db_size != 0);
+
+	dprintf_dbuf(db, "size=%llx\n", (u_longlong_t)db->db.db_size);
+
+	if (db->db_blkid != DMU_BONUS_BLKID) {
+		dmu_objset_willuse_space(os, db->db.db_size, tx);
+	}
+}
+
+static void
 dbuf_dirty_parent(dnode_t *dn, dmu_buf_impl_t *db, dmu_tx_t *tx,
     dbuf_dirty_record_t *dr)
 {
@@ -2152,39 +2192,7 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 		return (dr);
 	}
 
-	/*
-	 * Only valid if not already dirty.
-	 */
-	ASSERT(dn->dn_object == 0 ||
-	    dn->dn_dirtyctx == DN_UNDIRTIED || dn->dn_dirtyctx ==
-	    (dmu_tx_is_syncing(tx) ? DN_DIRTY_SYNC : DN_DIRTY_OPEN));
-
-	ASSERT3U(dn->dn_nlevels, >, db->db_level);
-
-	/*
-	 * We should only be dirtying in syncing context if it's the
-	 * mos or we're initializing the os or it's a special object.
-	 * However, we are allowed to dirty in syncing context provided
-	 * we already dirtied it in open context.  Hence we must make
-	 * this assertion only if we're not already dirty.
-	 */
-	os = dn->dn_objset;
-	VERIFY3U(tx->tx_txg, <=, spa_final_dirty_txg(os->os_spa));
-#ifdef DEBUG
-	if (dn->dn_objset->os_dsl_dataset != NULL)
-		rrw_enter(&os->os_dsl_dataset->ds_bp_rwlock, RW_READER, FTAG);
-	ASSERT(!dmu_tx_is_syncing(tx) || DMU_OBJECT_IS_SPECIAL(dn->dn_object) ||
-	    os->os_dsl_dataset == NULL || BP_IS_HOLE(os->os_rootbp));
-	if (dn->dn_objset->os_dsl_dataset != NULL)
-		rrw_exit(&os->os_dsl_dataset->ds_bp_rwlock, FTAG);
-#endif
-	ASSERT(db->db.db_size != 0);
-
-	dprintf_dbuf(db, "size=%llx\n", (u_longlong_t)db->db.db_size);
-
-	if (db->db_blkid != DMU_BONUS_BLKID) {
-		dmu_objset_willuse_space(os, db->db.db_size, tx);
-	}
+	dbuf_new_dirty_record_accounting(dn, db, tx);
 
 	/*
 	 * If this buffer is dirty in an old transaction group we need
