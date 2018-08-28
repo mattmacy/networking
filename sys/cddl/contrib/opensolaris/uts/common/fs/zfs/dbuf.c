@@ -951,6 +951,8 @@ dbuf_verify(dmu_buf_impl_t *db)
 {
 	dnode_t *dn;
 	dbuf_dirty_record_t *dr;
+	dbuf_dirty_record_t *dr_next;
+	dbuf_dirty_record_t *pending;
 
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 
@@ -983,14 +985,24 @@ dbuf_verify(dmu_buf_impl_t *db)
 		ASSERT3U(db->db.db_offset, ==, db->db_blkid * db->db.db_size);
 	}
 
-	for (dr = list_head(&db->db_dirty_records);
-		 dr != NULL;
-		 dr = list_next(&db->db_dirty_records, dr))
+	pending = NULL;
+	for (dr = list_head(&db->db_dirty_records); dr != NULL; dr = dr_next) {
+		dr_next = list_next(&db->db_dirty_records, dr);
 		ASSERT(dr->dr_dbuf == db);
-
-	for (dr = db->db_data_pending; dr != NULL;
-		 dr = list_next(&db->db_dirty_records, dr))
-		ASSERT(dr->dr_dbuf == db);
+		ASSERT(dr_next == NULL || dr->dr_txg > dr_next->dr_txg);
+		/* This DR happens to be the pending DR. */
+		if (dr == db->db_data_pending) {
+			pending = dr;
+			ASSERT3P(dr_next, ==, NULL);
+		}
+	}
+	if (db->db_data_pending != NULL) {
+		/* The pending DR's dbuf is this dbuf. */
+		ASSERT3P(db->db_data_pending->dr_dbuf, ==, db);
+		/* The pending DR should be on the list. */
+		ASSERT3P(pending, !=, NULL);
+		ASSERT3P(db->db_data_pending, ==, pending);
+	}
 
 	/*
 	 * We can't assert that db_size matches dn_datablksz because it
