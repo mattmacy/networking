@@ -952,6 +952,20 @@ spa_get_errlists(spa_t *spa, avl_tree_t *last, avl_tree_t *scrub)
 }
 
 static void
+spa_zio_thread_init(void *context __unused)
+{
+
+	VERIFY(0 == dmu_thread_context_create());
+}
+
+static void
+spa_zio_thread_destroy(void *context)
+{
+
+	dmu_thread_context_destroy(context/*NOTUSED*/);
+}
+
+static void
 spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 {
 	const zio_taskq_info_t *ztip = &zio_taskqs[t][q];
@@ -1031,7 +1045,7 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 #endif
 
 			tq = taskq_create_proc(name, value, pri, 50,
-			    INT_MAX, spa->spa_proc, flags, NULL, NULL);
+				 INT_MAX, spa->spa_proc, flags, spa_zio_thread_init, spa_zio_thread_destroy);
 #ifdef SYSDC
 		}
 #endif
@@ -1852,7 +1866,7 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 
 	packed = kmem_alloc(nvsize, KM_SLEEP);
 	error = dmu_read(spa->spa_meta_objset, obj, 0, nvsize, packed,
-	    DMU_READ_PREFETCH);
+	    DMU_CTX_FLAG_PREFETCH);
 	if (error == 0)
 		error = nvlist_unpack(packed, nvsize, value, 0);
 	kmem_free(packed, nvsize);

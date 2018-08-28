@@ -533,7 +533,7 @@ update_pages(vnode_t *vp, int64_t start, int len, objset_t *os, uint64_t oid,
 
 			va = zfs_map_page(pp, &sf);
 			(void) dmu_read(os, oid, start+off, nbytes,
-			    va+off, DMU_READ_PREFETCH);;
+			    va+off, DMU_CTX_FLAG_PREFETCH);;
 			zfs_unmap_page(sf);
 
 			zfs_vmobject_wlock(obj);
@@ -585,7 +585,7 @@ mappedread_sf(vnode_t *vp, int nbytes, uio_t *uio)
 			zfs_vmobject_wunlock(obj);
 			va = zfs_map_page(pp, &sf);
 			error = dmu_read(os, zp->z_id, start, bytes, va,
-			    DMU_READ_PREFETCH);
+			    DMU_CTX_FLAG_PREFETCH);
 			if (bytes != PAGESIZE && error == 0)
 				bzero(va + bytes, PAGESIZE - bytes);
 			zfs_unmap_page(sf);

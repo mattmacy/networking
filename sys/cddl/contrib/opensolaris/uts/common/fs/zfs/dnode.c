@@ -1553,7 +1553,7 @@ dnode_set_blksz(dnode_t *dn, uint64_t size, int ibs, dmu_tx_t *tx)
 		goto fail;
 
 	/* resize the old block */
-	err = dbuf_hold_impl(dn, 0, 0, TRUE, FALSE, FTAG, &db);
+	err = dbuf_hold_impl(dn, 0, 0, TRUE, FALSE, FTAG, &db, NULL);
 	if (err == 0)
 		dbuf_new_size(db, size, tx);
 	else if (err != ENOENT)
@@ -1850,7 +1850,7 @@ dnode_free_range(dnode_t *dn, uint64_t off, uint64_t len, dmu_tx_t *tx)
 		if (len < head)
 			head = len;
 		if (dbuf_hold_impl(dn, 0, dbuf_whichblock(dn, 0, off),
-		    TRUE, FALSE, FTAG, &db) == 0) {
+				TRUE, FALSE, FTAG, &db, NULL) == 0) {
 			caddr_t data;
 
 			/* don't dirty if it isn't on disk and isn't dirty */
@@ -1888,7 +1888,7 @@ dnode_free_range(dnode_t *dn, uint64_t off, uint64_t len, dmu_tx_t *tx)
 		if (len < tail)
 			tail = len;
 		if (dbuf_hold_impl(dn, 0, dbuf_whichblock(dn, 0, off+len),
-		    TRUE, FALSE, FTAG, &db) == 0) {
+				TRUE, FALSE, FTAG, &db, NULL) == 0) {
 			/* don't dirty if not on disk and not dirty */
 			if (!list_is_empty(&db->db_dirty_records)  ||
 			    (db->db_blkptr && !BP_IS_HOLE(db->db_blkptr))) {
@@ -2122,7 +2122,7 @@ dnode_next_offset_level(dnode_t *dn, int flags, uint64_t *offset,
 		data = dn->dn_phys->dn_blkptr;
 	} else {
 		uint64_t blkid = dbuf_whichblock(dn, lvl, *offset);
-		error = dbuf_hold_impl(dn, lvl, blkid, TRUE, FALSE, FTAG, &db);
+		error = dbuf_hold_impl(dn, lvl, blkid, TRUE, FALSE, FTAG, &db, NULL);
 		if (error) {
 			if (error != ENOENT)
 				return (error);
