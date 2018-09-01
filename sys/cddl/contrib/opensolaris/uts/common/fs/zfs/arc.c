@@ -4256,8 +4256,15 @@ arc_hdr_realloc_crypt(arc_buf_hdr_t *hdr, boolean_t need_crypt)
 	hdr->b_l1hdr.b_acb = NULL;
 	hdr->b_l1hdr.b_pabd = NULL;
 
-	arc_space_consume(nsize, ARC_SPACE_HDRS);
-	arc_space_return(osize, ARC_SPACE_HDRS);
+	if (ocache == hdr_full_crypt_cache) {
+		ASSERT(!HDR_HAS_RABD(hdr));
+		hdr->b_crypt_hdr.b_ot = DMU_OT_NONE;
+		hdr->b_crypt_hdr.b_ebufcnt = 0;
+		hdr->b_crypt_hdr.b_dsobj = 0;
+		bzero(hdr->b_crypt_hdr.b_salt, ZIO_DATA_SALT_LEN);
+		bzero(hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
+		bzero(hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
+	}
 
 	buf_discard_identity(hdr);
 	kmem_cache_free(ocache, hdr);
@@ -6616,7 +6623,7 @@ arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp, arc_read_done_func_t *done,
 	boolean_t noauth_read = BP_IS_AUTHENTICATED(bp) &&
 	    (zio_flags & ZIO_FLAG_RAW_ENCRYPT) != 0;
 	int rc = 0;
-	
+
 	ASSERT(!BP_IS_EMBEDDED(bp) ||
 	    BPE_GET_ETYPE(bp) == BP_EMBEDDED_TYPE_DATA);
 
@@ -6776,6 +6783,15 @@ top:
 		boolean_t devw = B_FALSE;
 		uint64_t size;
 		abd_t *hdr_abd;
+
+		/*
+		 * Gracefully handle a damaged logical block size as a
+		 * checksum error.
+		 */
+		if (lsize > spa_maxblocksize(spa)) {
+			rc = SET_ERROR(ECKSUM);
+			return (rc);
+		}
 
 		if (hdr == NULL) {
 			/* this block is not in the cache */
@@ -8088,6 +8104,16 @@ arc_state_fini(void)
 	multilist_destroy(arc_mfu_ghost->arcs_list[ARC_BUFC_DATA]);
 	multilist_destroy(arc_l2c_only->arcs_list[ARC_BUFC_METADATA]);
 	multilist_destroy(arc_l2c_only->arcs_list[ARC_BUFC_DATA]);
+
+	aggsum_fini(&arc_meta_used);
+	aggsum_fini(&arc_size);
+	aggsum_fini(&astat_data_size);
+	aggsum_fini(&astat_metadata_size);
+	aggsum_fini(&astat_hdr_size);
+	aggsum_fini(&astat_l2_hdr_size);
+	aggsum_fini(&astat_bonus_size);
+	aggsum_fini(&astat_dnode_size);
+	aggsum_fini(&astat_dbuf_size);
 }
 
 uint64_t
