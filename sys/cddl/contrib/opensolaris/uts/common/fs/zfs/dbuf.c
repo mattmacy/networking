@@ -1201,11 +1201,68 @@ dbuf_read_done(zio_t *zio, const zbookmark_phys_t *zb, int err,
 	dbuf_rele_and_unlock(db, NULL, B_FALSE);
 }
 
+
+/*
+ * This function ensures that, when doing a decrypting read of a block,
+ * we make sure we have decrypted the dnode associated with it. We must do
+ * this so that we ensure we are fully authenticating the checksum-of-MACs
+ * tree from the root of the objset down to this block. Indirect blocks are
+ * always verified against their secure checksum-of-MACs assuming that the
+ * dnode containing them is correct. Now that we are doing a decrypting read,
+ * we can be sure that the key is loaded and verify that assumption. This is
+ * especially important considering that we always read encrypted dnode
+ * blocks as raw data (without verifying their MACs) to start, and
+ * decrypt / authenticate them when we need to read an encrypted bonus buffer.
+ */
+static int
+dbuf_read_verify_dnode_crypt(dmu_buf_impl_t *db, uint32_t flags)
+{
+	int err = 0;
+	objset_t *os = db->db_objset;
+	arc_buf_t *dnode_abuf;
+	dnode_t *dn;
+	zbookmark_phys_t zb;
+
+	ASSERT(MUTEX_HELD(&db->db_mtx));
+
+	if (!os->os_encrypted || os->os_raw_receive ||
+	    (flags & DB_RF_NO_DECRYPT) != 0)
+		return (0);
+
+	DB_DNODE_ENTER(db);
+	dn = DB_DNODE(db);
+	dnode_abuf = (dn->dn_dbuf != NULL) ? dn->dn_dbuf->db_buf : NULL;
+
+	if (dnode_abuf == NULL || !arc_is_encrypted(dnode_abuf)) {
+		DB_DNODE_EXIT(db);
+		return (0);
+	}
+
+	SET_BOOKMARK(&zb, dmu_objset_id(os),
+	    DMU_META_DNODE_OBJECT, 0, dn->dn_dbuf->db_blkid);
+	err = arc_untransform(dnode_abuf, os->os_spa, &zb, B_TRUE);
+
+	/*
+	 * An error code of EACCES tells us that the key is still not
+	 * available. This is ok if we are only reading authenticated
+	 * (and therefore non-encrypted) blocks.
+	 */
+	if (err == EACCES && ((db->db_blkid != DMU_BONUS_BLKID &&
+	    !DMU_OT_IS_ENCRYPTED(dn->dn_type)) ||
+	    (db->db_blkid == DMU_BONUS_BLKID &&
+	    !DMU_OT_IS_ENCRYPTED(dn->dn_bonustype))))
+		err = 0;
+
+
+	DB_DNODE_EXIT(db);
+
+	return (err);
+}
+
 static int
 dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 {
 	dnode_t *dn;
-	arc_buf_t *dn_buf;
 	zbookmark_phys_t zb;
 	arc_flags_t aflags = ARC_FLAG_NOWAIT;
 	int err, zio_flags = 0;
@@ -1219,8 +1276,6 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	ASSERT(db->db_state == DB_UNCACHED);
 	ASSERT(db->db_buf == NULL);
 
-	dn_buf = (dn->dn_dbuf != NULL) ? dn->dn_dbuf->db_buf : NULL;
-
 	if (db->db_blkid == DMU_BONUS_BLKID) {
 		/*
 		 * The bonus length stored in the dnode may be less than
@@ -1230,19 +1285,11 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		int max_bonuslen = DN_SLOTS_TO_BONUSLEN(dn->dn_num_slots);
 
 		/* if the underlying dnode block is encrypted, decrypt it */
-		if (dn_buf != NULL && dn->dn_objset->os_encrypted &&
-		    DMU_OT_IS_ENCRYPTED(dn->dn_bonustype) &&
-		    (flags & DB_RF_NO_DECRYPT) == 0 &&
-		    arc_is_encrypted(dn_buf)) {
-			SET_BOOKMARK(&zb, dmu_objset_id(db->db_objset),
-			    DMU_META_DNODE_OBJECT, 0, dn->dn_dbuf->db_blkid);
-			err = arc_untransform(dn_buf, dn->dn_objset->os_spa,
-			    &zb, B_TRUE);
-			if (err != 0) {
-				DB_DNODE_EXIT(db);
-				mutex_exit(&db->db_mtx);
-				return (err);
-			}
+		err = dbuf_read_verify_dnode_crypt(db, flags);
+		if (err != 0) {
+			DB_DNODE_EXIT(db);
+			mutex_exit(&db->db_mtx);
+			return (err);
 		}
 
 		ASSERT3U(bonuslen, <=, db->db.db_size);
@@ -1306,27 +1353,16 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		spa_log_error(db->db_objset->os_spa, &zb);
 		zfs_panic_recover("unencrypted block in encrypted "
 		    "object set %llu", dmu_objset_id(db->db_objset));
+		DB_DNODE_EXIT(db);
+		mutex_exit(&db->db_mtx);
 		return (SET_ERROR(EIO));
 	}
 
-	/*
-	 * If we are doing a decrypting read of a block, make sure we
-	 * have decrypted the dnode associated with it so that the current
-	 * bp's MAC can be verified.
-	 */
-	if (dn_buf != NULL && dn->dn_objset->os_encrypted &&
-	    DMU_OT_IS_ENCRYPTED(dn->dn_bonustype) &&
-	    (flags & DB_RF_NO_DECRYPT) == 0 &&
-	    arc_is_encrypted(dn_buf)) {
-		SET_BOOKMARK(&zb, dmu_objset_id(db->db_objset),
-		    DMU_META_DNODE_OBJECT, 0, dn->dn_dbuf->db_blkid);
-		err = arc_untransform(dn_buf, dn->dn_objset->os_spa,
-		    &zb, B_TRUE);
-		if (err != 0) {
-			DB_DNODE_EXIT(db);
-			mutex_exit(&db->db_mtx);
-			return (err);
-		}
+	err = dbuf_read_verify_dnode_crypt(db, flags);
+	if (err != 0) {
+		DB_DNODE_EXIT(db);
+		mutex_exit(&db->db_mtx);
+		return (err);
 	}
 
 	DB_DNODE_EXIT(db);
@@ -1351,6 +1387,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	err = arc_read(zio, db->db_objset->os_spa, db->db_blkptr,
 	    dbuf_read_done, db, ZIO_PRIORITY_SYNC_READ, zio_flags,
 	    &aflags, &zb);
+
 	return (err);
 }
 
@@ -1461,15 +1498,29 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		spa_t *spa = dn->dn_objset->os_spa;
 
 		/*
-		 * If the arc buf is compressed or encrypted, we need to
-		 * untransform it to read the data. This could happen during
-		 * the "zfs receive" of a stream which is deduplicated and
-		 * either raw or compressed. We do not need to do this if the
-		 * caller wants raw encrypted data.
+		 * Ensure that this block's dnode has been decrypted if
+		 * the caller has requested decrypted data.
 		 */
-		if (db->db_buf != NULL && (flags & DB_RF_NO_DECRYPT) == 0 &&
+		err = dbuf_read_verify_dnode_crypt(db, flags);
+
+		/*
+		 * If the arc buf is compressed or encrypted and the caller
+		 * requested uncompressed data, we need to untransform it
+		 * before returning. We also call arc_untransform() on any
+		 * unauthenticated blocks, which will verify their MAC if
+		 * the key is now available.
+		 */
+		if (err == 0 && db->db_buf != NULL &&
+		    (flags & DB_RF_NO_DECRYPT) == 0 &&
 		    (arc_is_encrypted(db->db_buf) ||
-		    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF)) {
+#ifdef __linux__
+			 /*
+			  * ZoL has this check but it triggers
+			  * a panic on FreeBSD
+			  */
+			 arc_is_unauthenticated(db->db_buf) ||
+#endif
+			 arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF)) {
 			zbookmark_phys_t zb;
 
 			SET_BOOKMARK(&zb, dmu_objset_id(db->db_objset),
@@ -1479,7 +1530,7 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 			dbuf_set_data(db, db->db_buf);
 		}
 		mutex_exit(&db->db_mtx);
-		if (prefetch)
+		if (err == 0 && prefetch)
 			dmu_zfetch(&dn->dn_zfetch, db->db_blkid, 1, B_TRUE);
 		if ((flags & DB_RF_HAVESTRUCT) == 0)
 			rw_exit(&dn->dn_struct_rwlock);
