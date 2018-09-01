@@ -1450,7 +1450,7 @@ dsl_scan_prefetch_dnode(dsl_scan_t *scn, dnode_phys_t *dnp,
 	if (dnp->dn_flags & DNODE_FLAG_SPILL_BLKPTR) {
 		zb.zb_level = 0;
 		zb.zb_blkid = DMU_SPILL_BLKID;
-		dsl_scan_prefetch(spc, &dnp->dn_spill, &zb);
+		dsl_scan_prefetch(spc, DN_SPILL_BLKPTR(dnp), &zb);
 	}
 
 	scan_prefetch_ctx_rele(spc, FTAG);
@@ -1487,7 +1487,7 @@ dsl_scan_prefetch_cb(zio_t *zio, const zbookmark_phys_t *zb, int error,
 			dsl_scan_prefetch(spc, cbp, &czb);
 		}
 	} else if (BP_GET_TYPE(bp) == DMU_OT_DNODE) {
-		dnode_phys_t *cdnp = buf->b_data;
+		dnode_phys_t *cdnp;
 		int i;
 		int epb = BP_GET_LSIZE(bp) >> DNODE_SHIFT;
 
@@ -1561,7 +1561,8 @@ dsl_scan_prefetch_thread(void *arg)
 		mutex_exit(&spa->spa_scrub_lock);
 
 		if (BP_IS_PROTECTED(&spic->spic_bp)) {
-			ASSERT3U(BP_GET_TYPE(&spic->spic_bp), ==, DMU_OT_DNODE);
+			ASSERT(BP_GET_TYPE(&spic->spic_bp) == DMU_OT_DNODE ||
+				BP_GET_TYPE(&spic->spic_bp) == DMU_OT_OBJSET);
 			ASSERT3U(BP_GET_LEVEL(&spic->spic_bp), ==, 0);
 			zio_flags |= ZIO_FLAG_RAW;
 		}
@@ -2975,6 +2976,7 @@ dsl_scan_need_resilver(spa_t *spa, const dva_t *dva, size_t psize,
 {
 	vdev_t *vd;
 
+	vd = vdev_lookup_top(spa, DVA_GET_VDEV(dva));
 	if (vd->vdev_ops == &vdev_indirect_ops) {
 		/*
 		 * The indirect vdev can point to multiple
@@ -2996,8 +2998,6 @@ dsl_scan_need_resilver(spa_t *spa, const dva_t *dva, size_t psize,
 		 */
 		return (B_TRUE);
 	}
-
-	vd = vdev_lookup_top(spa, DVA_GET_VDEV(dva));
 
 	/*
 	 * Check if the txg falls within the range which must be
