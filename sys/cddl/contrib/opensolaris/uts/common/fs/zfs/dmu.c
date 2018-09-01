@@ -21,10 +21,11 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, 2017 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Saso Kiselkov. All rights reserved.
+ * Copyright (c) 2013, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2016, Nexenta Systems, Inc. All rights reserved.
+ * Copyright (c) 2015 by Chunwei Chen. All rights reserved.
  */
-/* Copyright (c) 2013 by Saso Kiselkov. All rights reserved. */
-/* Copyright (c) 2013, Joyent, Inc. All rights reserved. */
-/* Copyright 2016 Nexenta Systems, Inc. All rights reserved. */
 
 #include <sys/dmu.h>
 #include <sys/dmu_impl.h>
@@ -47,6 +48,7 @@
 #include <sys/sa.h>
 #include <sys/zfeature.h>
 #include <sys/abd.h>
+#include <sys/zfs_rlock.h>
 #ifdef _KERNEL
 #include <sys/racct.h>
 #include <sys/vm.h>
@@ -70,6 +72,11 @@ SYSCTL_INT(_vfs_zfs, OID_AUTO, nopwrite_enabled, CTLFLAG_RDTUN,
 uint32_t zfs_per_txg_dirty_frees_percent = 30;
 SYSCTL_INT(_vfs_zfs, OID_AUTO, per_txg_dirty_frees_percent, CTLFLAG_RWTUN,
 	&zfs_per_txg_dirty_frees_percent, 0, "Percentage of dirtied blocks from frees in one txg");
+
+/*
+ * Enable/disable forcing txg sync when dirty in dmu_offset_next.
+ */
+int zfs_dmu_offset_next_sync = 0;
 
 /*
  * This can be used for testing, to ensure that certain actions happen
@@ -417,8 +424,10 @@ dmu_spill_hold_by_dnode(dnode_t *dn, uint32_t flags, void *tag, dmu_buf_t **dbp)
 	err = dbuf_read(db, NULL, flags);
 	if (err == 0)
 		*dbp = &db->db;
-	else
+	else {
 		dbuf_rele(db, tag);
+		*dbp = NULL;
+	}
 	return (err);
 }
 
@@ -778,11 +787,15 @@ static int
 dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
     uint64_t length)
 {
-	uint64_t object_size = (dn->dn_maxblkid + 1) * dn->dn_datablksz;
+	uint64_t object_size;
 	int err;
 	uint64_t dirty_frees_threshold;
 	dsl_pool_t *dp = dmu_objset_pool(os);
 
+	if (dn == NULL)
+		return (SET_ERROR(EINVAL));
+
+	object_size = (dn->dn_maxblkid + 1) * dn->dn_datablksz;
 	if (offset >= object_size)
 		return (0);
 
@@ -942,7 +955,7 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 	 * handle that here as well.
 	 */
 	if (dn->dn_maxblkid == 0) {
-		int newsz = offset > dn->dn_datablksz ? 0 :
+		uint64_t newsz = offset > dn->dn_datablksz ? 0 :
 		    MIN(size, dn->dn_datablksz - offset);
 		bzero((char *)buf + newsz, size - newsz);
 		size = newsz;
@@ -962,16 +975,16 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 			break;
 
 		for (i = 0; i < numbufs; i++) {
-			int tocpy;
-			int bufoff;
+			uint64_t tocpy;
+			int64_t bufoff;
 			dmu_buf_t *db = dbp[i];
 
 			ASSERT(size > 0);
 
 			bufoff = offset - db->db_offset;
-			tocpy = (int)MIN(db->db_size - bufoff, size);
+			tocpy = MIN(db->db_size - bufoff, size);
 
-			bcopy((char *)db->db_data + bufoff, buf, tocpy);
+			(void) memcpy(buf, (char *)db->db_data + bufoff, tocpy);
 
 			offset += tocpy;
 			size -= tocpy;
@@ -1012,14 +1025,14 @@ dmu_write_impl(dmu_buf_t **dbp, int numbufs, uint64_t offset, uint64_t size,
 	int i;
 
 	for (i = 0; i < numbufs; i++) {
-		int tocpy;
-		int bufoff;
+		uint64_t tocpy;
+		int64_t bufoff;
 		dmu_buf_t *db = dbp[i];
 
 		ASSERT(size > 0);
 
 		bufoff = offset - db->db_offset;
-		tocpy = (int)MIN(db->db_size - bufoff, size);
+		tocpy = MIN(db->db_size - bufoff, size);
 
 		ASSERT(i == 0 || i == numbufs-1 || tocpy == db->db_size);
 
@@ -1028,7 +1041,7 @@ dmu_write_impl(dmu_buf_t **dbp, int numbufs, uint64_t offset, uint64_t size,
 		else
 			dmu_buf_will_dirty(db, tx);
 
-		bcopy(buf, (char *)db->db_data + bufoff, tocpy);
+		(void) memcpy((char *)db->db_data + bufoff, buf, tocpy);
 
 		if (tocpy == db->db_size)
 			dmu_buf_fill_done(db, tx);
@@ -1374,14 +1387,14 @@ dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size)
 #endif
 
 	for (i = 0; i < numbufs; i++) {
-		int tocpy;
-		int bufoff;
+		uint64_t tocpy;
+		int64_t bufoff;
 		dmu_buf_t *db = dbp[i];
 
 		ASSERT(size > 0);
 
 		bufoff = uio->uio_loffset - db->db_offset;
-		tocpy = (int)MIN(db->db_size - bufoff, size);
+		tocpy = MIN(db->db_size - bufoff, size);
 
 		if (xuio) {
 			dmu_buf_impl_t *dbi = (dmu_buf_impl_t *)db;
@@ -1482,14 +1495,14 @@ dmu_write_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, dmu_tx_t *tx)
 		return (err);
 
 	for (i = 0; i < numbufs; i++) {
-		int tocpy;
-		int bufoff;
+		uint64_t tocpy;
+		int64_t bufoff;
 		dmu_buf_t *db = dbp[i];
 
 		ASSERT(size > 0);
 
 		bufoff = uio->uio_loffset - db->db_offset;
-		tocpy = (int)MIN(db->db_size - bufoff, size);
+		tocpy = MIN(db->db_size - bufoff, size);
 
 		ASSERT(i == 0 || i == numbufs-1 || tocpy == db->db_size);
 
@@ -1957,7 +1970,7 @@ dmu_copy_from_buf(objset_t *os, uint64_t object, uint64_t offset,
  * dmu_write().
  */
 void
-dmu_assign_arcbuf_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
+dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
     dmu_tx_t *tx)
 {
 	dmu_buf_impl_t *db;
@@ -1994,9 +2007,6 @@ dmu_assign_arcbuf_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
 		ASSERT3U(arc_get_compression(buf), ==, ZIO_COMPRESS_OFF);
 		ASSERT(!(buf->b_flags & ARC_BUF_FLAG_COMPRESSED));
 
-		os = dn->dn_objset;
-		object = dn->dn_object;
-
 		dbuf_rele(db, FTAG);
 		dmu_write(os, object, offset, blksz, buf->b_data, tx);
 		dmu_return_arcbuf(buf);
@@ -2005,13 +2015,13 @@ dmu_assign_arcbuf_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
 }
 
 void
-dmu_assign_arcbuf(dmu_buf_t *handle, uint64_t offset, arc_buf_t *buf,
+dmu_assign_arcbuf_by_dbuf(dmu_buf_t *handle, uint64_t offset, arc_buf_t *buf,
     dmu_tx_t *tx)
 {
 	dmu_buf_impl_t *dbuf = (dmu_buf_impl_t *)handle;
 
 	DB_DNODE_ENTER(dbuf);
-	dmu_assign_arcbuf_dnode(DB_DNODE(dbuf), offset, buf, tx);
+	dmu_assign_arcbuf_by_dnode(DB_DNODE(dbuf), offset, buf, tx);
 	DB_DNODE_EXIT(dbuf);
 }
 
@@ -2070,7 +2080,7 @@ dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
 			ASSERT(BP_EQUAL(bp, bp_orig));
 			VERIFY(BP_EQUAL(bp, db->db_blkptr));
 			ASSERT(zio->io_prop.zp_compress != ZIO_COMPRESS_OFF);
-			ASSERT(zio_checksum_table[chksum].ci_flags &
+			VERIFY(zio_checksum_table[chksum].ci_flags &
 			    ZCHECKSUM_FLAG_NOPWRITE);
 		}
 		dr->dt.dl.dr_overridden_by = *zio->io_bp;
@@ -2224,6 +2234,12 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 	ASSERT(pio != NULL);
 	ASSERT(txg != 0);
 
+	/* dbuf is within the locked range */
+#ifdef _KERNEL
+	ASSERT3U(db->db.db_offset, >=, zgd->zgd_rl->r_off);
+	ASSERT3U(db->db.db_offset + db->db.db_size, <=,
+	    zgd->zgd_rl->r_off + zgd->zgd_rl->r_len);
+#endif
 	SET_BOOKMARK(&zb, ds->ds_object,
 	    db->db.db_object, db->db_level, db->db_blkid);
 
@@ -2508,7 +2524,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		 * pipeline.
 		 */
 		compress = ZIO_COMPRESS_OFF;
-		checksum = ZIO_CHECKSUM_NOPARITY;
+		checksum = ZIO_CHECKSUM_OFF;
 	} else {
 		compress = zio_compress_select(os->os_spa, dn->dn_compress,
 		    compress);
@@ -2582,63 +2598,61 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 	bzero(zp->zp_salt, ZIO_DATA_SALT_LEN);
 	bzero(zp->zp_iv, ZIO_DATA_IV_LEN);
 	bzero(zp->zp_mac, ZIO_DATA_MAC_LEN);
+
+	ASSERT3U(zp->zp_compress, !=, ZIO_COMPRESS_INHERIT);
 }
 
+/*
+ * This function is only called from zfs_holey_common() for zpl_llseek()
+ * in order to determine the location of holes.  In order to accurately
+ * report holes all dirty data must be synced to disk.  This causes extremely
+ * poor performance when seeking for holes in a dirty file.  As a compromise,
+ * only provide hole data when the dnode is clean.  When a dnode is dirty
+ * report the dnode as having no holes which is always a safe thing to do.
+ */
 int
 dmu_offset_next(objset_t *os, uint64_t object, boolean_t hole, uint64_t *off)
 {
 	dnode_t *dn;
-	int err;
-
-	/*
-	 * Sync any current changes before
-	 * we go trundling through the block pointers.
-	 */
-	err = dmu_object_wait_synced(os, object);
-	if (err) {
-		return (err);
-	}
+	int i, err;
+	boolean_t clean = B_TRUE;
 
 	err = dnode_hold(os, object, FTAG, &dn);
-	if (err) {
+	if (err)
 		return (err);
-	}
 
-	err = dnode_next_offset(dn, (hole ? DNODE_FIND_HOLE : 0), off, 1, 1, 0);
-	dnode_rele(dn, FTAG);
-
-	return (err);
-}
-
-/*
- * Given the ZFS object, if it contains any dirty nodes
- * this function flushes all dirty blocks to disk. This
- * ensures the DMU object info is updated. A more efficient
- * future version might just find the TXG with the maximum
- * ID and wait for that to be synced.
- */
-int
-dmu_object_wait_synced(objset_t *os, uint64_t object)
-{
-	dnode_t *dn;
-	int error, i;
-
-	error = dnode_hold(os, object, FTAG, &dn);
-	if (error) {
-		return (error);
-	}
-
+	/*
+	 * Check if dnode is dirty
+	 */
 	for (i = 0; i < TXG_SIZE; i++) {
-		if (list_link_active(&dn->dn_dirty_link[i])) {
+		if (multilist_link_active(&dn->dn_dirty_link[i])) {
+			clean = B_FALSE;
 			break;
 		}
 	}
-	dnode_rele(dn, FTAG);
-	if (i != TXG_SIZE) {
+
+	/*
+	 * If compatibility option is on, sync any current changes before
+	 * we go trundling through the block pointers.
+	 */
+	if (!clean && zfs_dmu_offset_next_sync) {
+		clean = B_TRUE;
+		dnode_rele(dn, FTAG);
 		txg_wait_synced(dmu_objset_pool(os), 0);
+		err = dnode_hold(os, object, FTAG, &dn);
+		if (err)
+			return (err);
 	}
 
-	return (0);
+	if (clean)
+		err = dnode_next_offset(dn,
+		    (hole ? DNODE_FIND_HOLE : 0), off, 1, 1, 0);
+	else
+		err = SET_ERROR(EBUSY);
+
+	dnode_rele(dn, FTAG);
+
+	return (err);
 }
 
 void

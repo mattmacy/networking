@@ -216,8 +216,6 @@ typedef struct ztest_shared_ds {
 	uint64_t	zd_seq;
 } ztest_shared_ds_t;
 
-#define dmu_assign_arcbuf_by_dbuf dmu_assign_arcbuf
-
 static ztest_shared_ds_t *ztest_shared_ds;
 #define	ZTEST_GET_SHARED_DS(d) (&ztest_shared_ds[d])
 
