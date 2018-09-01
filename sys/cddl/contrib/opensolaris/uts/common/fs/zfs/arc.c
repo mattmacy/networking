@@ -4490,9 +4490,7 @@ arc_hdr_destroy(arc_buf_hdr_t *hdr)
 	}
 
 	ASSERT3P(hdr->b_hash_next, ==, NULL);
-	if (HDR_PROTECTED(hdr)) {
-		ASSERT(HDR_HAS_L1HDR(hdr));
-	}
+
 	if (HDR_HAS_L1HDR(hdr)) {
 		ASSERT(!multilist_link_active(&hdr->b_l1hdr.b_arc_node));
 		ASSERT3P(hdr->b_l1hdr.b_acb, ==, NULL);
@@ -9229,9 +9227,9 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, uint64_t asize,
 	if (HDR_HAS_RABD(hdr) && asize != psize) {
 		ASSERT3U(size, ==, psize);
 		to_write = abd_alloc_for_io(asize, ismd);
-		abd_copy(to_write, hdr->b_crypt_hdr.b_rabd, size);
-		if (size != asize)
-			abd_zero_off(to_write, size, asize - size);
+		abd_copy(to_write, hdr->b_crypt_hdr.b_rabd, psize);
+		if (psize != asize)
+			abd_zero_off(to_write, size, asize - psize);
 		goto out;
 	}
 
@@ -9286,7 +9284,10 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, uint64_t asize,
 			abd_zero_off(eabd, psize, asize - psize);
 
 		/* assert that the MAC we got here matches the one we saved */
+#ifdef _KERNEL
+		/* XXX - need to actually do crypto in user */
 		ASSERT0(bcmp(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN));
+#endif
 		spa_keystore_dsl_key_rele(spa, dck, FTAG);
 
 		if (to_write == cabd)
@@ -9509,36 +9510,6 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 			(void) refcount_add_many(&dev->l2ad_alloc,
 			    arc_hdr_size(hdr), hdr);
 
-			/*
-			 * Normally the L2ARC can use the hdr's data, but if
-			 * we're sharing data between the hdr and one of its
-			 * bufs, L2ARC needs its own copy of the data so that
-			 * the ZIO below can't race with the buf consumer.
-			 * Another case where we need to create a copy of the
-			 * data is when the buffer size is not device-aligned
-			 * and we need to pad the block to make it such.
-			 * That also keeps the clock hand suitably aligned.
-			 *
-			 * To ensure that the copy will be available for the
-			 * lifetime of the ZIO and be cleaned up afterwards, we
-			 * add it to the l2arc_free_on_write queue.
-			 */
-
-			asize = vdev_psize_to_asize(dev->l2ad_vdev,
-			    psize);
-			if (!HDR_SHARED_DATA(hdr) && psize == asize) {
-				to_write = hdr->b_l1hdr.b_pabd;
-			} else {
-				to_write = abd_alloc_for_io(asize,
-				    HDR_ISTYPE_METADATA(hdr));
-				abd_copy(to_write, hdr->b_l1hdr.b_pabd, psize);
-				if (asize != psize) {
-					abd_zero_off(to_write, psize,
-					    asize - psize);
-				}
-				l2arc_free_abd_on_write(to_write, asize,
-				    arc_buf_type(hdr));
-			}
 			wzio = zio_write_phys(pio, dev->l2ad_vdev,
 			    hdr->b_l2hdr.b_daddr, asize, to_write,
 			    ZIO_CHECKSUM_OFF, NULL, hdr,
