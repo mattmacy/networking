@@ -419,30 +419,6 @@ static int sysctl_vfs_zfs_arc_max(SYSCTL_HANDLER_ARGS);
 static int sysctl_vfs_zfs_arc_min(SYSCTL_HANDLER_ARGS);
 static int sysctl_vfs_zfs_arc_no_grow_shift(SYSCTL_HANDLER_ARGS);
 
-/* Debug hacks */
-#ifdef _KERNEL
-#define SEF_DEBUG
-#ifdef SEF_DEBUG
-static kmem_cache_t *hdr_full_crypt_cache;
-static void *
-KMEM_CACHE_ALLOC(kmem_cache_t *keg, int opts)
-{
-	void *rv = kmem_cache_alloc(keg, opts);
-	if (keg == hdr_full_crypt_cache)
-		printf("kmem_cache_alloc(hdr_full_crypt_cache) returns %p\n", rv);
-	return rv;
-}
-static void
-KMEM_CACHE_FREE(kmem_cache_t *keg, void *ptr)
-{
-	if (keg == hdr_full_crypt_cache)
-		printf("kmem_cache_free(%p)\n", ptr);
-	kmem_cache_free(keg, ptr);
-}
-# define kmem_cache_free KMEM_CACHE_FREE
-# define kmem_cache_alloc KMEM_CACHE_ALLOC
-#endif /* SEF_DEBUG */
-#endif /* _KERNEL */
 #if defined(__FreeBSD__) && defined(_KERNEL)
 static void
 arc_free_target_init(void *unused __unused)
