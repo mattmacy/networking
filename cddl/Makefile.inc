@@ -22,9 +22,13 @@ NO_SHARED=	yes
 
 # For programs, link in libzpool.a from the object tree.
 .if defined(PROG)
-LDADD+=	${.OBJDIR}/../../lib/libzpool/libzpool.a
+LZPOOL_STATIC=	${.OBJDIR}/../../lib/libzpool/libzpool.a
+LDADD+=		${LZPOOL_STATIC}
 _LA:=	${LIBADD}
 LIBADD=	${_LA:S/zpool//}
+beforelinking: ${LZPOOL_STATIC}
+${LZPOOL_STATIC}:
+	cd ${.CURDIR}/../../lib/libzpool && ${MAKE}
 .endif
 .endif
 .endif
