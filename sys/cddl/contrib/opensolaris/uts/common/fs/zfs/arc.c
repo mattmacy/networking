@@ -2343,6 +2343,22 @@ arc_bufc_to_flags(arc_buf_contents_t type)
 	return ((uint32_t)-1);
 }
 
+boolean_t
+arc_buf_frozen(arc_buf_t *buf, boolean_t should_be_frozen)
+{
+	boolean_t frozen;
+
+	if (!(zfs_flags & ZFS_DEBUG_MODIFY))
+		return (B_TRUE);
+
+	/*
+	 * NB: Does not grab or assert the mutex because the caller more
+	 * than likely cannot use the results in an atomic fashion.
+	 */
+	frozen = (buf->b_hdr->b_l1hdr.b_freeze_cksum != NULL);
+	return (frozen == should_be_frozen);
+}
+
 void
 arc_buf_thaw(arc_buf_t *buf)
 {
