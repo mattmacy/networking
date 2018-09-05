@@ -1319,7 +1319,6 @@ dbuf_syncer_split(dmu_buf_impl_t *db, dbuf_dirty_record_t *syncer_dr,
 {
 	if (syncer_dr && (db->db_state & DB_NOFILL) == 0 &&
 	    refcount_count(&db->db_holds) > 1 &&
-	    syncer_dr->dt.dl.dr_override_state != DR_OVERRIDDEN &&
 	    syncer_dr->dt.dl.dr_data == db->db_buf) {
 		arc_buf_t *buf;
 
@@ -1507,7 +1506,7 @@ dbuf_read_complete(dmu_buf_impl_t *db, arc_buf_t *buf, boolean_t is_hole_read)
 			 * Clear the READ bit; let fill_done transition us
 			 * to DB_CACHED.
 			 */
-			ASSERT(db->db_state & DB_FILL);
+			ASSERT(db->db_state == (DB_READ|DB_FILL));
 			DBUF_STATE_CHANGE(db, &=, ~DB_READ,
 			    "resolve of records with READ state bit set");
 		}
@@ -1587,7 +1586,6 @@ dbuf_read_done(zio_t *zio, const zbookmark_phys_t *zb, int err,
 			dbuf_read_complete(db, buf, FALSE);
 			/* XXX convert to counter */
 			atomic_add_64(&dirty_writes_lost, 1);
-			arc_buf_destroy(buf, db);
 		} else {
 			ASSERT3P(db->db_buf, ==, NULL);
 			DBUF_STATE_CHANGE(db, =, DB_UNCACHED, "read failed");
@@ -1786,9 +1784,6 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t *flags)
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
 	ASSERT(!refcount_is_zero(&db->db_holds));
-	/* We need the struct_rwlock to prevent db_blkptr from changing. */
-	if ((*flags & DB_RF_CACHED_ONLY) == 0)
-		ASSERT(RW_LOCK_HELD(&dn->dn_struct_rwlock));
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	ASSERT(db->db_state == DB_UNCACHED || (db->db_state & DB_PARTIAL));
 
@@ -5926,8 +5921,10 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		 */
 
 		if (data != NULL) {
+			/* XXX */
+			if (!arc_released(data))
+				arc_release(data, db);
 			/* by dmu_sync(). */
-			arc_release(data, db);
 			dr->dr_zio = arc_write(pio, os->os_spa, txg,
 			    &dr->dr_bp_copy, data, DBUF_IS_L2CACHEABLE(db), &zp,
 			    dbuf_arc_write_override_ready, NULL, NULL,
