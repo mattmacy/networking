@@ -2629,9 +2629,9 @@ typedef struct {
 
 /* ARGSUSED */
 static void
-dmu_sync_ready(zio_t *zio, arc_buf_t *buf, void *varg)
+dmu_sync_ready(zio_t *zio)
 {
-	dmu_sync_arg_t *dsa = varg;
+	dmu_sync_arg_t *dsa = zio->io_private;
 	dmu_buf_t *db = dsa->dsa_zgd->zgd_db;
 	blkptr_t *bp = zio->io_bp;
 
@@ -2652,14 +2652,13 @@ dmu_sync_ready(zio_t *zio, arc_buf_t *buf, void *varg)
 static void
 dmu_sync_late_arrival_ready(zio_t *zio)
 {
-	dmu_sync_ready(zio, NULL, zio->io_private);
+	dmu_sync_ready(zio);
 }
 
-/* ARGSUSED */
 static void
-dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
+dmu_sync_done(zio_t *zio)
 {
-	dmu_sync_arg_t *dsa = varg;
+	dmu_sync_arg_t *dsa = zio->io_private;
 	dbuf_dirty_record_t *dr = dsa->dsa_dr;
 	dmu_buf_impl_t *db = dr->dr_dbuf;
 
@@ -2702,7 +2701,8 @@ dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
 	mutex_exit(&db->db_mtx);
 
 	dsa->dsa_done(dsa->dsa_zgd, zio->io_error);
-
+	if (zio->io_abd != NULL)
+		abd_put(zio->io_abd);
 	kmem_free(dsa, sizeof (*dsa));
 }
 
@@ -2825,6 +2825,7 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 	zbookmark_phys_t zb;
 	zio_prop_t zp;
 	dnode_t *dn;
+	uint64_t size;
 
 	ASSERT(pio != NULL);
 	ASSERT(txg != 0);
@@ -2952,12 +2953,17 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 	dsa->dsa_done = done;
 	dsa->dsa_zgd = zgd;
 	dsa->dsa_tx = NULL;
-
+#if 0
 	zio_nowait(arc_write(pio, os->os_spa, txg,
 	    zgd->zgd_bp, dr->dt.dl.dr_data, DBUF_IS_L2CACHEABLE(db),
 	    &zp, dmu_sync_ready, NULL, NULL, dmu_sync_done, dsa,
 	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb));
-
+#endif
+	size = db->db.db_size;
+	zio_nowait(zio_write(pio, os->os_spa, txg,
+		zgd->zgd_bp, abd_get_from_buf(dr->dt.dl.dr_data->b_data, size), size, size,
+		&zp, dmu_sync_ready, NULL, NULL, dmu_sync_done, dsa,
+ 	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb));
 	return (0);
 }
 
