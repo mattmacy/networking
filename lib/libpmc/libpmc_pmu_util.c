@@ -501,6 +501,7 @@ pmc_pmu_ibm_pmcallocate(const char *event_name __unused, struct pmc_op_pmcalloca
 
 	uint32_t caps, config;
 
+	pm->pm_class = PMC_CLASS_POWER;
 	config = ped->ped_event;
 	caps = pm->pm_caps;
 	if (caps & PMC_CAP_SYSTEM)

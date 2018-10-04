@@ -371,9 +371,9 @@ power_allocate_pmc(int cpu, int ri, struct pmc *pm,
 	    ("[powerpc,%d] illegal row index %d", __LINE__, ri));
 
 	caps = a->pm_caps;
-	if ((caps & ~(PMC_CAP_SYSTEM|PMC_CAP_USER)) != 0) {
+	if ((caps & ~POWERPC_PMC_CAPS) != 0) {
 		printf("unrecognized PMC_CAP flags 0x%x\n",
-			   caps & ~(PMC_CAP_SYSTEM|PMC_CAP_USER));
+			   caps & ~POWERPC_PMC_CAPS);
 		return (EINVAL);
 	}
 
