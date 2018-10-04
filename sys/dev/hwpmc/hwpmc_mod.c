@@ -3835,6 +3835,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		if ((mode != PMC_MODE_SS  &&  mode != PMC_MODE_SC  &&
 		     mode != PMC_MODE_TS  &&  mode != PMC_MODE_TC) ||
 		    (cpu != (u_int) PMC_CPU_ANY && cpu >= pmc_cpu_max())) {
+			log(LOG_WARNING, "pmcallocate: invalid mode or cpu not valid\n");
 			error = EINVAL;
 			break;
 		}
@@ -3846,6 +3847,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 
 		if ((PMC_IS_VIRTUAL_MODE(mode) && cpu != (u_int) PMC_CPU_ANY) ||
 		    (PMC_IS_SYSTEM_MODE(mode) && cpu == (u_int) PMC_CPU_ANY)) {
+			log(LOG_WARNING, "pmcallocate: mode and cpu combination invalid\n");
 			error = EINVAL;
 			break;
 		}
@@ -3886,6 +3888,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		if ((pa.pm_flags & ~(PMC_F_DESCENDANTS | PMC_F_LOG_PROCCSW |
 		    PMC_F_LOG_PROCEXIT | PMC_F_CALLCHAIN |
 		    PMC_F_USERCALLCHAIN)) != 0) {
+			log(LOG_WARNING, "pmcallocate: invalid pm_flags\n");
 			error = EINVAL;
 			break;
 		}
@@ -3893,6 +3896,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		/* PMC_F_USERCALLCHAIN is only valid with PMC_F_CALLCHAIN */
 		if ((pa.pm_flags & (PMC_F_CALLCHAIN | PMC_F_USERCALLCHAIN)) ==
 		    PMC_F_USERCALLCHAIN) {
+			log(LOG_WARNING, "pmcallocate: callchain setting not valid\n");
 			error = EINVAL;
 			break;
 		}
@@ -3900,6 +3904,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		/* PMC_F_USERCALLCHAIN is only valid for sampling mode */
 		if (pa.pm_flags & PMC_F_USERCALLCHAIN &&
 			mode != PMC_MODE_TS && mode != PMC_MODE_SS) {
+			log(LOG_WARNING, "pmcallocate: USERCALLCHAIN set but not sampling mode\n");
 			error = EINVAL;
 			break;
 		}
@@ -3907,6 +3912,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		/* process logging options are not allowed for system PMCs */
 		if (PMC_IS_SYSTEM_MODE(mode) && (pa.pm_flags &
 		    (PMC_F_LOG_PROCCSW | PMC_F_LOG_PROCEXIT))) {
+			log(LOG_WARNING, "pmcallocate: system mode and PROCCSW or PROCEXIT set\n");
 			error = EINVAL;
 			break;
 		}
@@ -3921,6 +3927,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		/* A valid class specifier should have been passed in. */
 		pcd = pmc_class_to_classdep(pa.pm_class);
 		if (pcd == NULL) {
+			log(LOG_WARNING, "pmcallocate: no classdep returned from pmc_class_to_classdep\n");
 			error = EINVAL;
 			break;
 		}
@@ -3999,6 +4006,8 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		if (n == (int) md->pmd_npmc) {
 			pmc_destroy_pmc_descriptor(pmc);
 			pmc = NULL;
+			log(LOG_WARNING, "pmcallocate: max pmc hit\n");
+
 			error = EINVAL;
 			break;
 		}
