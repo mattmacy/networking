@@ -324,7 +324,7 @@ power_pcpu_init(struct pmc_mdep *md, int cpu)
 	    M_WAITOK|M_ZERO);
 	pac->pc_ppcpmcs = malloc(sizeof(struct pmc_hw) * POWER_MAX_PMCS,
 	    M_PMC, M_WAITOK|M_ZERO);
-	pac->pc_class = PMC_CLASS_PPC7450;
+	pac->pc_class = PMC_CLASS_POWER;
 	pc = pmc_pcpu[cpu];
 	first_ri = md->pmd_classdep[PMC_MDEP_CLASS_INDEX_POWERPC].pcd_ri;
 	KASSERT(pc != NULL, ("[powerpc,%d] NULL per-cpu pointer", __LINE__));
@@ -476,7 +476,7 @@ pmc_power_initialize(struct pmc_mdep *pmc_mdep)
 	pmc_mdep->pmd_cputype = -1;
 	pcd = &pmc_mdep->pmd_classdep[PMC_MDEP_CLASS_INDEX_POWERPC];
 	pcd->pcd_caps  = POWERPC_PMC_CAPS;
-	pcd->pcd_class = PMC_CLASS_PPC970;
+	pcd->pcd_class = PMC_CLASS_POWER;
 	pcd->pcd_num   = POWER_MAX_PMCS;
 	pcd->pcd_ri    = pmc_mdep->pmd_npmc;
 	pcd->pcd_width = 32;	/* All PMCs are 32-bit */
