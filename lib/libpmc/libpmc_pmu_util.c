@@ -41,7 +41,7 @@
 #include <libpmcstat.h>
 #include "pmu-events/pmu-events.h"
 
-#if defined(__amd64__) || defined(__i386__)
+#if defined(__amd64__) || defined(__i386__) || defined(__powerpc64__)
 struct pmu_alias {
 	const char *pa_alias;
 	const char *pa_name;
@@ -51,6 +51,7 @@ typedef enum {
 	PMU_INVALID,
 	PMU_INTEL,
 	PMU_AMD,
+	PMU_IBM,
 } pmu_mfr_t;
 
 static struct pmu_alias pmu_intel_alias_table[] = {
@@ -83,6 +84,10 @@ static struct pmu_alias pmu_amd_alias_table[] = {
 	{NULL, NULL},
 };
 
+static struct pmu_alias pmu_ibm_alias_table[] = {
+	{NULL, NULL},
+};
+
 
 static pmu_mfr_t
 pmu_events_mfr(void)
@@ -105,6 +110,8 @@ pmu_events_mfr(void)
 		mfr = PMU_AMD;
 	else if (strcasestr(buf, "GenuineIntel") != NULL)
 		mfr = PMU_INTEL;
+	else if (strcasestr(buf, "POWER") != NULL)
+		mfr = PMU_IBM;
 	else
 		mfr = PMU_INVALID;
 	free(buf);
@@ -133,6 +140,8 @@ pmu_alias_get(const char *name)
 		pmu_alias_table = pmu_amd_alias_table;
 	else if (mfr == PMU_INTEL)
 		pmu_alias_table = pmu_intel_alias_table;
+	else if (mfr == PMU_IBM)
+		pmu_alias_table = pmu_ibm_alias_table;
 	else
 		return (name);
 
@@ -406,6 +415,8 @@ pmc_pmu_print_counter_full(const char *ev)
 	}
 }
 
+#if defined(__amd64__) || defined(__i386__)
+
 static int
 pmc_pmu_amd_pmcallocate(const char *event_name __unused, struct pmc_op_pmcallocate *pm,
 	struct pmu_event_desc *ped)
@@ -482,6 +493,28 @@ pmc_pmu_intel_pmcallocate(const char *event_name, struct pmc_op_pmcallocate *pm,
 	return (0);
 }
 
+#elif defined(__powerpc64__)
+static int
+pmc_pmu_ibm_pmcallocate(const char *event_name __unused, struct pmc_op_pmcallocate *pm,
+	struct pmu_event_desc *ped)
+{
+
+	uint32_t caps, config;
+
+	config = ped->ped_event;
+	caps = pm->pm_caps;
+	if (caps & PMC_CAP_SYSTEM)
+		config |= POWERPC_PMC_KERNEL_ENABLE;
+	if (caps & PMC_CAP_USER)
+		config |= POWERPC_PMC_USER_ENABLE;
+	if ((caps & (PMC_CAP_USER | PMC_CAP_SYSTEM)) == 0)
+		config |= POWERPC_PMC_ENABLE;
+	pm->pm_ev = (enum pmc_event)config;
+	return (0);
+}
+
+#endif
+
 int
 pmc_pmu_pmcallocate(const char *event_name, struct pmc_op_pmcallocate *pm)
 {
@@ -508,10 +541,14 @@ pmc_pmu_pmcallocate(const char *event_name, struct pmc_op_pmcallocate *pm)
 	if (pmu_parse_event(&ped, pe->event))
 		return (ENOENT);
 
+#if defined(__amd64__) || defined(__i386__)
 	if (mfr == PMU_INTEL)
 		return (pmc_pmu_intel_pmcallocate(event_name, pm, &ped));
 	else
 		return (pmc_pmu_amd_pmcallocate(event_name, pm, &ped));
+#elif defined(__powerpc64__)
+	return (pmc_pmu_ibm_pmcallocate(event_name, pm, &ped));
+#endif
 }
 
 /*

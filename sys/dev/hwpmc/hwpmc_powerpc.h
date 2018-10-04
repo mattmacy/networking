@@ -31,7 +31,6 @@
 #ifndef _DEV_HWPMC_POWERPC_H_
 #define	_DEV_HWPMC_POWERPC_H_ 1
 
-#ifdef _KERNEL
 
 #define	POWERPC_PMC_CAPS	(PMC_CAP_INTERRUPT | PMC_CAP_USER |     \
 				 PMC_CAP_SYSTEM | PMC_CAP_EDGE |	\
@@ -46,16 +45,21 @@
 #define	POWERPC_RELOAD_COUNT_TO_PERFCTR_VALUE(V)	(0x80000000-(V))
 #define	POWERPC_PERFCTR_VALUE_TO_RELOAD_COUNT(P)	(0x80000000-(P))
 
+#ifdef _KERNEL
 struct powerpc_cpu {
 	struct pmc_hw   *pc_ppcpmcs;
-	enum pmc_class	 pc_class;
+	int	 pc_class;
 };
-
 extern struct powerpc_cpu **powerpc_pcpu;
+
+struct pmc_mdep;
+struct pmc;
+struct pmc_info;
 
 extern int pmc_e500_initialize(struct pmc_mdep *pmc_mdep);
 extern int pmc_mpc7xxx_initialize(struct pmc_mdep *pmc_mdep);
 extern int pmc_ppc970_initialize(struct pmc_mdep *pmc_mdep);
+extern int pmc_power_initialize(struct pmc_mdep *pmc_mdep);
 
 extern int powerpc_describe(int cpu, int ri, struct pmc_info *pi, struct pmc **ppmc);
 extern int powerpc_get_config(int cpu, int ri, struct pmc **ppm);

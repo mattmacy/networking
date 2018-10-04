@@ -9,13 +9,13 @@ INCS=	pmc.h pmclog.h pmcformat.h
 CFLAGS+= -I${.CURDIR}
 CWARNFLAGS.gcc+= -Wno-shadow -Wno-cast-align
 
-.if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386"
+.if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "powerpc64"
 
 .if ${MACHINE_ARCH} == "aarch64"
 EVENT_ARCH="arm64"
 .elif ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386"
 EVENT_ARCH="x86"
-.elif ${MACHINE_ARCH} == "powerpc"
+.elif ${MACHINE_ARCH} == "powerpc64"
 EVENT_ARCH="powerpc"
 .endif
 

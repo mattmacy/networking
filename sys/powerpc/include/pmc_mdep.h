@@ -6,6 +6,7 @@
 
 #ifndef _MACHINE_PMC_MDEP_H_
 #define	_MACHINE_PMC_MDEP_H_
+#include <dev/hwpmc/hwpmc_powerpc.h>
 
 #define PMC_MDEP_CLASS_INDEX_POWERPC	1
 

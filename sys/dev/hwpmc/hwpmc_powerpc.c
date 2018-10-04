@@ -165,6 +165,11 @@ pmc_md_initialize()
 	pmc_mdep->pmd_switch_out = powerpc_switch_out;
 	
 	switch (vers) {
+	case IBMPOWER8E:
+	case IBMPOWER8:
+	case IBMPOWER9:
+		error = pmc_power_initialize(pmc_mdep);
+		break;
 	case MPC7447A:
 	case MPC7448:
 	case MPC7450:

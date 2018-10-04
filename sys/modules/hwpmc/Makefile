@@ -29,7 +29,7 @@ SRCS+=	device_if.h bus_if.h
 .endif
 
 .if ${MACHINE_CPUARCH} == "powerpc"
-SRCS+=	hwpmc_powerpc.c hwpmc_e500.c hwpmc_mpc7xxx.c hwpmc_ppc970.c
+SRCS+=	hwpmc_powerpc.c hwpmc_e500.c hwpmc_mpc7xxx.c hwpmc_ppc970.c hwpmc_power.c
 .endif
 
 .if ${MACHINE_CPUARCH} == "sparc64"

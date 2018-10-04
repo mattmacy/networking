@@ -12,6 +12,7 @@
 # Multiple PVRs could map to a single JSON file.
 #
 
-# Power8 entries
-004[bcd][[:xdigit:]]{4},1,power8,core
-004e[[:xdigit:]]{4},1,power9,core
+POWER_004b,1,power8,core
+POWER_004c,1,power8,core
+POWER_004d,1,power8,core
+POWER_004e,1,power9,core

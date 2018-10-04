@@ -402,7 +402,7 @@
   {,
     "EventCode": "0x30006",
     "EventName": "PM_CMPLU_STALL_OTHER_CMPL",
-    "BriefDescription": "Instructions the core completed while this tread was stalled"
+    "BriefDescription": "Instructions the core completed while this thread was stalled"
   },
   {,
     "EventCode": "0x1005C",
