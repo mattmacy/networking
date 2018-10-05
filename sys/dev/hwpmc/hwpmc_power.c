@@ -48,7 +48,7 @@ __FBSDID("$FreeBSD$");
 				 PMC_CAP_WRITE | PMC_CAP_INVERT |	\
 				 PMC_CAP_QUALIFIER)
 #define POWER_SET_MMCR1_PMCSEL(r, x, i)			\
-	((r & ~(0xff << (32 + (8*i)))) | ((x&0xff) << (32 + (8*i)))) 
+	((r & ~(BESHIFT_VAL(0xff, 32 + 8*i))) | BESHIFT_VAL((0xff&x), 32 + 8*i))
 
 #define POWER_MAX_PMCS	6
 
