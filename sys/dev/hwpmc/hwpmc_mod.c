@@ -3944,7 +3944,7 @@ pmc_syscall_handler(struct thread *td, void *syscall_args)
 		pmc = pmc_allocate_pmc_descriptor();
 		pmc->pm_id    = PMC_ID_MAKE_ID(cpu,pa.pm_mode,pa.pm_class,
 		    PMC_ID_INVALID);
-		pmc->pm_event = pa.pm_ev & ((1<<15)-1);
+		pmc->pm_event = pa.pm_ev;
 		pmc->pm_state = PMC_STATE_FREE;
 		pmc->pm_caps  = caps;
 		pmc->pm_flags = pa.pm_flags;

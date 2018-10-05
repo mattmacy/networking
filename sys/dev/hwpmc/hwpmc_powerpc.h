@@ -45,6 +45,9 @@
 #define	POWERPC_RELOAD_COUNT_TO_PERFCTR_VALUE(V)	(0x80000000-(V))
 #define	POWERPC_PERFCTR_VALUE_TO_RELOAD_COUNT(P)	(0x80000000-(P))
 
+struct pmc_md_power_op_pmcallocate {
+	uint32_t	pm_power_config;
+};
 #ifdef _KERNEL
 struct powerpc_cpu {
 	struct pmc_hw   *pc_ppcpmcs;

@@ -300,7 +300,7 @@ power_allocate_pmc(int cpu, int ri, struct pmc *pm,
 		return (EINVAL);
 	}
 
-	pm->pm_md.pm_powerpc.pm_powerpc_evsel = (uint32_t)a->pm_ev;
+	pm->pm_md.pm_powerpc.pm_powerpc_evsel = a->pm_md.pm_power.pm_power_config;
 
 	PMCDBG2(MDP,ALL,2,"powerpc-allocate ri=%d -> config=0x%x", ri, config);
 

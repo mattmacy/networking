@@ -500,7 +500,9 @@ pmc_pmu_ibm_pmcallocate(const char *event_name __unused, struct pmc_op_pmcalloca
 {
 
 	uint32_t caps, config;
+	struct pmc_md_power_op_pmcallocate *ipp;
 
+	ipp = &pm->pm_md.pm_power;
 	pm->pm_class = PMC_CLASS_POWER;
 	config = ped->ped_event;
 	caps = pm->pm_caps;
@@ -510,7 +512,7 @@ pmc_pmu_ibm_pmcallocate(const char *event_name __unused, struct pmc_op_pmcalloca
 		config |= POWERPC_PMC_USER_ENABLE;
 	if ((caps & (PMC_CAP_USER | PMC_CAP_SYSTEM)) == 0)
 		config |= POWERPC_PMC_ENABLE;
-	pm->pm_ev = (enum pmc_event)config;
+	ipp->pm_power_config = config;
 	return (0);
 }
 

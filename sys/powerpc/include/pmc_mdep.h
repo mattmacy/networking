@@ -11,6 +11,7 @@
 #define PMC_MDEP_CLASS_INDEX_POWERPC	1
 
 union pmc_md_op_pmcallocate {
+	struct pmc_md_power_op_pmcallocate	pm_power;
 	uint64_t		__pad[4];
 };
 
