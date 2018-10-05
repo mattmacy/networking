@@ -57,6 +57,10 @@ __FBSDID("$FreeBSD$");
 static int crypt_sessions = 0;
 SYSCTL_DECL(_vfs_zfs);
 SYSCTL_INT(_vfs_zfs, OID_AUTO, crypt_sessions, CTLFLAG_RD, &crypt_sessions, 0, "Number of cryptographic sessions created");
+static int crypto_use_locks = 0;
+SYSCTL_INT(_vfs_zfs, OID_AUTO, crypt_locks, CTLFLAG_RW, &crypto_use_locks, 0,
+    "Use locking during cryptography");
+
 #endif
 
 void
@@ -246,8 +250,7 @@ freebsd_crypt_newsession(freebsd_crypt_session_t *sessp,
 		goto bad;
 	}
 	sessp->session = sid;
-	mtx_init(&sessp->session_lock, "FreeBSD Cryptographic Session Lock",
-	    NULL, MTX_DEF);
+	sx_init(&sessp->session_lock, "FreeBSD Cryptographic Session Lock");
 	crypt_sessions++;
 bad:
 	return (error);
@@ -261,7 +264,7 @@ void
 freebsd_crypt_freesession(freebsd_crypt_session_t *sess)
 {
 #ifdef _KERNEL
-	mtx_destroy(&sess->session_lock);
+	sx_destroy(&sess->session_lock);
 	crypto_freesession(sess->session);
 	bzero(sess, sizeof(*sess));
 #endif
@@ -294,7 +297,8 @@ freebsd_crypt_uio(boolean_t encrypt,
 	int error;
 	uint8_t *p = NULL;
 	size_t total = 0;
-
+	int use_locks = crypto_use_locks;
+	
 #ifdef FCRYPTO_DEBUG
 	printf("%s(%s, %p, { %s, %d, %d, %s }, %p, { %d, %p, %u }, %p, %u, %u)\n",
 	    __FUNCTION__, encrypt ? "encrypt" : "decrypt", input_sessionp,
@@ -385,7 +389,8 @@ p	printf("}\n");
 		goto bad;
 	}
 
-	mtx_lock(&session->session_lock);
+	if (use_locks)
+		sx_xlock(&session->session_lock);
 
 	auth_desc = crp->crp_desc;
 	enc_desc = auth_desc->crd_next;
@@ -434,7 +439,8 @@ again:
 			goto again;
 		}
 	}
-	mtx_unlock(&session->session_lock);
+	if (use_locks)
+		sx_xunlock(&session->session_lock);
 
 	if (crp)
 		crypto_freereq(crp);

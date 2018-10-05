@@ -33,7 +33,7 @@
 # define _ZFS_FREEBSD_CRYPTO_H
 
 # include <sys/errno.h>
-# include <sys/mutex.h>
+# include <sys/sx.h>
 # ifdef _KERNEL
 #  include <opencrypto/cryptodev.h>
 #  include <crypto/sha2/sha256.h>
@@ -57,7 +57,7 @@ struct zio_crypt_info;
 
 typedef struct freebsd_crypt_session {
 #ifdef _KERNEL
-	struct mtx		session_lock;
+	struct sx		session_lock;
 #endif
 	crypto_session_t	session;
 } freebsd_crypt_session_t;
