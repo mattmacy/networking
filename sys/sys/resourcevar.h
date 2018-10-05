@@ -96,7 +96,7 @@ struct racct;
  */
 struct uidinfo {
 	LIST_ENTRY(uidinfo) ui_hash;	/* (c) hash chain of uidinfos */
-	unsigned long ui_vmsize;	/* (b) pages of swap reservation by uid */
+	u_long ui_vmsize;	/* (b) pages of swap reservation by uid */
 	long	ui_sbsize;		/* (b) socket buffer space consumed */
 	long	ui_proccnt;		/* (b) number of processes */
 	long	ui_ptscnt;		/* (b) number of pseudo-terminals */

@@ -151,8 +151,8 @@ static int nswapdev;		/* Number of swap devices */
 int swap_pager_avail;
 static struct sx swdev_syscall_lock;	/* serialize swap(on|off) */
 
-static unsigned long swap_reserved;
-static unsigned long swap_total;
+static u_long swap_reserved;
+static u_long swap_total;
 static int sysctl_page_shift(SYSCTL_HANDLER_ARGS);
 SYSCTL_PROC(_vm, OID_AUTO, swap_reserved, CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
     &swap_reserved, 0, sysctl_page_shift, "A", 
@@ -181,7 +181,7 @@ static int
 sysctl_page_shift(SYSCTL_HANDLER_ARGS)
 {
 	uint64_t newval;
-	unsigned long value = *(unsigned long *)arg1;
+	u_long value = *(u_long *)arg1;
 
 	newval = ((uint64_t)value) << PAGE_SHIFT;
 	return (sysctl_handle_64(oidp, &newval, 0, req));
@@ -197,7 +197,7 @@ swap_reserve(vm_ooffset_t incr)
 int
 swap_reserve_by_cred(vm_ooffset_t incr, struct ucred *cred)
 {
-	unsigned long r, s, prev, pincr;
+	u_long r, s, prev, pincr;
 	int res, error;
 	static int curfail;
 	static struct timeval lastfail;
@@ -267,7 +267,7 @@ void
 swap_reserve_force(vm_ooffset_t incr)
 {
 	struct uidinfo *uip;
-	unsigned long pincr;
+	u_long pincr;
 
 	KASSERT((incr & PAGE_MASK) == 0, ("%s: incr: %ju & PAGE_MASK", __func__,
 	    (uintmax_t)incr));
@@ -298,7 +298,7 @@ swap_release(vm_ooffset_t decr)
 void
 swap_release_by_cred(vm_ooffset_t decr, struct ucred *cred)
 {
-	unsigned long prev, pdecr;
+	u_long prev, pdecr;
  	struct uidinfo *uip;
 
 	uip = cred->cr_ruidinfo;
