@@ -370,6 +370,51 @@
 #define	SPR_970PMC7		0x319	/* ... PMC 7 */
 #define	SPR_970PMC8		0x31a	/* ... PMC 8 */
 
+
+#define	SPR_ISA3_MMCR0		0x31b	/* ... Monitor Mode Control Register 0 ISA v3 */
+#define	SPR_ISA3_MMCR0_FC	(1UL<<32) /* Freeze counters */
+#define	SPR_ISA3_MMCR0_FCS		(1UL<<33) /* Freeze counters in supervisor mode */
+#define	SPR_ISA3_MMCR0_FCP		(1UL<<34) /* Freeze counters in problem state (user mode) */
+#define	SPR_ISA3_MMCR0_FCM1		(1UL<<35) /* Freeze counters when mark=1 */
+#define	SPR_ISA3_MMCR0_FCM0		(1UL<<36) /* Freeze counters when mark=1 */
+#define	SPR_ISA3_MMCR0_PMAE		(1UL<<37) /* Performance monitor alert enable */
+#define	SPR_ISA3_MMCR0_FCECE		(1UL<<38) /* Freeze Counters on Enabled Condition or Event */
+#define	SPR_ISA3_MMCR0_TBSEL(x)		(((x)&0x3UL)<<39) /* Time Base Selector */
+#define	SPR_ISA3_MMCR0_TBEE		(1UL<<41) /* Time Base Event Enable */
+#define	SPR_ISA3_MMCR0_BHRBA		(1UL<<42) /* BHRB Available */
+#define	SPR_ISA3_MMCR0_EBE		(1UL<<43) /* Performance Monitor Event-Based Branch Enable */
+#define	SPR_ISA3_MMCR0_PMCC(x)		(((x)&0x3UL)<<44) /* PMC Control */
+#define	SPR_ISA3_MMCR0_FCTS		(1UL<<46) /* Freeze Counters in Transactional State */
+#define	SPR_ISA3_MMCR0_FCNTS		(1UL<<47) /* Freeze Counters in Non-Transactional State */
+#define	SPR_ISA3_MMCR0_PMC1CE		(1UL<<48) /* PMC1 Condition Enable */
+#define	SPR_ISA3_MMCR0_PMCJCE		(1UL<<49) /* PMCj Condition Enable */
+#define	SPR_ISA3_MMCR0_TRIGGER		(1UL<<50) /* TRIGGER */
+#define	SPR_ISA3_MMCR0_FCPC		(1UL<<51) /* Freeze Counters and BHRB in Problem State Condition */
+#define	SPR_ISA3_MMCR0_PMAQ		(1UL<<52) /* Performance Monitor Alert Qualifier */
+/* 53:54 Reserved */
+#define	SPR_ISA3_MMCR0_CC56RUN		(1UL<<55) /* Control Counters 5 - 6 with Run Latch */
+#define	SPR_ISA3_MMCR0_PMAO		(1UL<<56) /* Performance Monitor Alert Occurred */
+#define	SPR_ISA3_MMCR0_FCSS		(1UL<<57) /* Freeze Counters in Suspended State */
+#define	SPR_ISA3_MMCR0_FC14		(1UL<<58) /* Freeze Counters 1-4 */
+#define	SPR_ISA3_MMCR0_FC56		(1UL<<59) /* Freeze Counters 5-6 */
+/* 60:61 Reserved */
+#define	SPR_ISA3_MMCR0_FC14WAIT		(1UL<<62) /* Freeze Counters 1-4 in Wait State*/
+#define	SPR_ISA3_MMCR0_FCH		(1UL<<63) /* Freeze Counters and BHRB in Hypervisor State*/
+
+
+#define	SPR_ISA3_MMCR1		0x31e	/* ... Monitor Mode Control Register 1 ISA v3 */
+#define	SPR_ISA3_MMCR1_PMC1SEL(x)	((x) << 32) /* PMC1 selector ISA v3 */
+#define	SPR_ISA3_MMCR2_PMC2SEL(x)	((x) << 40) /* PMC2 selector ISA v3 */
+#define	SPR_ISA3_MMCR1_PMC3SEL(x)	((x) << 48) /* PMC3 selector ISA v3 */
+#define	SPR_ISA3_MMCR1_PMC4SEL(x)	((x) << 56) /* PMC4 selector ISA v3 */
+#define	SPR_ISA3_MMCRA		0x312	/* ... Monitor Mode Control Register 2 ISA v3 */
+#define	SPR_ISA3_PMC1		0x313	/* ... PMC 1 */
+#define	SPR_ISA3_PMC2		0x314	/* ... PMC 2 */
+#define	SPR_ISA3_PMC3		0x315	/* ... PMC 3 */
+#define	SPR_ISA3_PMC4		0x316	/* ... PMC 4 */
+#define	SPR_ISA3_PMC5		0x317	/* ... PMC 5 */
+#define	SPR_ISA3_PMC6		0x318	/* ... PMC 6 */
+
 #define	SPR_M_TWB		0x31c	/* ..8 MMU tablewalk base */
 #define	  M_TWB_L1TB		0xfffff000 /* level-1 translation base */
 #define	  M_TWB_L1INDX		0x00000ffc /* level-1 index */
@@ -692,6 +737,11 @@
 #define	PMC970N_NONE		0x8 /* Count nothing */
 #define	PMC970N_CYCLES		0xf /* Processor cycles */
 #define	PMC970N_ICOMP		0x9 /* Instructions completed */
+
+#define	PMC_ISA3_N_NONE		0x8 /* Count nothing */
+#define	PMC_ISA3_N_ICOMP	0x9 /* Instructions completed */
+#define	PMC_ISA3_N_CYCLES	0xf /* Processor cycles */
+
 
 #if defined(BOOKE)
 

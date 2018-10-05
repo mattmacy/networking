@@ -47,53 +47,34 @@ __FBSDID("$FreeBSD$");
 				 PMC_CAP_THRESHOLD | PMC_CAP_READ |	\
 				 PMC_CAP_WRITE | PMC_CAP_INVERT |	\
 				 PMC_CAP_QUALIFIER)
-
-#define PPC_SET_PMC1SEL(r, x)	((r & ~(SPR_MMCR0_PMC1SEL(0x3f))) | SPR_MMCR0_PMC1SEL(x))
-#define PPC_SET_PMC2SEL(r, x)	((r & ~(SPR_MMCR0_PMC2SEL(0x3f))) | SPR_MMCR0_PMC2SEL(x))
-#define PPC_SET_PMC3SEL(r, x)	((r & ~(SPR_MMCR1_PMC3SEL(0x1f))) | SPR_MMCR1_PMC3SEL(x))
-#define PPC_SET_PMC4SEL(r, x)	((r & ~(SPR_MMCR1_PMC4SEL(0x1f))) | SPR_MMCR1_PMC4SEL(x))
-#define PPC_SET_PMC5SEL(r, x)	((r & ~(SPR_MMCR1_PMC5SEL(0x1f))) | SPR_MMCR1_PMC5SEL(x))
-#define PPC_SET_PMC6SEL(r, x)	((r & ~(SPR_MMCR1_PMC6SEL(0x3f))) | SPR_MMCR1_PMC6SEL(x))
+#define POWER_SET_MMCR1_PMCSEL(r, x, i)			\
+	((r & ~(0xff << (32 + (8*i)))) | ((x&0xff) << (32 + (8*i)))) 
 
 #define POWER_MAX_PMCS	6
 
 #define POWER_PMC_HAS_OVERFLOWED(x) (power_pmcn_read(x) & (0x1 << 31))
-
-/*
- * Things to improve on this:
- * - It stops (clears to 0) the PMC and resets it at every context switch
- *   currently.
- */
-
-#define PPC_PMC_MASK1	0
-#define PPC_PMC_MASK2	1
-#define PPC_PMC_MASK3	2
-#define PPC_PMC_MASK4	3
-#define PPC_PMC_MASK5	4
-#define PPC_PMC_MASK6	5
-#define PPC_PMC_MASK_ALL	0x3f
 
 static pmc_value_t
 power_pmcn_read(unsigned int pmc)
 {
 	switch (pmc) {
 		case 0:
-			return mfspr(SPR_PMC1);
+			return mfspr(SPR_ISA3_PMC1);
 			break;
 		case 1:
-			return mfspr(SPR_PMC2);
+			return mfspr(SPR_ISA3_PMC2);
 			break;
 		case 2:
-			return mfspr(SPR_PMC3);
+			return mfspr(SPR_ISA3_PMC3);
 			break;
 		case 3:
-			return mfspr(SPR_PMC4);
+			return mfspr(SPR_ISA3_PMC4);
 			break;
 		case 4:
-			return mfspr(SPR_PMC5);
+			return mfspr(SPR_ISA3_PMC5);
 			break;
 		case 5:
-			return mfspr(SPR_PMC6);
+			return mfspr(SPR_ISA3_PMC6);
 		default:
 			panic("Invalid PMC number: %d\n", pmc);
 	}
@@ -104,22 +85,22 @@ power_pmcn_write(unsigned int pmc, uint32_t val)
 {
 	switch (pmc) {
 		case 0:
-			mtspr(SPR_PMC1, val);
+			mtspr(SPR_ISA3_PMC1, val);
 			break;
 		case 1:
-			mtspr(SPR_PMC2, val);
+			mtspr(SPR_ISA3_PMC2, val);
 			break;
 		case 2:
-			mtspr(SPR_PMC3, val);
+			mtspr(SPR_ISA3_PMC3, val);
 			break;
 		case 3:
-			mtspr(SPR_PMC4, val);
+			mtspr(SPR_ISA3_PMC4, val);
 			break;
 		case 4:
-			mtspr(SPR_PMC5, val);
+			mtspr(SPR_ISA3_PMC5, val);
 			break;
 		case 5:
-			mtspr(SPR_PMC6, val);
+			mtspr(SPR_ISA3_PMC6, val);
 			break;
 		default:
 			panic("Invalid PMC number: %d\n", pmc);
@@ -149,7 +130,7 @@ power_read_pmc(int cpu, int ri, pmc_value_t *v)
 	else
 		*v = tmp;
 
-	return 0;
+	return (0);
 }
 
 static int
@@ -171,7 +152,7 @@ power_write_pmc(int cpu, int ri, pmc_value_t v)
 
 	power_pmcn_write(ri, v);
 
-	return 0;
+	return (0);
 }
 
 static int
@@ -194,118 +175,60 @@ power_config_pmc(int cpu, int ri, struct pmc *pm)
 
 	phw->phw_pmc = pm;
 
-	return 0;
+	return (0);
+}
+
+static int
+power_set_pmc(int cpu, int ri, int config)
+{
+	struct pmc *pm;
+	struct pmc_hw *phw;
+	register_t pmc_mmcr;
+
+	MPASS(ri >= 0 && ri <= 3);
+
+	phw    = &powerpc_pcpu[cpu]->pc_ppcpmcs[ri];
+	pm     = phw->phw_pmc;
+
+	pmc_mmcr = mfspr(SPR_ISA3_MMCR1);
+	pmc_mmcr = POWER_SET_MMCR1_PMCSEL(pmc_mmcr, config, ri);
+	mtspr(SPR_ISA3_MMCR1, pmc_mmcr);
+	return (0);
 }
 
 static int
 power_start_pmc(int cpu, int ri)
 {
 	uint32_t config;
-        struct pmc *pm;
-        struct pmc_hw *phw;
-	register_t pmc_mmcr;
+	struct pmc *pm;
+	struct pmc_hw *phw;
+	uint64_t pmc_mmcr;
+	int error;
 
 	phw    = &powerpc_pcpu[cpu]->pc_ppcpmcs[ri];
 	pm     = phw->phw_pmc;
 	config = pm->pm_md.pm_powerpc.pm_powerpc_evsel & ~POWERPC_PMC_ENABLE;
 
-	/* Enable the PMC. */
-	switch (ri) {
-	case 0:
-		pmc_mmcr = mfspr(SPR_MMCR0);
-		pmc_mmcr = PPC_SET_PMC1SEL(pmc_mmcr, config);
-		mtspr(SPR_MMCR0, pmc_mmcr);
-		break;
-	case 1:
-		pmc_mmcr = mfspr(SPR_MMCR0);
-		pmc_mmcr = PPC_SET_PMC2SEL(pmc_mmcr, config);
-		mtspr(SPR_MMCR0, pmc_mmcr);
-		break;
-	case 2:
-		pmc_mmcr = mfspr(SPR_MMCR1);
-		pmc_mmcr = PPC_SET_PMC3SEL(pmc_mmcr, config);
-		mtspr(SPR_MMCR1, pmc_mmcr);
-		break;
-	case 3:
-		pmc_mmcr = mfspr(SPR_MMCR0);
-		pmc_mmcr = PPC_SET_PMC4SEL(pmc_mmcr, config);
-		mtspr(SPR_MMCR0, pmc_mmcr);
-		break;
-	case 4:
-		pmc_mmcr = mfspr(SPR_MMCR1);
-		pmc_mmcr = PPC_SET_PMC5SEL(pmc_mmcr, config);
-		mtspr(SPR_MMCR1, pmc_mmcr);
-		break;
-	case 5:
-		pmc_mmcr = mfspr(SPR_MMCR1);
-		pmc_mmcr = PPC_SET_PMC6SEL(pmc_mmcr, config);
-		mtspr(SPR_MMCR1, pmc_mmcr);
-		break;
-	default:
-		break;
-	}
+	if ((error = power_set_pmc(cpu, ri, config)))
+		return (error);
 	
 	/* The mask is inverted (enable is 1) compared to the flags in MMCR0, which
 	 * are Freeze flags.
 	 */
 	config = ~pm->pm_md.pm_powerpc.pm_powerpc_evsel & POWERPC_PMC_ENABLE;
 
-	pmc_mmcr = mfspr(SPR_MMCR0);
-	pmc_mmcr &= ~SPR_MMCR0_FC;
+	pmc_mmcr = mfspr(SPR_ISA3_MMCR0);
+	pmc_mmcr &= ~SPR_ISA3_MMCR0_FC;
 	pmc_mmcr |= config;
-	mtspr(SPR_MMCR0, pmc_mmcr);
-
-	return 0;
+	mtspr(SPR_ISA3_MMCR0, pmc_mmcr);
+	return (0);
 }
 
 static int
 power_stop_pmc(int cpu, int ri)
 {
-        struct pmc *pm;
-        struct pmc_hw *phw;
-        register_t pmc_mmcr;
 
-	phw    = &powerpc_pcpu[cpu]->pc_ppcpmcs[ri];
-	pm     = phw->phw_pmc;
-
-	/*
-	 * Disable the PMCs.
-	 */
-	switch (ri) {
-	case 0:
-		pmc_mmcr = mfspr(SPR_MMCR0);
-		pmc_mmcr = PPC_SET_PMC1SEL(pmc_mmcr, 0);
-		mtspr(SPR_MMCR0, pmc_mmcr);
-		break;
-	case 1:
-		pmc_mmcr = mfspr(SPR_MMCR0);
-		pmc_mmcr = PPC_SET_PMC2SEL(pmc_mmcr, 0);
-		mtspr(SPR_MMCR0, pmc_mmcr);
-		break;
-	case 2:
-		pmc_mmcr = mfspr(SPR_MMCR1);
-		pmc_mmcr = PPC_SET_PMC3SEL(pmc_mmcr, 0);
-		mtspr(SPR_MMCR1, pmc_mmcr);
-		break;
-	case 3:
-		pmc_mmcr = mfspr(SPR_MMCR0);
-		pmc_mmcr = PPC_SET_PMC4SEL(pmc_mmcr, 0);
-		mtspr(SPR_MMCR0, pmc_mmcr);
-		break;
-	case 4:
-		pmc_mmcr = mfspr(SPR_MMCR1);
-		pmc_mmcr = PPC_SET_PMC5SEL(pmc_mmcr, 0);
-		mtspr(SPR_MMCR1, pmc_mmcr);
-		break;
-	case 5:
-		pmc_mmcr = mfspr(SPR_MMCR1);
-		pmc_mmcr = PPC_SET_PMC6SEL(pmc_mmcr, 0);
-		mtspr(SPR_MMCR1, pmc_mmcr);
-		break;
-	default:
-		break;
-	}
-	return 0;
+	return (power_set_pmc(cpu, ri, PMC_ISA3_N_NONE));
 }
 
 static int
@@ -337,26 +260,26 @@ power_pcpu_init(struct pmc_mdep *md, int cpu)
 	}
 
 	/* Clear the MMCRs, and set FC, to disable all PMCs. */
-	mtspr(SPR_MMCR0, SPR_MMCR0_FC | SPR_MMCR0_PMXE |
-	    SPR_MMCR0_FCECE | SPR_MMCR0_PMC1CE | SPR_MMCR0_PMCNCE);
-	mtspr(SPR_MMCR1, 0);
+	mtspr(SPR_ISA3_MMCR0, SPR_ISA3_MMCR0_FC | SPR_ISA3_MMCR0_PMAE |
+		  SPR_ISA3_MMCR0_FCECE | SPR_ISA3_MMCR0_PMC1CE | SPR_ISA3_MMCR0_PMCJCE);
+	mtspr(SPR_ISA3_MMCR1, 0);
 
-	return 0;
+	return (0);
 }
 
 static int
 power_pcpu_fini(struct pmc_mdep *md, int cpu)
 {
-	uint32_t mmcr0 = mfspr(SPR_MMCR0);
+	uint64_t mmcr0 = mfspr(SPR_ISA3_MMCR0);
 
-	mtmsr(mfmsr() & ~PSL_PMM);
-	mmcr0 |= SPR_MMCR0_FC;
-	mtspr(SPR_MMCR0, mmcr0);
+	mmcr0 |= SPR_ISA3_MMCR0_FC;
+	mmcr0 &= ~SPR_ISA3_MMCR0_PMAE;
+	mtspr(SPR_ISA3_MMCR0, mmcr0);
 
 	free(powerpc_pcpu[cpu]->pc_ppcpmcs, M_PMC);
 	free(powerpc_pcpu[cpu], M_PMC);
 
-	return 0;
+	return (0);
 }
 
 static int
@@ -381,7 +304,7 @@ power_allocate_pmc(int cpu, int ri, struct pmc *pm,
 
 	PMCDBG2(MDP,ALL,2,"powerpc-allocate ri=%d -> config=0x%x", ri, config);
 
-	return 0;
+	return (0);
 }
 
 static int
@@ -398,7 +321,7 @@ power_release_pmc(int cpu, int ri, struct pmc *pmc)
 	KASSERT(phw->phw_pmc == NULL,
 	    ("[powerpc,%d] PHW pmc %p non-NULL", __LINE__, phw->phw_pmc));
 
-	return 0;
+	return (0);
 }
 
 static int
@@ -420,7 +343,7 @@ power_intr(struct trapframe *tf)
 
 	pac = powerpc_pcpu[cpu];
 
-	config  = mfspr(SPR_MMCR0) & ~SPR_MMCR0_FC;
+	config  = mfspr(SPR_ISA3_MMCR0) & ~SPR_ISA3_MMCR0_FC;
 
 	/*
 	 * look for all PMCs that have interrupted:
@@ -459,7 +382,7 @@ power_intr(struct trapframe *tf)
 
 	/* Re-enable PERF exceptions. */
 	if (retval)
-		mtspr(SPR_MMCR0, config | SPR_MMCR0_PMXE);
+		mtspr(SPR_ISA3_MMCR0, config | SPR_ISA3_MMCR0_PMAE);
 
 	return (retval);
 }
