@@ -1267,9 +1267,9 @@ swcr_process(device_t dev, struct cryptop *crp, int hint)
 	}
 
 done:
-	crypto_done(crp);
 	if (ses)
 		mtx_unlock(&ses->swcr_lock);
+	crypto_done(crp);
 	return 0;
 }
 
