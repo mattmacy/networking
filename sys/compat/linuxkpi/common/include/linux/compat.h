@@ -47,8 +47,6 @@ extern int (*lkpi_alloc_current)(struct thread *, int);
 static inline void
 linux_set_current(struct thread *td)
 {
-	if (__predict_false(lkpi_alloc_current == NULL))
-		return;
 	if (__predict_false(td->td_lkpi_task == NULL))
 		lkpi_alloc_current(td, M_WAITOK);
 }
@@ -56,8 +54,6 @@ linux_set_current(struct thread *td)
 static inline int
 linux_set_current_flags(struct thread *td, int flags)
 {
-	if (__predict_false(lkpi_alloc_current == NULL))
-		return (0);
 	if (__predict_false(td->td_lkpi_task == NULL))
 		return (lkpi_alloc_current(td, flags));
 	return (0);

@@ -221,7 +221,6 @@ linux_current_init(void *arg __unused)
 	lkpi_alloc_current = linux_alloc_current;
 	linuxkpi_thread_dtor_tag = EVENTHANDLER_REGISTER(thread_dtor,
 	    linuxkpi_thread_dtor, NULL, EVENTHANDLER_PRI_ANY);
-	lkpi_alloc_current = linux_alloc_current;
 }
 SYSINIT(linux_current, SI_SUB_EVENTHANDLER, SI_ORDER_SECOND, linux_current_init, NULL);
 
