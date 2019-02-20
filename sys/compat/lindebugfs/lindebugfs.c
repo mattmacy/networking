@@ -137,7 +137,7 @@ debugfs_fill(PFS_FILL_ARGS)
 	rc = d->dm_fops->open(&vn, &lf);
 	if (rc < 0) {
 #ifdef INVARIANTS
-		printf("open failed with %d\n", rc);
+		printf("%s:%d open failed with %d\n", __FUNCTION__, __LINE__, rc);
 #endif
 		return (-rc);
 	}
@@ -154,7 +154,7 @@ debugfs_fill(PFS_FILL_ARGS)
 	
 	if (rc < 0) {
 #ifdef INVARIANTS
-		printf("read/write return %d\n", rc);
+		printf("%s:%d read/write failed with %d\n", __FUNCTION__, __LINE__, rc);
 #endif
 		return (-rc);
 	}
