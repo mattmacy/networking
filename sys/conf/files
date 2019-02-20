@@ -3729,6 +3729,7 @@ fs/cd9660/cd9660_iconv.c	optional cd9660_iconv
 gnu/gcov/gcc_4_7.c		optional gcov
 gnu/gcov/gcov_fs.c		optional gcov  lindebugfs \
 	compile-with "${LINUXKPI_C}"
+gnu/gcov/gcov_subr.c		optional gcov
 
 kern/bus_if.m			standard
 kern/clock_if.m			standard

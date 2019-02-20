@@ -1,10 +1,28 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ *  This code provides functions to handle gcc's profiling data format
+ *  introduced with gcc 4.7.
+ *
+ *  This file is based heavily on gcc_3_4.c file.
+ *
+ *  For a better understanding, refer to gcc source:
+ *  gcc/gcov-io.h
+ *  libgcc/libgcov.c
+ *
+ *  Uses gcc-internal data definitions.
+ */
+
+
 #include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/sbuf.h>
 #include <sys/malloc.h>
+#include <sys/module.h>
 #include <gnu/gcov/gcov.h>
 
 

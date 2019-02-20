@@ -1,3 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ *  This code exports profiling data as debugfs files to userspace.
+ *
+ *    Copyright IBM Corp. 2009
+ *    Author(s): Peter Oberparleiter <oberpar@linux.vnet.ibm.com>
+ *
+ *    Uses gcc-internal data definitions.
+ *    Based on the gcov-kernel patch by:
+ *		 Hubertus Franke <frankeh@us.ibm.com>
+ *		 Nigel Hinds <nhinds@us.ibm.com>
+ *		 Rajan Ravindran <rajancr@us.ibm.com>
+ *		 Peter Oberparleiter <oberpar@linux.vnet.ibm.com>
+ *		 Paul Larson
+ *		 Yi CDL Yang
+ */
+
+
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/param.h>
@@ -19,10 +40,8 @@
 #include <gnu/gcov/gcov.h>
 #include <sys/queue.h>
 
-#include "linker_if.h"
-static int gcov_events_enabled;
+extern int gcov_events_enabled;
 static int gcov_persist;
-static int gcov_ctors_done;
 static struct mtx gcov_mtx;
 MTX_SYSINIT(gcov_init, &gcov_mtx, "gcov_mtx", MTX_DEF);
 MALLOC_DEFINE(M_GCOV, "gcov", "gcov");
@@ -38,25 +57,11 @@ void __gcov_merge_icall_topn(gcov_type *counters, unsigned int n_counters);
 void __gcov_exit(void);
 
 static void gcov_event(enum gcov_action action, struct gcov_info *info);
-static void gcov_enable_events(void);
-static void gcov_invoke_ctors(void);
 
 
-static int
-within_module(vm_offset_t addr, module_t mod)
-{
-	linker_file_t link_info;
-	vm_offset_t mod_addr;
-	size_t mod_size;
-
-	link_info = module_file(mod);
-	mod_addr = (vm_offset_t)link_info->address;
-	mod_size = link_info->size;
-	if (addr >= mod_addr && addr < mod_addr + mod_size)
-		return (1);
-	return (0);
-}
-
+/*
+ * Private copy taken from libc
+ */
 static char *
 (basename)(char *path)
 {
@@ -210,7 +215,7 @@ static struct {
 } all_head;
 static struct mtx node_lock;
 MTX_SYSINIT(node_init, &node_lock, "node_lock", MTX_DEF);
-
+static void remove_node(struct gcov_node *node);
 
 /*
  * seq_file.start() implementation for gcov data files. Note that the
@@ -399,7 +404,23 @@ reset_node(struct gcov_node *node)
 		gcov_info_reset(node->loaded_info[i]);
 }
 
-static void remove_node(struct gcov_node *node);
+void
+gcov_stats_reset(void)
+{
+	struct gcov_node *node;
+
+	mtx_lock(&node_lock);
+ restart:
+	LIST_FOREACH(node, &all_head, all_entry) {
+		if (node->num_loaded > 0)
+			reset_node(node);
+		else if (LIST_EMPTY(&node->children)) {
+			remove_node(node);
+			goto restart;
+		}
+	}
+	mtx_unlock(&node_lock);
+}
 
 /*
  * write() implementation for gcov data files. Reset profiling data for the
@@ -667,67 +688,6 @@ get_child_by_name(struct gcov_node *parent, const char *name)
 	return (NULL);
 }
 
-static void
-gcov_stats_reset(void)
-{
-	struct gcov_node *node;
-
-	mtx_lock(&node_lock);
- restart:
-	LIST_FOREACH(node, &all_head, all_entry) {
-		if (node->num_loaded > 0)
-			reset_node(node);
-		else if (LIST_EMPTY(&node->children)) {
-			remove_node(node);
-			goto restart;
-		}
-	}
-	mtx_unlock(&node_lock);
-}
-
-
-static int
-gcov_stats_reset_sysctl(SYSCTL_HANDLER_ARGS)
-{
-	int error, v;
-
-	v = 0;
-	error = sysctl_handle_int(oidp, &v, 0, req);
-	if (error)
-		return (error);
-	if (req->newptr == NULL)
-		return (error);
-	if (v == 0)
-		return (0);
-	gcov_stats_reset();
-
-	return (0);
-}
-
-static int
-gcov_stats_enable_sysctl(SYSCTL_HANDLER_ARGS)
-{
-	int error, v;
-
-	v = gcov_events_enabled;
-	error = sysctl_handle_int(oidp, &v, v, req);
-	if (error)
-		return (error);
-	if (req->newptr == NULL)
-		return (error);
-	if (v == gcov_events_enabled)
-		return (0);
-	//gcov_events_reset();
-	gcov_events_enabled = !!v;
-	if (!gcov_ctors_done)
-		gcov_invoke_ctors();
-	if (gcov_events_enabled)
-		gcov_enable_events();
-
-	return (0);
-}
-
-
 /*
  * Create a node for a given profiling data set and add it to all lists and
  * debugfs. Needs to be called with node_lock held.
@@ -935,7 +895,7 @@ gcov_event(enum gcov_action action, struct gcov_info *info)
  * is needed because some events are potentially generated too early for the
  * callback implementation to handle them initially.
  */
-static void
+void
 gcov_enable_events(void)
 {
 	struct gcov_info *info = NULL;
@@ -956,7 +916,7 @@ gcov_enable_events(void)
 }
 
 /* Update list and generate events when modules are unloaded. */
-static void
+void
 gcov_module_unload(void *arg __unused, module_t mod)
 {
 	struct gcov_info *info = NULL;
@@ -977,60 +937,9 @@ gcov_module_unload(void *arg __unused, module_t mod)
 	mtx_unlock(&gcov_mtx);
 }
 
-
-#define GCOV_PREFIX "_GLOBAL__sub_I_65535_0_"
-
-static int
-gcov_invoke_ctor(const char *name, void *arg)
+void
+gcov_fs_init(void)
 {
-	void (*ctor)(void);
-	c_linker_sym_t sym;
-	linker_symval_t symval;
-	linker_file_t lf;
-
-	if (strstr(name, GCOV_PREFIX) == NULL)
-		return (0);
-	lf = arg;
-	LINKER_LOOKUP_SYMBOL(lf, name, &sym);
-	LINKER_SYMBOL_VALUES(lf, sym, &symval);
-	ctor = (void *)symval.value;
-	ctor();
-	return (0);
-}
-
-static int
-gcov_invoke_lf_ctors(linker_file_t lf, void *arg __unused)
-{
-
-	printf("%s processing file: %s\n", __func__, lf->filename);
-	LINKER_EACH_FUNCTION_NAME(lf, gcov_invoke_ctor, lf);
-	return (0);
-}
-
-static void
-gcov_invoke_ctors(void)
-{
-
 	init_node(&root_node, NULL, NULL, NULL);
 	root_node.dentry = debugfs_create_dir("gcov", NULL);
-
-	linker_file_foreach(gcov_invoke_lf_ctors, NULL);
-	gcov_ctors_done = 1;
 }
-
-static int
-gcov_init(void *arg __unused)
-{
-	EVENTHANDLER_REGISTER(module_unload, gcov_module_unload, NULL, 0);
-	gcov_enable_events();
-	return (0);
-}
-
-SYSINIT(gcov_init, SI_SUB_EVENTHANDLER, SI_ORDER_ANY, gcov_init, NULL);
-
-static SYSCTL_NODE(_debug, OID_AUTO, gcov, CTLFLAG_RD, NULL,
-    "gcov code coverage");
-SYSCTL_PROC(_debug_gcov, OID_AUTO, reset, CTLTYPE_INT | CTLFLAG_RW,
-    NULL, 0, gcov_stats_reset_sysctl, "I", "Reset all profiling counts");
-SYSCTL_PROC(_debug_gcov, OID_AUTO, enable, CTLTYPE_INT | CTLFLAG_RW,
-    NULL, 0, gcov_stats_enable_sysctl, "I", "Enable code coverage");
