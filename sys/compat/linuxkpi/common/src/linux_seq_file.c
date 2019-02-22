@@ -51,7 +51,7 @@ seq_read(struct linux_file *f, char *ubuf, size_t size, off_t *ppos)
 	off_t pos = 0;
 
 	p = m->op->start(m, &pos);
-	rc = m->op->show(m, p);		
+	rc = m->op->show(m, p);
 	if (rc)
 		return (rc);
 	return (size);
@@ -65,7 +65,7 @@ seq_write(struct seq_file *seq, const void *data, size_t len)
 }
 
 /*
- * This only needs to be a valid address for lkpi 
+ * This only needs to be a valid address for lkpi
  * drivers it should never actually be called
  */
 off_t

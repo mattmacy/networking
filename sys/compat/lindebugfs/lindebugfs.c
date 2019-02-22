@@ -151,7 +151,7 @@ debugfs_fill(PFS_FILL_ARGS)
 		d->dm_fops->release(&vn, &lf);
 	else
 		single_release(&vn, &lf);
-	
+
 	if (rc < 0) {
 #ifdef INVARIANTS
 		printf("%s:%d read/write failed with %d\n", __FUNCTION__, __LINE__, rc);
@@ -166,7 +166,7 @@ debugfs_fill_data(PFS_FILL_ARGS)
 {
 	struct dentry_meta *dm;
 
-	dm = pn->pn_data; 
+	dm = pn->pn_data;
 	sbuf_printf(sb, "%s", (char *)dm->dm_data);
 	return (0);
 }
@@ -193,7 +193,7 @@ debugfs_create_file(const char *name, umode_t mode,
 		pnode = parent->d_pfs_node;
 	else
 		pnode = debugfs_root;
-	
+
 	flags = fops->write ? PFS_RDWR : PFS_RD;
 	dnode->d_pfs_node = pfs_create_file(pnode, name, debugfs_fill,
 	    debugfs_attr, NULL, debugfs_destroy, flags | PFS_NOWAIT);
@@ -202,7 +202,7 @@ debugfs_create_file(const char *name, umode_t mode,
 		return (NULL);
 	}
 	dnode->d_pfs_node->pn_data = dm;
-	
+
 	return (dnode);
 }
 
