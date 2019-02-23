@@ -39,7 +39,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/libkern.h>
 #include <sys/malloc.h>
 
-
 char *
 strdup_flags(const char *string, struct malloc_type *type, int flags)
 {
