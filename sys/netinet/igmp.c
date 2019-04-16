@@ -856,6 +856,7 @@ igmp_input_v2_query(struct ifnet *ifp, const struct ip *ip,
 			    "process v2 query 0x%08x on ifp %p(%s)",
 			    ntohl(igmp->igmp_group.s_addr), ifp, ifp->if_xname);
 			igmp_v2_update_group(inm, timer);
+			inm_release_deferred(inm);
 		}
 	}
 
@@ -932,7 +933,7 @@ igmp_input_v3_query(struct ifnet *ifp, const struct ip *ip,
     /*const*/ struct igmpv3 *igmpv3)
 {
 	struct igmp_ifsoftc	*igi;
-	struct in_multi		*inm;
+	struct in_multi		*inm = NULL;
 	int			 is_general_query;
 	uint32_t		 maxresp, nsrc, qqi;
 	uint16_t		 timer;
@@ -1081,6 +1082,8 @@ igmp_input_v3_query(struct ifnet *ifp, const struct ip *ip,
 
 out_locked:
 	IGMP_UNLOCK();
+	if (inm)
+		inm_release_deferred(inm);
 	IN_MULTI_LIST_UNLOCK();
 
 	return (0);
@@ -1296,6 +1299,9 @@ igmp_input_v1_report(struct ifnet *ifp, /*const*/ struct ip *ip,
 	}
 
 out_locked:
+	if (inm)
+		inm_release_deferred(inm);
+
 	IN_MULTI_LIST_UNLOCK();
 
 	return (0);
@@ -1406,8 +1412,9 @@ igmp_input_v2_report(struct ifnet *ifp, /*const*/ struct ip *ip,
 			break;
 		}
 	}
-
 out_locked:
+	if (inm)
+		inm_release_deferred(inm);
 	IN_MULTI_LIST_UNLOCK();
 
 	return (0);

@@ -729,6 +729,7 @@ mld_v1_input_query(struct ifnet *ifp, const struct ip6_hdr *ip6,
 			    ip6_sprintf(ip6tbuf, &mld->mld_addr),
 			    ifp, if_name(ifp));
 			mld_v1_update_group(inm, timer);
+			in6m_release_deferred(inm);
 		}
 		/* XXX Clear embedded scope ID as userland won't expect it. */
 		in6_clearscope(&mld->mld_addr);
@@ -814,7 +815,7 @@ mld_v2_input_query(struct ifnet *ifp, const struct ip6_hdr *ip6,
 {
 	struct mld_ifsoftc	*mli;
 	struct mldv2_query	*mld;
-	struct in6_multi	*inm;
+	struct in6_multi	*inm = NULL;
 	uint32_t		 maxdelay, nsrc, qqi;
 	int			 is_general_query;
 	uint16_t		 timer;
@@ -981,6 +982,8 @@ mld_v2_input_query(struct ifnet *ifp, const struct ip6_hdr *ip6,
 	}
 
 out_locked:
+	if (inm)
+		in6m_release_deferred(inm);
 	MLD_UNLOCK();
 	IN6_MULTI_LIST_UNLOCK();
 
@@ -1114,7 +1117,7 @@ mld_v1_input_report(struct ifnet *ifp, const struct ip6_hdr *ip6,
 	struct in6_addr		 src, dst;
 	struct epoch_tracker	 et;
 	struct in6_ifaddr	*ia;
-	struct in6_multi	*inm;
+	struct in6_multi	*inm = NULL;
 #ifdef KTR
 	char			 ip6tbuf[INET6_ADDRSTRLEN];
 #endif
@@ -1236,6 +1239,8 @@ mld_v1_input_report(struct ifnet *ifp, const struct ip6_hdr *ip6,
 	}
 
 out_locked:
+	if (inm)
+		in6m_release_deferred(inm);
 	NET_EPOCH_EXIT(et);
 	MLD_UNLOCK();
 	IN6_MULTI_LIST_UNLOCK();
