@@ -1035,6 +1035,7 @@ in_purgemaddrs(struct ifnet *ifp)
 			continue;
 		inm = (struct in_multi *)ifma->ifma_protospec;
 		inm_rele_locked(&purgeinms, inm);
+		ifma->ifma_protospec = NULL;
 		if (__predict_false(ifma_restart)) {
 			ifma_restart = true;
 			goto restart;

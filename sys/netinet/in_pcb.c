@@ -1809,6 +1809,8 @@ in_pcbpurgeif0(struct inpcbinfo *pcbinfo, struct ifnet *ifp)
 					    imo->imo_membership[i];
 			}
 			imo->imo_num_memberships -= gap;
+			if (imo->imo_num_memberships)
+				MPASS(imo->imo_membership[0]);
 		}
 		INP_WUNLOCK(inp);
 	}

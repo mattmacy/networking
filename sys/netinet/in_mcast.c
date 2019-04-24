@@ -2222,14 +2222,8 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 			if (error)
 				goto out_inp_locked;
 		}
-		/*
-		 * Allocate the new slot upfront so we can deal with
-		 * grafting the new source filter in same code path
-		 * as for join-source on existing membership.
-		 */
 		idx = imo->imo_num_memberships;
 		imo->imo_membership[idx] = NULL;
-		imo->imo_num_memberships++;
 		KASSERT(imo->imo_mfilters != NULL,
 		    ("%s: imf_mfilters vector was not allocated", __func__));
 		imf = &imo->imo_mfilters[idx];
@@ -2289,6 +2283,8 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 		}
 		/* joingroup returns with a reference held */
 		imo->imo_membership[idx] = inm;
+		MPASS(idx == imo->imo_num_memberships);
+		imo->imo_num_memberships++;
 	} else {
 		CTR1(KTR_IGMPV3, "%s: merge inm state", __func__);
 		IN_MULTI_LIST_LOCK();
@@ -2310,10 +2306,12 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 	}
 
 out_in_multi_locked:
+	if (imo->imo_num_memberships)
+		MPASS(imo->imo_membership[0]);
 
 	IN_MULTI_UNLOCK();
 	INP_WLOCK(inp);
-	if (in_pcbrele_wlocked(inp))
+	if (in_pcbrele_wlocked(inp)) 
 		return (ENXIO);
 	if (error) {
 		imf_rollback(imf);

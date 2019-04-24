@@ -373,7 +373,7 @@ inm_rele_locked(struct in_multi_head *inmh, struct in_multi *inm)
 		printf("freeing %p \n", inm);
 		MPASS(inmh != NULL);
 		inm_disconnect(inm);
-		inm->inm_ifma->ifma_protospec = NULL;
+		MPASS(inm->inm_ifma->ifma_protospec == NULL);
 		SLIST_INSERT_HEAD(inmh, inm, inm_nrele);
 	}
 }
