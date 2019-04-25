@@ -612,7 +612,6 @@ VNET_DECLARE(struct ifnet *, loif);	/* first loopback interface */
 #define	V_if_index	VNET(if_index)
 #define	V_loif		VNET(loif)
 
-#define MCAST_VERBOSE
 #ifdef MCAST_VERBOSE
 #define MCDPRINTF printf
 #else
