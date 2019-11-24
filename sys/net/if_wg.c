@@ -1,5 +1,3 @@
-/*	$NetBSD$	*/
-
 /*
  * Copyright (C) Ryota Ozaki <ozaki.ryota@gmail.com>
  * All rights reserved.
@@ -340,6 +338,9 @@ struct wg_softc {
 
 	int		wg_npeers;
 	CK_STAILQ_HEAD(, wg_peer) wg_peers;
+
+	struct radix_node_head	*wg_rtable_ipv4;
+	struct radix_node_head	*wg_rtable_ipv6;
 };
 static int clone_count;
 
@@ -526,7 +527,7 @@ MODULE_DEPEND(wg, iflib, 1, 1, 1);
 struct wg_ops {
 	int (*send_hs_msg)(struct wg_peer *, struct mbuf *);
 	int (*send_data_msg)(struct wg_peer *, struct mbuf *);
-	void (*input)(struct ifnet *, struct mbuf *, const int);
+	void (*input)(if_ctx_t, struct mbuf *, const int);
 	int (*bind_port)(struct wg_softc *, const uint16_t);
 };
 
@@ -548,10 +549,10 @@ static struct wg_peer * wg_pick_peer_by_sa(struct wg_softc *wg,
 //static uint64_t wg_rekey_after_messages = WG_REKEY_AFTER_MESSAGES;
 //static uint64_t wg_reject_after_messages = WG_REJECT_AFTER_MESSAGES;
 static time_t wg_rekey_after_time = WG_REKEY_AFTER_TIME;
-//static time_t wg_reject_after_time = WG_REJECT_AFTER_TIME;
+static time_t wg_reject_after_time = WG_REJECT_AFTER_TIME;
 //static time_t wg_rekey_attempt_time = WG_REKEY_ATTEMPT_TIME;
 static time_t wg_rekey_timeout = WG_REKEY_TIMEOUT;
-//static time_t wg_keepalive_timeout = WG_KEEPALIVE_TIMEOUT;
+static time_t wg_keepalive_timeout = WG_KEEPALIVE_TIMEOUT;
 
 static void
 wg_clear_states(struct wg_session *wgs)
@@ -688,6 +689,22 @@ wg_put_peer(struct wg_peer *p)
 
 }
 
+static struct radix_node_head *
+wg_rnh(struct wg_softc *wg, const int family)
+{
+
+	switch (family) {
+		case AF_INET:
+			return wg->wg_rtable_ipv4;
+#ifdef INET6
+		case AF_INET6:
+			return wg->wg_rtable_ipv6;
+#endif
+		default:
+			return NULL;
+	}
+}
+
 static struct wg_peer *
 wg_pick_peer_by_sa(struct wg_softc *wg, const struct sockaddr *sa)
 {
@@ -708,7 +725,7 @@ wg_pick_peer_by_sa(struct wg_softc *wg, const struct sockaddr *sa)
 	if (rnh == NULL)
 		goto out;
 
-	rn = rnh->rnh_matchaddr(sa, rnh);
+	rn = rnh->rnh_matchaddr(__DECONST(void *, sa), &rnh->rh);
 	if (rn == NULL || (rn->rn_flags & RNF_ROOT) != 0)
 		goto out;
 
@@ -843,6 +860,23 @@ wg_validate_route(struct wg_softc *wg, struct wg_peer *wgp_expected,
 		wg_put_peer(wgp);
 
 	return ok;
+}
+
+static bool
+wg_need_to_send_init_message(struct wg_session *wgs)
+{
+	/*
+	 * [W] 6.2 Transport Message Limits
+	 * "if a peer is the initiator of a current secure session,
+	 *  WireGuard will send a handshake initiation message to begin
+	 *  a new secure session ... if after receiving a transport data
+	 *  message, the current secure session is (REJECT-AFTER-TIME --
+	 *  KEEPALIVE-TIMEOUT -- REKEY-TIMEOUT) seconds old and it has
+	 *  not yet acted upon this event."
+	 */
+	return wgs->wgs_is_initiator && wgs->wgs_time_last_data_sent == 0 &&
+	    (time_uptime - wgs->wgs_time_established) >=
+	    (wg_reject_after_time - wg_keepalive_timeout - wg_rekey_timeout);
 }
 
 static void
@@ -1771,7 +1805,7 @@ wg_handle_msg_data(struct wg_softc *wg, struct mbuf *m,
 	struct wg_peer *wgp;
 	size_t mlen;
 	int error, af;
-	bool success, free_encrypted_buf = false, ok;
+	bool free_encrypted_buf = false, ok;
 	struct mbuf *n;
 
 	if (m->m_len < sizeof(struct wg_msg_data)) {
@@ -1870,7 +1904,7 @@ wg_handle_msg_data(struct wg_softc *wg, struct mbuf *m,
 
 	ok = wg_validate_route(wg, wgp, af, decrypted_buf);
 	if (ok) {
-		wg->wg_ops->input(&wg->wg_if, n, af);
+		wg->wg_ops->input(wg->wg_ctx, n, af);
 	} else {
 		WG_LOG_RATECHECK(&wgp->wgp_ppsratecheck, LOG_DEBUG,
 		    "invalid source address\n");
@@ -1912,9 +1946,11 @@ wg_handle_msg_data(struct wg_softc *wg, struct mbuf *m,
 		}
 		mutex_exit(wgs_prev->wgs_lock);
 
+#if 0
 		/* Anyway run a softint to flush pending packets */
 		//KASSERT(cpu_softintr_p());
 		softint_schedule(wgp->wgp_si);
+#endif
 	} else {
 		if (__predict_false(wg_need_to_send_init_message(wgs))) {
 			wg_schedule_peer_task(wgp, WGP_TASK_SEND_INIT_MESSAGE);
@@ -1944,7 +1980,7 @@ out:
 	if (m != NULL)
 		m_freem(m);
 	if (free_encrypted_buf)
-		kmem_intr_free(encrypted_buf, encrypted_len);
+		free(encrypted_buf, M_WG);
 }
 
 static void
@@ -1983,7 +2019,6 @@ wg_receive_packets(struct wg_softc *wg, const int af)
 		struct socket *so;
 		struct mbuf *m = NULL;
 		struct uio dummy_uio;
-		struct mbuf *paddr = NULL;
 		struct sockaddr *src;
 
 		so = wg_get_so_by_af(wg->wg_worker, af);
