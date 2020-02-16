@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2020 Netgate, Inc.
+ * Copyright (c) 2020 Rubicon Communications, LLC (Netgate)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -63,15 +63,21 @@ setwglistenport(const char *val, int d, int s, const struct afswtch *rafp)
 }
 
 static int
-getid(int s)
+is_match(void)
 {
-	return (-1);
+	if (strncmp("wg", name, 2))
+		return (-1);
+	if (strlen(name) < 3)
+		return (-1);
+	if (!isdigit(name[2]))
+		return (-1);
+	return (0);
 }
 
 static void
 wireguard_status(int s)
 {
-	if (getid(s) < 0) {
+	if (is_match() < 0) {
 		/* If it's not a wg interface just return */
 		return;
 	}
