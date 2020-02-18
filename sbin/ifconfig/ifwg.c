@@ -60,11 +60,23 @@
 #define WGC_SETCONF	0x1
 #define WGC_GETCONF	0x2
 
+static nvlist_t *nvl_params;
+struct nvlist_desc {
+	caddr_t nd_data;
+	u_long nd_len;
+};
 
-static void
-setwglistenport(const char *val, int d, int s, const struct afswtch *rafp)
+static
+DECL_CMD_FUNC(setwglistenport, val, d)
 {
-	printf("set listen port XXX");
+	char *endp;
+	u_long ul;
+
+	ul = strtoul(val, &endp, 0);
+	if (*endp != '\0')
+		errx(1, "invalid value for listen-port");
+
+	nvlist_add_number(nvl_params, "listen-port", ul);
 }
 
 static int
@@ -148,10 +160,21 @@ static struct afswtch af_wireguard = {
 static void
 wg_create(int s, struct ifreq *ifr)
 {
-	nvlist_t *nvl;
+	struct nvlist_desc nd;
+	void *packed;
+	size_t size;
 
-	nvl = nvlist_create(0);
-	printf("do Wireguard creation STUFF\n");
+	if (!nvlist_exists_number(nvl_params, "listen-port"))
+		errx(1, "must specify a listen-port for wg create");
+
+	packed = nvlist_pack(nvl_params, &size);
+	if (packed == NULL)
+		errx(1, "failed to setup create request");
+	nd.nd_len = size;
+	nd.nd_data = packed;
+	ifr->ifr_data = (caddr_t)&nd;
+	if (ioctl(s, SIOCIFCREATE2, ifr) < 0)
+		err(1, "SIOCIFCREATE2");
 }
 
 static __constructor void
@@ -159,6 +182,7 @@ wireguard_ctor(void)
 {
 	int i;
 
+	nvl_params = nvlist_create(0);
 	for (i = 0; i < nitems(wireguard_cmds);  i++)
 		cmd_register(&wireguard_cmds[i]);
 	af_register(&af_wireguard);
