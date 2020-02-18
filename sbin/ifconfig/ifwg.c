@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
+#include <sys/nv.h>
 
 #include <net/ethernet.h>
 #include <net/if.h>
@@ -56,6 +57,10 @@
 
 #include "ifconfig.h"
 
+#define WGC_SETCONF	0x1
+#define WGC_GETCONF	0x2
+
+
 static void
 setwglistenport(const char *val, int d, int s, const struct afswtch *rafp)
 {
@@ -74,14 +79,60 @@ is_match(void)
 	return (0);
 }
 
+static int
+get_nvl_out_size(int sock, u_long op, size_t *size)
+{
+	struct ifdrv ifd;
+	int err;
+
+	memset(&ifd, 0, sizeof(ifd));
+
+	strlcpy(ifd.ifd_name, name, sizeof(ifd.ifd_name));
+	ifd.ifd_cmd = op;
+	ifd.ifd_len = 0;
+	ifd.ifd_data = NULL;
+
+	err = ioctl(sock, SIOCGDRVSPEC, &ifd);
+	if (err)
+		return (err);
+	*size = ifd.ifd_len;
+	return (0);
+}
+
+static int
+do_cmd(int sock, u_long op, void *arg, size_t argsize, int set)
+{
+	struct ifdrv ifd;
+
+	memset(&ifd, 0, sizeof(ifd));
+
+	strlcpy(ifd.ifd_name, name, sizeof(ifd.ifd_name));
+	ifd.ifd_cmd = op;
+	ifd.ifd_len = argsize;
+	ifd.ifd_data = arg;
+
+	return (ioctl(sock, set ? SIOCSDRVSPEC : SIOCGDRVSPEC, &ifd));
+}
+
 static void
 wireguard_status(int s)
 {
+	size_t size;
+	void *packed;
+	nvlist_t *nvl;
+
 	if (is_match() < 0) {
 		/* If it's not a wg interface just return */
 		return;
 	}
-	printf("XXX wireguard status here XXX\n");
+	if (get_nvl_out_size(s, WGC_GETCONF, &size))
+		return;
+	if ((packed = malloc(size)) == NULL)
+		return;
+	if (do_cmd(s, WGC_GETCONF, packed, size, 0))
+		return;
+	nvl = nvlist_unpack(packed, size, 0);
+	nvlist_dump(nvl, 1);
 }
 
 static struct cmd wireguard_cmds[] = {
@@ -97,6 +148,9 @@ static struct afswtch af_wireguard = {
 static void
 wg_create(int s, struct ifreq *ifr)
 {
+	nvlist_t *nvl;
+
+	nvl = nvlist_create(0);
 	printf("do Wireguard creation STUFF\n");
 }
 
