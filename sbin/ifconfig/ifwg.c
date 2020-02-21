@@ -61,6 +61,15 @@
 #define WGC_GETCONF	0x2
 
 static nvlist_t *nvl_params;
+static bool do_peer;
+static int allowed_ips_count;
+static int allowed_ips_max;
+struct allowedip {
+	struct sockaddr a_addr;
+	int a_mask;
+};
+struct allowedip *allowed_ips;
+
 
 #define WG_KEY_LEN 32
 #define WG_KEY_LEN_BASE64 ((((WG_KEY_LEN) + 2) / 3) * 4 + 1)
@@ -175,6 +184,24 @@ key_from_base64(uint8_t key[static WG_KEY_LEN], const char *base64)
 	return (decode_base64(key, WG_KEY_LEN, base64));
 }
 
+static void
+peerfinish(int s, void *arg)
+{
+	if (!nvlist_exists_binary(nvl_params, "public-key"))
+		errx(1, "must specify a public-key for adding peer");
+	if (!nvlist_exists_binary(nvl_params, "endpoint"))
+		errx(1, "must specify an endpoint for adding peer");
+	if (allowed_ips_count == 0)
+		errx(1, "must specify at least one range of allowed-ips to add a peer");
+}
+
+static
+DECL_CMD_FUNC(peerstart, val, d)
+{
+	do_peer = true;
+	callback_register(peerfinish, NULL);
+}
+
 static
 DECL_CMD_FUNC(setwglistenport, val, d)
 {
@@ -203,9 +230,30 @@ DECL_CMD_FUNC(setwgpubkey, val, d)
 {
 	uint8_t key[WG_KEY_LEN];
 
+	if (!do_peer)
+		errx(1, "setting public key only valid when adding peer");
+
 	if (!key_from_base64(key, val))
 		errx(1, "invalid key %s", val);
 	nvlist_add_binary(nvl_params, "public-key", key, WG_KEY_LEN);
+}
+
+static
+DECL_CMD_FUNC(setallowedips, val, d)
+{
+	if (!do_peer)
+		errx(1, "setting allowed ip only valid when adding peer");
+	if (allowed_ips_count == allowed_ips_max) {
+		/* XXX grow array */
+	}
+}
+
+static
+DECL_CMD_FUNC(setendpoint, val, d)
+{
+	if (!do_peer)
+		errx(1, "setting endpoint only valid when adding peer");
+
 }
 
 static int
@@ -279,7 +327,10 @@ wireguard_status(int s)
 static struct cmd wireguard_cmds[] = {
     DEF_CLONE_CMD_ARG("listen-port",  setwglistenport),
     DEF_CLONE_CMD_ARG("private-key",  setwgprivkey),
-    DEF_CLONE_CMD_ARG("public-key",  setwgpubkey),
+    DEF_CMD("peer",  0, peerstart),
+    DEF_CMD_ARG("public-key",  setwgpubkey),
+    DEF_CMD_ARG("allowed-ips",  setallowedips),
+    DEF_CMD_ARG("endpoint",  setendpoint),
 };
 
 static struct afswtch af_wireguard = {
@@ -300,8 +351,6 @@ wg_create(int s, struct ifreq *ifr)
 		errx(1, "must specify a listen-port for wg create");
 	if (!nvlist_exists_binary(nvl_params, "private-key"))
 		errx(1, "must specify a private-key for wg create");
-	if (nvlist_exists_binary(nvl_params, "public-key"))
-		errx(1, "public-key automatically generated for local interface");
 
 	packed = nvlist_pack(nvl_params, &size);
 	if (packed == NULL)
