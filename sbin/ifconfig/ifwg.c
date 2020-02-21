@@ -298,10 +298,10 @@ wg_create(int s, struct ifreq *ifr)
 	setproctitle("ifconfig %s create ...\n", name);
 	if (!nvlist_exists_number(nvl_params, "listen-port"))
 		errx(1, "must specify a listen-port for wg create");
-	if (!nvlist_exists_binary(nvl_params, "public-key"))
-		errx(1, "must specify a public-key for wg create");
 	if (!nvlist_exists_binary(nvl_params, "private-key"))
 		errx(1, "must specify a private-key for wg create");
+	if (nvlist_exists_binary(nvl_params, "public-key"))
+		errx(1, "public-key automatically generated for local interface");
 
 	packed = nvlist_pack(nvl_params, &size);
 	if (packed == NULL)
