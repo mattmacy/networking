@@ -39,6 +39,8 @@
 #include <net/if_media.h>
 #include <net/route.h>
 
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <assert.h>
 #include <ctype.h>
@@ -48,6 +50,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <netdb.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdarg.h>
@@ -70,10 +73,10 @@ struct allowedip {
 };
 struct allowedip *allowed_ips;
 
-
-#define WG_KEY_LEN 32
-#define WG_KEY_LEN_BASE64 ((((WG_KEY_LEN) + 2) / 3) * 4 + 1)
-#define WG_KEY_LEN_HEX (WG_KEY_LEN * 2 + 1)
+#define	ALLOWEDIPS_START 16
+#define	WG_KEY_LEN 32
+#define	WG_KEY_LEN_BASE64 ((((WG_KEY_LEN) + 2) / 3) * 4 + 1)
+#define	WG_KEY_LEN_HEX (WG_KEY_LEN * 2 + 1)
 
 static void encode_base64(u_int8_t *, u_int8_t *, u_int16_t);
 static bool decode_base64(u_int8_t *, u_int16_t, const u_int8_t *);
@@ -185,14 +188,92 @@ key_from_base64(uint8_t key[static WG_KEY_LEN], const char *base64)
 }
 
 static void
+parse_endpoint(const char *endpoint_)
+{
+	int err;
+	char *base, *endpoint, *port, *colon, *tmp;
+	struct addrinfo hints, *res;
+
+	endpoint = base = strdup(endpoint_);
+	colon = rindex(endpoint, ':');
+	if (colon == NULL)
+		errx(1, "bad endpoint format %s - no port delimiter found", endpoint);
+	*colon = '\0';
+	port = colon + 1;
+
+	/* [::]:<> */
+	if (endpoint[0] == '[') {
+		endpoint++;
+		tmp = index(endpoint, ']');
+		if (tmp == NULL)
+			errx(1, "bad endpoint format %s - '[' found with no matching ']'", endpoint);
+		*tmp = '\0';
+	}
+	bzero(&hints, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_flags = AI_NUMERICHOST;
+	err = getaddrinfo(endpoint, port, &hints, &res);
+	if (err)
+		errx(err, "address resolution for endpoint %s:%s failed\n", endpoint, port);
+	nvlist_add_binary(nvl_params, "endpoint", res->ai_addr, res->ai_addrlen);
+	freeaddrinfo(res);
+	free(base);
+}
+
+static bool
+parse_ip(struct allowedip *aip, const char *value)
+{
+	aip->a_addr.sa_family = AF_UNSPEC;
+	struct in_addr *in4;
+	struct in6_addr *in6;
+
+	if (strchr(value, ':')) {
+		in6 = &((struct sockaddr_in6 *)(&aip->a_addr))->sin6_addr;
+		if (inet_pton(AF_INET6, value, in6) == 1)
+			aip->a_addr.sa_family = AF_INET6;
+	} else {
+		in4 = &((struct sockaddr_in *)(&aip->a_addr))->sin_addr;
+		if (inet_pton(AF_INET, value, in4) == 1)
+			aip->a_addr.sa_family = AF_INET;
+	}
+	if (aip->a_addr.sa_family == AF_UNSPEC)
+		return (false);
+	return (true);
+}
+
+static int
+do_cmd(int sock, u_long op, void *arg, size_t argsize, int set)
+{
+	struct ifdrv ifd;
+
+	memset(&ifd, 0, sizeof(ifd));
+
+	strlcpy(ifd.ifd_name, name, sizeof(ifd.ifd_name));
+	ifd.ifd_cmd = op;
+	ifd.ifd_len = argsize;
+	ifd.ifd_data = arg;
+
+	return (ioctl(sock, set ? SIOCSDRVSPEC : SIOCGDRVSPEC, &ifd));
+}
+
+static void
 peerfinish(int s, void *arg)
 {
+	void *packed;
+	size_t size;
+
 	if (!nvlist_exists_binary(nvl_params, "public-key"))
 		errx(1, "must specify a public-key for adding peer");
 	if (!nvlist_exists_binary(nvl_params, "endpoint"))
 		errx(1, "must specify an endpoint for adding peer");
 	if (allowed_ips_count == 0)
 		errx(1, "must specify at least one range of allowed-ips to add a peer");
+
+	packed = nvlist_pack(nvl_params, &size);
+	if (packed == NULL)
+		errx(1, "failed to setup create request");
+	if (do_cmd(s, WGC_SETCONF, packed, size, true))
+		errx(1, "failed to install peer");
 }
 
 static
@@ -200,6 +281,10 @@ DECL_CMD_FUNC(peerstart, val, d)
 {
 	do_peer = true;
 	callback_register(peerfinish, NULL);
+	allowed_ips = malloc(ALLOWEDIPS_START * sizeof(struct allowedip));
+	allowed_ips_max = ALLOWEDIPS_START;
+	if (allowed_ips == NULL)
+		errx(1, "failed to allocate array for allowedips");
 }
 
 static
@@ -241,11 +326,35 @@ DECL_CMD_FUNC(setwgpubkey, val, d)
 static
 DECL_CMD_FUNC(setallowedips, val, d)
 {
+	char *base, *allowedip, *mask;
+	u_long ul;
+	char *endp;
+	struct allowedip *aip;
+
 	if (!do_peer)
 		errx(1, "setting allowed ip only valid when adding peer");
 	if (allowed_ips_count == allowed_ips_max) {
 		/* XXX grow array */
 	}
+	aip = &allowed_ips[allowed_ips_count];
+	base = allowedip = strdup(val);
+	mask = index(allowedip, '/');
+	if (mask == NULL)
+		errx(1, "mask separator not found in allowedip %s", val);
+	*mask = '\0';
+	mask++;
+
+	ul = strtoul(mask, &endp, 0);
+	if (*endp != '\0')
+		errx(1, "invalid value for allowedip mask");
+	/* XXX check if mask valid for v4 vs v6 */
+	aip->a_mask = ul;
+	allowed_ips_count++;
+	if (allowed_ips_count > 1)
+		nvlist_free_binary(nvl_params, "allowed-ips");
+	nvlist_add_binary(nvl_params, "allowed-ips", allowed_ips,
+					  allowed_ips_count*sizeof(*aip));
+	free(base);
 }
 
 static
@@ -253,7 +362,7 @@ DECL_CMD_FUNC(setendpoint, val, d)
 {
 	if (!do_peer)
 		errx(1, "setting endpoint only valid when adding peer");
-
+	parse_endpoint(val);
 }
 
 static int
@@ -286,21 +395,6 @@ get_nvl_out_size(int sock, u_long op, size_t *size)
 		return (err);
 	*size = ifd.ifd_len;
 	return (0);
-}
-
-static int
-do_cmd(int sock, u_long op, void *arg, size_t argsize, int set)
-{
-	struct ifdrv ifd;
-
-	memset(&ifd, 0, sizeof(ifd));
-
-	strlcpy(ifd.ifd_name, name, sizeof(ifd.ifd_name));
-	ifd.ifd_cmd = op;
-	ifd.ifd_len = argsize;
-	ifd.ifd_data = arg;
-
-	return (ioctl(sock, set ? SIOCSDRVSPEC : SIOCGDRVSPEC, &ifd));
 }
 
 static void
