@@ -60,8 +60,13 @@
 
 #include "ifconfig.h"
 
-#define WGC_SETCONF	0x1
-#define WGC_GETCONF	0x2
+typedef enum {
+	WGC_PEER_ADD = 0x1,
+	WGC_PEER_DEL = 0x2,
+	WGC_PEER_UPDATE = 0x3,
+	WGC_PEER_LIST = 0x4,
+	WGC_LOCAL_SHOW = 0x5,
+} wg_cmd_t;
 
 static nvlist_t *nvl_params;
 static bool do_peer;
@@ -272,7 +277,7 @@ peerfinish(int s, void *arg)
 	packed = nvlist_pack(nvl_params, &size);
 	if (packed == NULL)
 		errx(1, "failed to setup create request");
-	if (do_cmd(s, WGC_SETCONF, packed, size, true))
+	if (do_cmd(s, WGC_PEER_ADD, packed, size, true))
 		errx(1, "failed to install peer");
 }
 
@@ -408,11 +413,11 @@ wireguard_status(int s)
 		/* If it's not a wg interface just return */
 		return;
 	}
-	if (get_nvl_out_size(s, WGC_GETCONF, &size))
+	if (get_nvl_out_size(s, WGC_LOCAL_SHOW, &size))
 		return;
 	if ((packed = malloc(size)) == NULL)
 		return;
-	if (do_cmd(s, WGC_GETCONF, packed, size, 0))
+	if (do_cmd(s, WGC_LOCAL_SHOW, packed, size, 0))
 		return;
 	nvl = nvlist_unpack(packed, size, 0);
 	nvlist_dump(nvl, 1);
