@@ -82,6 +82,10 @@ struct allowedip *allowed_ips;
 #define	WG_KEY_LEN 32
 #define	WG_KEY_LEN_BASE64 ((((WG_KEY_LEN) + 2) / 3) * 4 + 1)
 #define	WG_KEY_LEN_HEX (WG_KEY_LEN * 2 + 1)
+#define	WG_MAX_STRLEN 64
+
+//CTASSERT(WG_MAX_STRLEN > WG_KEY_LEN_BASE64);
+//CTASSERT(WG_MAX_STRLEN > INET6_ADDRSTRLEN);
 
 static void encode_base64(u_int8_t *, const u_int8_t *, u_int16_t);
 static bool decode_base64(u_int8_t *, u_int16_t, const u_int8_t *);
@@ -246,17 +250,67 @@ parse_ip(struct allowedip *aip, const char *value)
 	return (true);
 }
 
+static const char *
+sa_ntop(const struct sockaddr *sa, char *buf, int *port)
+{
+	const struct sockaddr_in *sin;
+	const struct sockaddr_in6 *sin6;
+	const char *bufp;
+
+	if (sa->sa_family == AF_INET) {
+		sin = (const struct sockaddr_in *)sa;
+		bufp = inet_ntop(AF_INET, &sin->sin_addr, buf,
+						 INET6_ADDRSTRLEN);
+		if (port)
+			*port = sin->sin_port;
+	} else if (sa->sa_family == AF_INET6) {
+		sin6 = (const struct sockaddr_in6 *)sa;
+		bufp = inet_ntop(AF_INET6, &sin6->sin6_addr, buf,
+						 INET6_ADDRSTRLEN);
+		if (port)
+			*port = sin6->sin6_port;
+	}  else {
+		errx(1, "%s got invalid sockaddr family %d\n", __func__, sa->sa_family);
+	}
+	if (bufp == NULL) {
+		perror("failed to convert address for peer\n");
+		errx(1, "peer list failure");
+	}
+	return (bufp);
+}
+
 static void
 dump_peer(const nvlist_t *nvl_peer)
 {
 	const void *key;
 	const struct allowedip *aips;
 	const struct sockaddr *endpoint;
+	char outbuf[WG_MAX_STRLEN];
+	char addr_buf[INET6_ADDRSTRLEN];
+	const char *bufp;
 	size_t size;
+	int count, port;
 
+	printf("[Peer]\n");
 	key = nvlist_get_binary(nvl_peer, "public-key", &size);
+	encode_base64(outbuf, (const uint8_t *)key, size);
+	printf("PublicKey = %s\n", outbuf);
 	endpoint = nvlist_get_binary(nvl_peer, "endpoint", &size);
+	bufp = sa_ntop(endpoint, addr_buf, &port);
+	printf("Endpoint = %s:%d\n", bufp, port);
 	aips = nvlist_get_binary(nvl_peer, "allowed-ips", &size);
+	if (size == 0 || size % sizeof(struct allowedip) != 0) {
+		errx(1, "size %zu not integer multiple of allowedip", size);
+	}
+	printf("AllowedIPs = ");
+	count = size / sizeof(struct allowedip);
+	for (int i = 0; i < count; i++) {
+		bufp = sa_ntop(&aips[i].a_addr, addr_buf, NULL);
+		printf("%s/%d", bufp, aips[i].a_mask);
+		if (i < count -1)
+			printf(", ");
+	}
+	printf("\n");
 }
 
 static int
