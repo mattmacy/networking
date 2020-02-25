@@ -83,7 +83,7 @@ struct allowedip *allowed_ips;
 #define	WG_KEY_LEN_BASE64 ((((WG_KEY_LEN) + 2) / 3) * 4 + 1)
 #define	WG_KEY_LEN_HEX (WG_KEY_LEN * 2 + 1)
 
-static void encode_base64(u_int8_t *, u_int8_t *, u_int16_t);
+static void encode_base64(u_int8_t *, const u_int8_t *, u_int16_t);
 static bool decode_base64(u_int8_t *, u_int16_t, const u_int8_t *);
 
 const static u_int8_t Base64Code[] =
@@ -148,10 +148,10 @@ decode_base64(u_int8_t *buffer, u_int16_t len, const u_int8_t *data)
 }
 
 static void
-encode_base64(u_int8_t *buffer, u_int8_t *data, u_int16_t len)
+encode_base64(u_int8_t *buffer, const uint8_t *data, u_int16_t len)
 {
 	u_int8_t *bp = buffer;
-	u_int8_t *p = data;
+	const u_int8_t *p = data;
 	u_int8_t c1, c2;
 	while (p < data + len) {
 		c1 = *p++;
@@ -246,6 +246,39 @@ parse_ip(struct allowedip *aip, const char *value)
 	return (true);
 }
 
+static void
+dump_peer(const nvlist_t *nvl_peer)
+{
+	const void *key;
+	const struct allowedip *aips;
+	const struct sockaddr *endpoint;
+	size_t size;
+
+	key = nvlist_get_binary(nvl_peer, "public-key", &size);
+	endpoint = nvlist_get_binary(nvl_peer, "endpoint", &size);
+	aips = nvlist_get_binary(nvl_peer, "allowed-ips", &size);
+}
+
+static int
+get_nvl_out_size(int sock, u_long op, size_t *size)
+{
+	struct ifdrv ifd;
+	int err;
+
+	memset(&ifd, 0, sizeof(ifd));
+
+	strlcpy(ifd.ifd_name, name, sizeof(ifd.ifd_name));
+	ifd.ifd_cmd = op;
+	ifd.ifd_len = 0;
+	ifd.ifd_data = NULL;
+
+	err = ioctl(sock, SIOCGDRVSPEC, &ifd);
+	if (err)
+		return (err);
+	*size = ifd.ifd_len;
+	return (0);
+}
+
 static int
 do_cmd(int sock, u_long op, void *arg, size_t argsize, int set)
 {
@@ -259,6 +292,30 @@ do_cmd(int sock, u_long op, void *arg, size_t argsize, int set)
 	ifd.ifd_data = arg;
 
 	return (ioctl(sock, set ? SIOCSDRVSPEC : SIOCGDRVSPEC, &ifd));
+}
+
+static
+DECL_CMD_FUNC(peerlist, val, d)
+{
+	size_t size, peercount;
+	void *packed;
+	const nvlist_t *nvl, *nvl_peer;
+	const nvlist_t *const *nvl_peerlist;
+
+	if (get_nvl_out_size(s, WGC_PEER_LIST, &size))
+		errx(1, "can't get peer list size");
+	if ((packed = malloc(size)) == NULL)
+		errx(1, "malloc failed for peer list");
+	if (do_cmd(s, WGC_PEER_LIST, packed, size, 0))
+		errx(1, "failed to obtain peer list");
+
+	nvl = nvlist_unpack(packed, size, 0);
+	nvl_peerlist = nvlist_get_nvlist_array(nvl, "peer-list", &peercount);
+
+	for (int i = 0; i < peercount; i++, nvl_peerlist++) {
+		nvl_peer = *nvl_peerlist;
+		dump_peer(nvl_peer);
+	}
 }
 
 static void
@@ -382,32 +439,15 @@ is_match(void)
 	return (0);
 }
 
-static int
-get_nvl_out_size(int sock, u_long op, size_t *size)
-{
-	struct ifdrv ifd;
-	int err;
-
-	memset(&ifd, 0, sizeof(ifd));
-
-	strlcpy(ifd.ifd_name, name, sizeof(ifd.ifd_name));
-	ifd.ifd_cmd = op;
-	ifd.ifd_len = 0;
-	ifd.ifd_data = NULL;
-
-	err = ioctl(sock, SIOCGDRVSPEC, &ifd);
-	if (err)
-		return (err);
-	*size = ifd.ifd_len;
-	return (0);
-}
-
 static void
 wireguard_status(int s)
 {
 	size_t size;
 	void *packed;
 	nvlist_t *nvl;
+	char buf[WG_KEY_LEN_BASE64];
+	const void *key;
+	uint16_t listen_port;
 
 	if (is_match() < 0) {
 		/* If it's not a wg interface just return */
@@ -420,12 +460,22 @@ wireguard_status(int s)
 	if (do_cmd(s, WGC_LOCAL_SHOW, packed, size, 0))
 		return;
 	nvl = nvlist_unpack(packed, size, 0);
-	nvlist_dump(nvl, 1);
+	listen_port = nvlist_get_number(nvl, "listen-port");
+	printf("\tlisten-port: %d\n", listen_port);
+	if (nvlist_exists_binary(nvl, "private-key")) {
+		key = nvlist_get_binary(nvl, "private-key", &size);
+		encode_base64(buf, (const uint8_t *)key, size);
+		printf("\tprivate-key: %s\n", buf);
+	}
+	key = nvlist_get_binary(nvl, "public-key", &size);
+	encode_base64(buf, (const uint8_t *)key, size);
+	printf("\tpublic-key:  %s\n", buf);
 }
 
 static struct cmd wireguard_cmds[] = {
     DEF_CLONE_CMD_ARG("listen-port",  setwglistenport),
     DEF_CLONE_CMD_ARG("private-key",  setwgprivkey),
+    DEF_CMD("peer-list",  0, peerlist),
     DEF_CMD("peer",  0, peerstart),
     DEF_CMD_ARG("public-key",  setwgpubkey),
     DEF_CMD_ARG("allowed-ips",  setallowedips),
