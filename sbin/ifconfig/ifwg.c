@@ -459,7 +459,7 @@ DECL_CMD_FUNC(setallowedips, val, d)
 		errx(1, "mask separator not found in allowedip %s", val);
 	*mask = '\0';
 	mask++;
-
+	parse_ip(aip, allowedip);
 	ul = strtoul(mask, &endp, 0);
 	if (*endp != '\0')
 		errx(1, "invalid value for allowedip mask");
