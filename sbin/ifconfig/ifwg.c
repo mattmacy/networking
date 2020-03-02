@@ -325,15 +325,17 @@ in6_mask2len(struct in6_addr *mask, u_char *lim0)
 static bool
 parse_ip(struct allowedip *aip, const char *value)
 {
-	aip->a_addr.sa_family = AF_UNSPEC;
+	struct sockaddr *sa = __DECONST(void *, &aip->a_addr);
+
 	bzero(&aip->a_addr, sizeof(aip->a_addr));
+	aip->a_addr.sa_family = AF_UNSPEC;
 
 	if (strchr(value, ':')) {
-		if (inet_pton(AF_INET6, value, &aip->a_addr) == 1)
+		if (inet_pton(AF_INET6, value, sa->sa_data) == 1)
 			aip->a_addr.sa_family = AF_INET6;
 		aip->a_addr.sa_len = sizeof(struct sockaddr_in6);
 	} else {
-		if (inet_pton(AF_INET, value, &aip->a_addr) == 1)
+		if (inet_pton(AF_INET, value, sa->sa_data) == 1)
 			aip->a_addr.sa_family = AF_INET;
 		aip->a_addr.sa_len = sizeof(struct sockaddr_in);
 	}
@@ -384,12 +386,19 @@ dump_peer(const nvlist_t *nvl_peer)
 	int count, port;
 
 	printf("[Peer]\n");
-	key = nvlist_get_binary(nvl_peer, "public-key", &size);
-	encode_base64(outbuf, (const uint8_t *)key, size);
-	printf("PublicKey = %s\n", outbuf);
-	endpoint = nvlist_get_binary(nvl_peer, "endpoint", &size);
-	bufp = sa_ntop(endpoint, addr_buf, &port);
-	printf("Endpoint = %s:%d\n", bufp, port);
+	if (nvlist_exists_binary(nvl_peer, "public-key")) {
+		key = nvlist_get_binary(nvl_peer, "public-key", &size);
+		encode_base64(outbuf, (const uint8_t *)key, size);
+		printf("PublicKey = %s\n", outbuf);
+	}
+	if (nvlist_exists_binary(nvl_peer, "endpoint")) {
+		endpoint = nvlist_get_binary(nvl_peer, "endpoint", &size);
+		bufp = sa_ntop(endpoint, addr_buf, &port);
+		printf("Endpoint = %s:%d\n", bufp, ntohs(port));
+	}
+
+	if (!nvlist_exists_binary(nvl_peer, "allowed-ips"))
+		return;
 	aips = nvlist_get_binary(nvl_peer, "allowed-ips", &size);
 	if (size == 0 || size % sizeof(struct allowedip) != 0) {
 		errx(1, "size %zu not integer multiple of allowedip", size);
@@ -399,19 +408,20 @@ dump_peer(const nvlist_t *nvl_peer)
 	for (int i = 0; i < count; i++) {
 		int mask;
 		sa_family_t family;
-		void *addr;
+		void *bitmask;
+		struct sockaddr *sa;
 
-		bufp = sa_ntop(&aips[i].a_addr, addr_buf, NULL);
+		sa = __DECONST(void *, &aips->a_addr);
+		bitmask = __DECONST(void *, &aips->a_mask);
 		family = aips[i].a_addr.sa_family;
-		addr = __DECONST(void *, aips->a_addr.sa_data);
-
+		inet_ntop(family, sa->sa_data, addr_buf, INET6_ADDRSTRLEN);
 		if (family == AF_INET)
-			mask = in_mask2len(addr);
+			mask = in_mask2len(bitmask);
 		else if (family == AF_INET6)
-			mask = in6_mask2len(addr, NULL);
+			mask = in6_mask2len(bitmask, NULL);
 		else
 			errx(1, "bad family in peer %d\n", family);
-		printf("%s/%d", bufp, mask);
+		printf("%s/%d", addr_buf, mask);
 		if (i < count -1)
 			printf(", ");
 	}
@@ -580,6 +590,8 @@ DECL_CMD_FUNC(setallowedips, val, d)
 		nvlist_free_binary(nvl_params, "allowed-ips");
 	nvlist_add_binary(nvl_params, "allowed-ips", allowed_ips,
 					  allowed_ips_count*sizeof(*aip));
+
+	dump_peer(nvl_params);
 	free(base);
 }
 
