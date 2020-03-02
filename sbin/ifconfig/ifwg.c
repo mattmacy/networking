@@ -74,7 +74,7 @@ static int allowed_ips_count;
 static int allowed_ips_max;
 struct allowedip {
 	struct sockaddr a_addr;
-	int a_mask;
+	struct sockaddr_storage a_mask;
 };
 struct allowedip *allowed_ips;
 
@@ -229,21 +229,113 @@ parse_endpoint(const char *endpoint_)
 	free(base);
 }
 
+static void
+in_len2mask(struct in_addr *mask, u_int len)
+{
+	u_int i;
+	u_char *p;
+
+	p = (u_char *)mask;
+	memset(mask, 0, sizeof(*mask));
+	for (i = 0; i < len / NBBY; i++)
+		p[i] = 0xff;
+	if (len % NBBY)
+		p[i] = (0xff00 >> (len % NBBY)) & 0xff;
+}
+
+static u_int
+in_mask2len(struct in_addr *mask)
+{
+	u_int x, y;
+	u_char *p;
+
+	p = (u_char *)mask;
+	for (x = 0; x < sizeof(*mask); x++) {
+		if (p[x] != 0xff)
+			break;
+	}
+	y = 0;
+	if (x < sizeof(*mask)) {
+		for (y = 0; y < NBBY; y++) {
+			if ((p[x] & (0x80 >> y)) == 0)
+				break;
+		}
+	}
+	return x * NBBY + y;
+}
+
+static void
+in6_prefixlen2mask(struct in6_addr *maskp, int len)
+{
+	static const u_char maskarray[NBBY] = {0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff};
+	int bytelen, bitlen, i;
+
+	/* sanity check */
+	if (len < 0 || len > 128) {
+		errx(1, "in6_prefixlen2mask: invalid prefix length(%d)\n",
+		    len);
+		return;
+	}
+
+	memset(maskp, 0, sizeof(*maskp));
+	bytelen = len / NBBY;
+	bitlen = len % NBBY;
+	for (i = 0; i < bytelen; i++)
+		maskp->s6_addr[i] = 0xff;
+	if (bitlen)
+		maskp->s6_addr[bytelen] = maskarray[bitlen - 1];
+}
+
+static int
+in6_mask2len(struct in6_addr *mask, u_char *lim0)
+{
+	int x = 0, y;
+	u_char *lim = lim0, *p;
+
+	/* ignore the scope_id part */
+	if (lim0 == NULL || lim0 - (u_char *)mask > sizeof(*mask))
+		lim = (u_char *)mask + sizeof(*mask);
+	for (p = (u_char *)mask; p < lim; x++, p++) {
+		if (*p != 0xff)
+			break;
+	}
+	y = 0;
+	if (p < lim) {
+		for (y = 0; y < NBBY; y++) {
+			if ((*p & (0x80 >> y)) == 0)
+				break;
+		}
+	}
+
+	/*
+	 * when the limit pointer is given, do a stricter check on the
+	 * remaining bits.
+	 */
+	if (p < lim) {
+		if (y != 0 && (*p & (0x00ff >> y)) != 0)
+			return -1;
+		for (p = p + 1; p < lim; p++)
+			if (*p != 0)
+				return -1;
+	}
+
+	return x * NBBY + y;
+}
+
 static bool
 parse_ip(struct allowedip *aip, const char *value)
 {
 	aip->a_addr.sa_family = AF_UNSPEC;
-	struct in_addr *in4;
-	struct in6_addr *in6;
+	bzero(&aip->a_addr, sizeof(aip->a_addr));
 
 	if (strchr(value, ':')) {
-		in6 = &((struct sockaddr_in6 *)(&aip->a_addr))->sin6_addr;
-		if (inet_pton(AF_INET6, value, in6) == 1)
+		if (inet_pton(AF_INET6, value, &aip->a_addr) == 1)
 			aip->a_addr.sa_family = AF_INET6;
+		aip->a_addr.sa_len = sizeof(struct sockaddr_in6);
 	} else {
-		in4 = &((struct sockaddr_in *)(&aip->a_addr))->sin_addr;
-		if (inet_pton(AF_INET, value, in4) == 1)
+		if (inet_pton(AF_INET, value, &aip->a_addr) == 1)
 			aip->a_addr.sa_family = AF_INET;
+		aip->a_addr.sa_len = sizeof(struct sockaddr_in);
 	}
 	if (aip->a_addr.sa_family == AF_UNSPEC)
 		return (false);
@@ -305,8 +397,21 @@ dump_peer(const nvlist_t *nvl_peer)
 	printf("AllowedIPs = ");
 	count = size / sizeof(struct allowedip);
 	for (int i = 0; i < count; i++) {
+		int mask;
+		sa_family_t family;
+		void *addr;
+
 		bufp = sa_ntop(&aips[i].a_addr, addr_buf, NULL);
-		printf("%s/%d", bufp, aips[i].a_mask);
+		family = aips[i].a_addr.sa_family;
+		addr = __DECONST(void *, aips->a_addr.sa_data);
+
+		if (family == AF_INET)
+			mask = in_mask2len(addr);
+		else if (family == AF_INET6)
+			mask = in6_mask2len(addr, NULL);
+		else
+			errx(1, "bad family in peer %d\n", family);
+		printf("%s/%d", bufp, mask);
 		if (i < count -1)
 			printf(", ");
 	}
@@ -463,8 +568,13 @@ DECL_CMD_FUNC(setallowedips, val, d)
 	ul = strtoul(mask, &endp, 0);
 	if (*endp != '\0')
 		errx(1, "invalid value for allowedip mask");
-	/* XXX check if mask valid for v4 vs v6 */
-	aip->a_mask = ul;
+	bzero(&aip->a_mask, sizeof(aip->a_mask));
+	if (aip->a_addr.sa_family == AF_INET)
+		in_len2mask((struct in_addr *)&aip->a_mask, ul);
+	else if (aip->a_addr.sa_family == AF_INET6)
+		in6_prefixlen2mask((struct in6_addr *)&aip->a_mask, ul);
+	else
+		errx(1, "invalid address family %d\n", aip->a_addr.sa_family);
 	allowed_ips_count++;
 	if (allowed_ips_count > 1)
 		nvlist_free_binary(nvl_params, "allowed-ips");
