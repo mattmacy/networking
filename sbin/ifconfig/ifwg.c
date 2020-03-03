@@ -412,7 +412,7 @@ dump_peer(const nvlist_t *nvl_peer)
 		struct sockaddr *sa;
 
 		sa = __DECONST(void *, &aips->a_addr);
-		bitmask = __DECONST(void *, &aips->a_mask);
+		bitmask = __DECONST(void *, &aips->a_mask.sa_data);
 		family = aips[i].a_addr.sa_family;
 		inet_ntop(family, sa->sa_data, addr_buf, INET6_ADDRSTRLEN);
 		if (family == AF_INET)
