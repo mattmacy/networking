@@ -74,7 +74,7 @@ static int allowed_ips_count;
 static int allowed_ips_max;
 struct allowedip {
 	struct sockaddr a_addr;
-	struct sockaddr_storage a_mask;
+	struct sockaddr a_mask;
 };
 struct allowedip *allowed_ips;
 
@@ -580,9 +580,9 @@ DECL_CMD_FUNC(setallowedips, val, d)
 		errx(1, "invalid value for allowedip mask");
 	bzero(&aip->a_mask, sizeof(aip->a_mask));
 	if (aip->a_addr.sa_family == AF_INET)
-		in_len2mask((struct in_addr *)&aip->a_mask, ul);
+		in_len2mask((struct in_addr *)&aip->a_mask.sa_data, ul);
 	else if (aip->a_addr.sa_family == AF_INET6)
-		in6_prefixlen2mask((struct in6_addr *)&aip->a_mask, ul);
+		in6_prefixlen2mask((struct in6_addr *)&aip->a_mask.sa_data, ul);
 	else
 		errx(1, "invalid address family %d\n", aip->a_addr.sa_family);
 	allowed_ips_count++;
