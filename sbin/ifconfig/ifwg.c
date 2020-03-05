@@ -331,11 +331,13 @@ parse_ip(struct allowedip *aip, const char *value)
 	aip->a_addr.sa_family = AF_UNSPEC;
 
 	if (strchr(value, ':')) {
-		if (inet_pton(AF_INET6, value, sa->sa_data) == 1)
+		struct sockaddr_in6 *sin6 = (void *)sa;
+		if (inet_pton(AF_INET6, value, &sin6->sin6_addr) == 1)
 			aip->a_addr.sa_family = AF_INET6;
 		aip->a_addr.sa_len = sizeof(struct sockaddr_in6);
 	} else {
-		if (inet_pton(AF_INET, value, sa->sa_data) == 1)
+		struct sockaddr_in *sin = (void *)sa;
+		if (inet_pton(AF_INET, value, &sin->sin_addr) == 1)
 			aip->a_addr.sa_family = AF_INET;
 		aip->a_addr.sa_len = sizeof(struct sockaddr_in);
 	}
