@@ -50,7 +50,7 @@ struct uma_zone;
 /* Opaque type used as a handle to the zone */
 typedef struct uma_zone * uma_zone_t;
 
-void zone_drain(uma_zone_t);
+void zone_drain(uma_zone_t, void *);
 
 /*
  * Item constructor

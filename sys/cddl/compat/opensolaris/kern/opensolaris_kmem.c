@@ -238,7 +238,7 @@ void
 kmem_cache_reap_soon(kmem_cache_t *cache)
 {
 #ifndef KMEM_DEBUG
-	zone_drain(cache->kc_zone);
+	zone_drain(cache->kc_zone, NULL);
 #endif
 }
 

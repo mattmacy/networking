@@ -196,6 +196,9 @@ struct uma_bucket {
 
 typedef struct uma_bucket * uma_bucket_t;
 
+typedef struct uma_cache_bucket * uma_cache_bucket_t;
+
+
 struct uma_cache {
 	uma_bucket_t	uc_freebucket;	/* Bucket we're freeing to */
 	uma_bucket_t	uc_allocbucket;	/* Bucket to allocate from */
@@ -212,7 +215,10 @@ struct uma_domain {
 	LIST_HEAD(,uma_slab)	ud_part_slab;	/* partially allocated slabs */
 	LIST_HEAD(,uma_slab)	ud_free_slab;	/* empty slab list */
 	LIST_HEAD(,uma_slab)	ud_full_slab;	/* full slabs */
-};
+	uint32_t	ud_pages;	/* Total page count */
+	uint32_t	ud_free_items;	/* Count of items free in all slabs */
+	uint32_t	ud_free_slabs;	/* Count of free slabs */
+} __aligned(CACHE_LINE_SIZE);
 
 typedef struct uma_domain * uma_domain_t;
 
@@ -357,9 +363,21 @@ struct uma_zone {
 	/* 16 bytes of pad. */
 
 	/* Offset 256, atomic stats. */
-	volatile u_long	uz_allocs UMA_ALIGN; /* Total number of allocations */
-	volatile u_long	uz_fails;	/* Total number of alloc failures */
-	volatile u_long	uz_frees;	/* Total number of frees */
+	char		*uz_ctlname;	/* sysctl safe name string. */
+	int		uz_namecnt;	/* duplicate name count. */
+
+	uint64_t	uz_bucket_max;	/* Maximum bucket cache size */
+	uint16_t	uz_bucket_size;	/* Number of items in full bucket */
+	uint16_t	uz_bucket_size_max; /* Maximum number of bucket items */
+
+	uma_keg_t	uz_keg;		/* This zone's keg if !CACHE */
+	struct sysctl_oid *uz_oid;	/* sysctl oid pointer. */
+
+	counter_u64_t	uz_allocs;	/* Total number of allocations */
+	counter_u64_t	uz_frees;	/* Total number of frees */
+	counter_u64_t	uz_fails;	/* Total number of alloc failures */
+
+	volatile uint64_t uz_items;	/* Total items count & sleepers */
 	uint64_t	uz_sleeps;	/* Total number of alloc sleeps */
 
 	/*
@@ -370,6 +388,18 @@ struct uma_zone {
 
 	/* uz_domain follows here. */
 };
+
+/*
+ * Macros for interpreting the uz_items field.  20 bits of sleeper count
+ * and 44 bit of item count.
+ */
+#define	UZ_ITEMS_SLEEPER_SHIFT	44LL
+#define	UZ_ITEMS_SLEEPERS_MAX	((1 << (64 - UZ_ITEMS_SLEEPER_SHIFT)) - 1)
+#define	UZ_ITEMS_COUNT_MASK	((1LL << UZ_ITEMS_SLEEPER_SHIFT) - 1)
+#define	UZ_ITEMS_COUNT(x)	((x) & UZ_ITEMS_COUNT_MASK)
+#define	UZ_ITEMS_SLEEPERS(x)	((x) >> UZ_ITEMS_SLEEPER_SHIFT)
+#define	UZ_ITEMS_SLEEPER	(1LL << UZ_ITEMS_SLEEPER_SHIFT)
+
 
 /*
  * These flags must not overlap with the UMA_ZONE flags specified in uma.h.
@@ -383,6 +413,31 @@ struct uma_zone {
 
 #define	UMA_ZFLAG_INHERIT						\
     (UMA_ZFLAG_INTERNAL | UMA_ZFLAG_CACHEONLY | UMA_ZFLAG_BUCKET)
+
+
+#define	PRINT_UMA_ZFLAGS	"\20"	\
+    "\40CACHEONLY"			\
+    "\37FULL"				\
+    "\36INTERNAL"			\
+    "\35BUCKET"				\
+    "\34DRAINING"			\
+    "\33MULTI"			\
+    "\22NOBUCKETCACHE"				\
+    "\21NUMA"				\
+    "\20PCPU"			\
+    "\17NODUMP"			\
+    "\16VTOSLAB"			\
+    "\15CACHESPREAD"			\
+    "\14MAXBUCKET"			\
+    "\13NOBUCKET"			\
+    "\12SECONDARY"			\
+    "\11HASH"				\
+    "\7MTXCLASS"			\
+    "\6NOFREE"				\
+    "\5MALLOC"				\
+    "\4OFFPAGE"				\
+    "\3STATIC"				\
+    "\2ZINIT"
 
 static inline uma_keg_t
 zone_first_keg(uma_zone_t zone)
