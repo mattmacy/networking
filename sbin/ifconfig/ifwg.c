@@ -24,7 +24,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
+#ifndef RESCUE
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -700,3 +700,5 @@ wireguard_ctor(void)
 	af_register(&af_wireguard);
 	clone_setdefcallback("wg", wg_create);
 }
+
+#endif
