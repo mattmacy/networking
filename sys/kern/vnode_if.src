@@ -792,6 +792,14 @@ vop_copy_file_range {
 };
 
 
+%% ubop	vp	U U U
+
+vop_ubop {
+	IN struct vnode *vp;
+	INOUT struct uio_bio *uio;
+	IN int ioflag;
+};
+
 # The VOPs below are spares at the end of the table to allow new VOPs to be
 # added in stable branches without breaking the KBI.  New VOPs in HEAD should
 # be added above these spares.  When merging a new VOP to a stable branch,
