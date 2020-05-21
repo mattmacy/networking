@@ -101,6 +101,10 @@ static uint64_t jobseqno;
 #define MAX_BUF_AIO		16
 #endif
 
+#ifndef	MAX_VFS_XFER
+#define	MAX_VFS_XFER	(32 * 1024 * 1024) /* 32MB - DMU_MAX_ACCESS/2 */
+#endif
+
 FEATURE(aio, "Asynchronous I/O");
 SYSCTL_DECL(_p1003_1b);
 
@@ -319,9 +323,11 @@ int		aio_aqueue(struct thread *td, struct aiocb *ujob,
 		    struct aioliojob *lio, int type, struct aiocb_ops *ops);
 static int	aio_queue_file(struct file *fp, struct kaiocb *job);
 static void	aio_biowakeup(struct bio *bp);
+static void	aio_ubiowakeup(struct uio_bio *ubio);
 static void	aio_proc_rundown(void *arg, struct proc *p);
 static void	aio_proc_rundown_exec(void *arg, struct proc *p,
 		    struct image_params *imgp);
+static int	aio_queue_vfs(struct kaiocb *job);
 static int	aio_qbio(struct proc *p, struct kaiocb *job);
 static void	aio_daemon(void *param);
 static void	aio_bio_done_notify(struct proc *userp, struct kaiocb *job);
@@ -1289,8 +1295,9 @@ aio_qbio(struct proc *p, struct kaiocb *job)
 	bp->bio_caller1 = (void *)job;
 
 	prot = VM_PROT_READ;
+	/* Reading from disk means writing to memory */
 	if (cb->aio_lio_opcode == LIO_READ)
-		prot |= VM_PROT_WRITE;	/* Less backwards than it looks */
+		prot |= VM_PROT_WRITE;
 	job->npages = vm_fault_quick_hold_pages(&curproc->p_vmspace->vm_map,
 	    (vm_offset_t)cb->aio_buf, bp->bio_length, prot, job->pages,
 	    atop(maxphys) + 1);
@@ -1331,6 +1338,115 @@ doerror:
 	job->bp = NULL;
 unref:
 	dev_relthread(dev, ref);
+	return (error);
+}
+
+/*
+ * aio_queue_vfs works similarly to aio_qbio. It checks
+ * that it supports the aio operation in question and
+ * then if the vnode's file system support asynchronous
+ * requests. It then sets up the request by holding the 
+ * user's pages with the appropriate permissions. If that
+ * succeeds it call VOP_UBOP. The uio_bio callback
+ * aio_ubiowakeup will be called when the operation completes.
+ */
+static int
+aio_queue_vfs(struct kaiocb *job)
+{
+	struct aiocb *cb;
+	struct file *fp;
+	struct vnode *vp;
+	struct uio_bio *ubio, ubio_local;
+	vm_prot_t prot;
+	uint32_t io_pages, bio_size, map_bytes;
+	int error, cmd;
+	vm_offset_t page_offset;
+	vm_page_t *ma;
+	struct bio_vec *bv;
+
+	cb = &job->uaiocb;
+	fp = job->fd_file;
+
+	if (!(cb->aio_lio_opcode == LIO_WRITE ||
+	    cb->aio_lio_opcode == LIO_READ))
+		return (-1);
+	if (fp == NULL || fp->f_type != DTYPE_VNODE)
+		return (-1);
+
+	vp = fp->f_vnode;
+
+	/*
+	 * Zero length read should always succeed
+	 * if supported.
+	 */
+	bzero(&ubio_local, sizeof(ubio_local));
+	ubio_local.uio_cmd = UIO_BIO_READ;
+	if (VOP_UBOP(vp, &ubio_local, FOF_OFFSET) == EOPNOTSUPP)
+		return (-1);
+	/*
+	 * Don't punt here - XXX
+	 */
+	if (cb->aio_nbytes > MAX_VFS_XFER)
+		return (-1);
+
+	page_offset = ((vm_offset_t)cb->aio_buf) & PAGE_MASK;
+	cmd = cb->aio_lio_opcode == LIO_WRITE ? UIO_BIO_WRITE : UIO_BIO_READ;
+	map_bytes = btoc(cb->aio_nbytes + page_offset)*PAGE_SIZE;
+	io_pages = btoc(map_bytes);
+	if (io_pages <= (MAXPHYS >> PAGE_SHIFT))
+		ma = job->pages;
+	else
+		ma = malloc(sizeof(vm_page_t )*io_pages, M_AIOS, M_WAITOK);
+
+	bio_size = sizeof(*ubio) + sizeof(*bv)*io_pages;
+	ubio = malloc(bio_size, M_AIOS, M_WAITOK);
+	bv = ubio->uio_bvec = (struct bio_vec*)(ubio + 1);
+	ubio->uio_cmd = cmd;
+	ubio->uio_error = 0;
+	ubio->uio_flags = 0;
+	ubio->uio_bv_offset = 0;
+	ubio->uio_offset = cb->aio_offset;
+	ubio->uio_resid = cb->aio_nbytes;
+	ubio->uio_cred = crhold(curthread->td_ucred);
+	ubio->uio_bio_done = aio_ubiowakeup;
+	ubio->uio_arg = job;
+
+	prot = VM_PROT_READ;
+	/* Reading from disk means writing to memory */
+	if (cb->aio_lio_opcode == LIO_READ)
+		prot |= VM_PROT_WRITE;
+	ubio->uio_bv_cnt = vm_fault_quick_hold_pages(&curproc->p_vmspace->vm_map,
+	    (vm_offset_t)cb->aio_buf, cb->aio_nbytes, prot, ma, io_pages);
+
+	if (ubio->uio_bv_cnt != io_pages) {
+		vm_page_unhold_pages(ma, ubio->uio_bv_cnt);
+		/*
+		 * Punt to synchronous path 
+		 */
+		error = -1;
+		goto err;
+	}
+	if (ubio->uio_bv_cnt < 0) {
+		error = EFAULT;
+		goto err;
+	}
+	for (int i = 0; i < ubio->uio_bv_cnt; i++, bv++) {
+		bv->bv_offset = page_offset;
+		bv->bv_len = PAGE_SIZE - page_offset;
+		bv->bv_page = ma[i];
+		page_offset = 0;
+	}
+	if (ma != job->pages) {
+		free(ma, M_AIOS);
+		ma = NULL;
+	}
+	error = VOP_UBOP(vp, ubio, FOF_OFFSET);
+	if (error == EINPROGRESS || error == 0)
+		return (0);
+err:
+	if (ma != job->pages)
+		free(ma, M_AIOS);
+	free(ubio, M_AIOS);
 	return (error);
 }
 
@@ -1702,6 +1818,9 @@ aio_queue_file(struct file *fp, struct kaiocb *job)
 	int error;
 	bool safe;
 
+	error = aio_queue_vfs(job);
+	if (error >= 0)
+		return (error);
 	ki = job->userproc->p_aioinfo;
 	error = aio_qbio(job->userproc, job);
 	if (error >= 0)
@@ -2334,6 +2453,37 @@ sys_lio_listio(struct thread *td, struct lio_listio_args *uap)
 		    nent, sigp, &aiocb_ops);
 	free(acb_list, M_LIO);
 	return (error);
+}
+
+/*
+ * aio_ubiowakeup is the uio_bio completion callback for
+ * aio_queue_vfs. It just drops the hold on the pages
+ * from aio_queue_vfs and marks the aio as completed.
+ */
+static void
+aio_ubiowakeup(struct uio_bio *ubio)
+{
+	struct kaiocb *job = (struct kaiocb *)ubio->uio_arg;
+	struct bio_vec *bv;
+	size_t nbytes;
+	int error, cnt;
+
+	bv = ubio->uio_bvec;
+	cnt = ubio->uio_bv_cnt;
+	for (; cnt != 0; cnt--, bv++)
+		vm_page_unwire(bv->bv_page, PQ_ACTIVE);
+
+	nbytes = job->uaiocb.aio_nbytes - ubio->uio_resid;
+	error = 0;
+	if (ubio->uio_flags & UIO_BIO_ERROR)
+		error = ubio->uio_error;
+
+	if (error)
+		aio_complete(job, -1, error);
+	else
+		aio_complete(job, nbytes, 0);
+	crfree(ubio->uio_cred);
+	free(ubio, M_AIOS);
 }
 
 static void

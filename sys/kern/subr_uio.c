@@ -54,6 +54,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
 #include <sys/sched.h>
+#include <sys/sf_buf.h>
 #include <sys/sysctl.h>
 #include <sys/vnode.h>
 
@@ -63,6 +64,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_page.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_map.h>
+#include <vm/vm_object.h>
 
 #include <machine/bus.h>
 
@@ -277,6 +279,73 @@ out:
 	if (save)
 		curthread_pflags_restore(save);
 	return (error);
+}
+
+int
+uiobiomove(void *cp, int n, struct uio_bio *uio)
+{
+	int bv_idx, bv_idx_start __unused;
+	off_t boff, off, off_start __unused, bv_start __unused;
+	struct bio_vec *bv;
+	struct sf_buf *sf;
+	caddr_t va;
+
+	off = uio->uio_bv_offset;
+	bv = uio->uio_bvec;
+	boff = off & PAGE_MASK;
+	bv_idx = OFF_TO_IDX(off);
+	bv += bv_idx;
+	MPASS(boff < bv->bv_len);
+#ifdef INVARIANTS
+	off_start = uio->uio_offset;
+	bv_start = off;
+	bv_idx_start = bv_idx;
+#endif
+	while (n > 0 && uio->uio_resid > 0) {
+		int bytes = imin(bv->bv_len - boff, n);
+
+		MPASS(boff + bytes <= bv->bv_len);
+		MPASS(bytes <= PAGE_SIZE - bv->bv_offset);
+		MPASS(bytes > 0);
+
+		if ((uio->uio_flags & UIO_BIO_SPARSE) == 0 ||
+		    bv->bv_page != NULL) {
+			sf = sf_buf_alloc(bv->bv_page, 0);
+			va = ((caddr_t)sf_buf_kva(sf)) + boff + bv->bv_offset;
+
+			switch(uio->uio_cmd) {
+				case UIO_BIO_READ:
+					memcpy(va, cp, bytes);
+					break;
+				case UIO_BIO_WRITE:
+					memcpy(cp, va, bytes);
+					break;
+				default:
+					panic("invalid command to uiobiomove: %d", uio->uio_cmd);
+			}
+			sf_buf_free(sf);
+		}
+		boff += bytes;
+		uio->uio_bv_offset += bytes;
+		if (boff == bv->bv_len) {
+			uio->uio_bv_offset += (PAGE_SIZE - bv->bv_len);
+			MPASS((uio->uio_bv_offset & PAGE_MASK) == 0);
+			boff = 0;
+			bv++;
+			bv_idx++;
+		}
+		uio->uio_resid -= bytes;
+		uio->uio_offset += bytes;
+		cp = (caddr_t)cp + bytes;
+		n -= bytes;
+	}
+#ifdef INVARIANTS
+	MPASS(uio->uio_offset - off_start ==
+		  uio->uio_bv_offset - bv_start - uio->uio_bvec[bv_idx_start].bv_offset);
+	MPASS(OFF_TO_IDX(uio->uio_bv_offset) == bv_idx);
+	MPASS((uio->uio_bv_offset & PAGE_MASK) == boff);
+#endif
+	return (0);
 }
 
 /*
