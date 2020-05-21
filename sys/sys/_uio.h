@@ -41,6 +41,12 @@ enum uio_rw {
 	UIO_WRITE
 };
 
+enum uio_bio_cmd {
+	UIO_BIO_READ,
+	UIO_BIO_WRITE,
+	UIO_BIO_SYNC
+};
+
 /* Segment flag values. */
 enum uio_seg {
 	UIO_USERSPACE,		/* from user data space */

@@ -1,0 +1,255 @@
+.\"
+.\" Copyright (c) 2020 Matthew Macy
+.\"
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE DEVELOPERS ``AS IS'' AND ANY EXPRESS OR
+.\" IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+.\" OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+.\" IN NO EVENT SHALL THE DEVELOPERS BE LIABLE FOR ANY DIRECT, INDIRECT,
+.\" INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+.\" NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+.\" DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+.\" THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+.\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+.\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+.\"
+.\" $FreeBSD$
+.\"
+.Dd March 11, 2020
+.Dt UIO 9
+.Os
+.Sh NAME
+.Nm uio_bio ,
+.Nm uiobiomove ,
+.Nd asynchronous file system I/O routines
+.Sh SYNOPSIS
+.In sys/types.h
+.In sys/uio.h
+.Bd -literal
+struct bio_vec {
+	vm_page_t	bv_page;
+	uint32_t	bv_len;
+	uint32_t	bv_offset;
+};
+
+struct uio_bio {
+	uint8_t		uio_cmd;		/* operation */
+	uint8_t		uio_error;		/* Errno for UIO_ERROR. */
+	uint16_t	uio_flags;		/* General flags */
+	uint16_t	uio_bv_cnt;		/* length of scatter/gather list */
+	uint32_t	uio_bv_offset;		/* offset in to page list */
+	off_t		uio_offset;		/* offset in target object */
+	ssize_t		uio_resid;		/* remaining bytes to process */
+	struct ucred	*uio_cred;		/* owner credentials */
+	struct	bio_vec *uio_bvec;		/* caller buffer's pages */
+	void	(*uio_bio_done)(struct uio_bio *);
+	void	*uio_arg;
+};
+.Ed
+.Ft int
+.Fn uiomove "void *buf" "int howmuch" "struct uio_bio *uiop"
+.Sh DESCRIPTION
+The function
+.Fn uiobiomove ,
+is used to transfer data between buffers and pages that might
+possibly cross the user/kernel space boundary.
+.Pp
+As a result of any
+.Xr aio_read 2 ,
+.Xr aio_write 2 ,
+or
+.Xr lio_listio 2
+system call that is being passed to a supporting file system, 
+.Va VOP_UBOP
+will be called with a pointer to a
+.Vt "struct uio_bio"
+being passed.
+The transfer request is encoded in this structure.
+The driver itself should use
+.Fn uiobiomove
+to get at the data in this structure.
+.Pp
+The fields in the
+.Vt uio
+structure are:
+.Bl -tag -width ".Va uio_ma_offset"
+.It Va uio_cmd
+The operation to be performed:
+.Bl -tag -width ".Dv UIO_BIO_WRITE"
+.It Dv UIO_BIO_READ
+Read from a file.
+.It Dv UIO_BIO_WRITE
+Write to a file.
+.It Dv UIO_BIO_SYNC
+Sync a file to backing storage.
+.El
+.It Va uio_error
+The error code if the operation was not successful.
+.It Va uio_bv_cnt
+The number of entries in the passed bio_vec array.
+.It Va uio_flags
+.Bl -tag -width ".Dv UIO_BIO_SPARSE"
+.It Dv UIO_BIO_ERROR
+The uio_error field is valid.
+.It Dv UIO_BIO_SPARSE
+The page array is not completely populated.
+.El
+.It Va uio_bv_offset
+The starting byte offset in to the bio_vec array.
+.It Va uio_offset
+The offset into the file.
+.It Va uio_resid
+The remaining number of bytes to process,
+updated after transfer.
+.It Va uio_cred
+The pointer to a
+.Vt "struct ucred"
+for the associated thread.
+.It Va uio_bio_done
+The I/O completion routine.
+.It Va uio_arg
+The argument to pass to the I/O completion routine.
+.It Va uio_bvec
+A pointer to the caller's bio_vec array.
+.El
+.Pp
+.Sh RETURN VALUES
+On success
+.Fn uiobiomove ,
+will return 0; on error it will return an appropriate error code.
+.Sh EXAMPLES
+The idea is that the file system maintains private buffers for its data,
+and processes the request in chunks of maximal the size of these
+buffers.
+.Bd -literal
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <sys/dmu.h>
+#include <sys/dbuf.h>
+
+static uint64_t
+dmu_physmove(dmu_buf_set_t *dbs, dmu_buf_t *db, uint64_t off, uint64_t sz)
+{
+	struct uio_bio *uio = (struct uio_bio *)dbs->dbs_dc->dc_data_buf;
+	uint64_t adv = uio->uio_resid;
+	int err;
+
+	err = uiobiomove((char *)db->db_data + off, sz, uio);
+	if (err)
+		dbs->dbs_err = err;
+	adv -= uio->uio_resid;
+
+	return (adv);
+}
+
+static int
+aio_queue_vfs(struct kaiocb *job)
+{
+	struct aiocb *cb;
+	struct file *fp;
+	struct vnode *vp;
+	struct uio_bio *ubio, ubio_local;
+	vm_prot_t prot;
+	uint32_t io_size, bio_size;
+	int error, cmd;
+	vm_offset_t page_offset;
+
+	cb = &job->uaiocb;
+	fp = job->fd_file;
+	...
+	vp = fp->f_vnode;
+
+	/*
+	 * Zero length read should always succeed
+	 * if supported.
+	 */
+	bzero(&ubio_local, sizeof(ubio_local));
+	ubio_local.uio_cmd = UIO_BIO_READ;
+	if (VOP_UBOP(vp, &ubio_local, FOF_OFFSET, curthread->td_ucred) == EOPNOTSUPP)
+		return (-1);
+	...
+	page_offset = ((vm_offset_t)cb->aio_buf) & PAGE_MASK;
+	cmd = cb->aio_lio_opcode == LIO_WRITE ? UIO_BIO_WRITE : UIO_BIO_READ;
+	map_bytes = btoc(cb->aio_nbytes + page_offset)*PAGE_SIZE;
+	io_pages = btoc(map_bytes);
+	if (io_pages <= (MAXPHYS >> PAGE_SHIFT))
+		ma = job->pages;
+	else
+		ma = malloc(sizeof(vm_page_t )*io_pages, M_AIOS, M_WAITOK);
+
+	bio_size = sizeof(*ubio) + sizeof(*bv)*io_pages;
+	ubio = malloc(bio_size, M_AIOS, M_WAITOK);
+	bv = ubio->uio_bvec = (struct bio_vec*)(ubio + 1);
+	ubio->uio_cmd = cmd;
+	ubio->uio_error = 0;
+	ubio->uio_flags = 0;
+	ubio->uio_bv_offset = 0;
+	ubio->uio_offset = cb->aio_offset;
+	ubio->uio_resid = cb->aio_nbytes;
+	ubio->uio_cred = crhold(curthread->td_ucred);
+	ubio->uio_bio_done = aio_ubiowakeup;
+	ubio->uio_arg = job;
+
+	prot = VM_PROT_READ;
+	/* Reading from disk means writing to memory */
+	if (cb->aio_lio_opcode == LIO_READ)
+		prot |= VM_PROT_WRITE;
+	ubio->uio_bv_cnt = vm_fault_quick_hold_pages(&curproc->p_vmspace->vm_map,
+	    (vm_offset_t)cb->aio_buf, cb->aio_nbytes, prot, ma, io_pages);
+
+	if (ubio->uio_bv_cnt != io_pages) {
+		vm_page_unhold_pages(ma, ubio->uio_bv_cnt);
+		/*
+		 * Punt to synchronous path 
+		 */
+		error = -1;
+		goto err;
+	}
+	if (ubio->uio_bv_cnt < 0) {
+		error = EFAULT;
+		goto err;
+	}
+	for (int i = 0; i < ubio->uio_bv_cnt; i++, bv++) {
+		bv->bv_offset = page_offset;
+		bv->bv_len = PAGE_SIZE - page_offset;
+		bv->bv_page = ma[i];
+		page_offset = 0;
+	}
+	if (ma != job->pages) {
+		free(ma, M_AIOS);
+		ma = NULL;
+	}
+	error = VOP_UBOP(vp, ubio, FOF_OFFSET);
+	if (error == EINPROGRESS || error == 0)
+		return (0);
+err:
+	if (ma != job->pages)
+		free(ma, M_AIOS);
+	free(ubio, M_AIOS);
+	return (error);
+}
+
+.Ed
+.El
+.Sh SEE ALSO
+.Xr aio_read 2 ,
+.Xr aio_write 2 ,
+.Xr lio_listio 2 ,
+.Xr VOP_UBOP 9 ,
+.Sh HISTORY
+The
+.Nm
+mechanism was introduced to support asynchronous file system requests in OpenZFS.
+.Sh AUTHORS
+This manual page was written by
+.An Matthew Macy .

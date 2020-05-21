@@ -62,6 +62,35 @@ struct uio {
 	struct	thread *uio_td;		/* owner */
 };
 
+#define HAVE_UBOP
+enum uio_bio_flags {
+	UIO_BIO_ERROR = 1 << 0,
+	UIO_BIO_SPARSE = 1 << 1,
+	UIO_BIO_USER = 1 << 2,
+	UIO_BIO_SKIP_DONE = 1 << 3,
+	UIO_BIO_SG = 1 << 4,
+};
+
+struct bio_vec {
+	vm_page_t	bv_page;
+	uint32_t	bv_len;
+	uint32_t	bv_offset;
+};
+
+struct uio_bio {
+	uint8_t		uio_cmd;		/* operation */
+	uint8_t		uio_error;		/* Errno for UIO_ERROR. */
+	uint16_t	uio_flags;		/* General flags */
+	uint16_t	uio_bv_cnt;		/* length of scatter/gather list */
+	uint32_t	uio_bv_offset;		/* offset in to page list */
+	off_t		uio_offset;		/* offset in target object */
+	ssize_t		uio_resid;		/* remaining bytes to process */
+	struct ucred	*uio_cred;		/* owner credentials */
+	struct	bio_vec *uio_bvec;		/* caller buffer's pages */
+	void	(*uio_bio_done)(struct uio_bio *);
+	void	*uio_arg;
+};
+
 /*
  * Limits
  *
@@ -96,6 +125,7 @@ int	physcopyin_vlist(struct bus_dma_segment *src, off_t offset,
 int	physcopyout_vlist(vm_paddr_t src, struct bus_dma_segment *dst,
 	    off_t offset, size_t len);
 int	uiomove(void *cp, int n, struct uio *uio);
+int	uiobiomove(void *cp, int n, struct uio_bio *uio);
 int	uiomove_frombuf(void *buf, int buflen, struct uio *uio);
 int	uiomove_fromphys(struct vm_page *ma[], vm_offset_t offset, int n,
 	    struct uio *uio);
