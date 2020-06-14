@@ -638,16 +638,20 @@ wireguard_status(int s)
 	if (do_cmd(s, WGC_LOCAL_SHOW, packed, size, 0))
 		return;
 	nvl = nvlist_unpack(packed, size, 0);
-	listen_port = nvlist_get_number(nvl, "listen-port");
-	printf("\tlisten-port: %d\n", listen_port);
+	if (nvlist_exists_number(nvl, "listen-port")) {
+		listen_port = nvlist_get_number(nvl, "listen-port");
+		printf("\tlisten-port: %d\n", listen_port);
+	}
 	if (nvlist_exists_binary(nvl, "private-key")) {
 		key = nvlist_get_binary(nvl, "private-key", &size);
 		encode_base64(buf, (const uint8_t *)key, size);
 		printf("\tprivate-key: %s\n", buf);
 	}
-	key = nvlist_get_binary(nvl, "public-key", &size);
-	encode_base64(buf, (const uint8_t *)key, size);
-	printf("\tpublic-key:  %s\n", buf);
+	if (nvlist_exists_binary(nvl, "public-key")) {
+		key = nvlist_get_binary(nvl, "public-key", &size);
+		encode_base64(buf, (const uint8_t *)key, size);
+		printf("\tpublic-key:  %s\n", buf);
+	}
 }
 
 static struct cmd wireguard_cmds[] = {
@@ -675,9 +679,9 @@ wg_create(int s, struct ifreq *ifr)
 
 	setproctitle("ifconfig %s create ...\n", name);
 	if (!nvlist_exists_number(nvl_params, "listen-port"))
-		errx(1, "must specify a listen-port for wg create");
+		goto legacy;
 	if (!nvlist_exists_binary(nvl_params, "private-key"))
-		errx(1, "must specify a private-key for wg create");
+		goto legacy;
 
 	packed = nvlist_pack(nvl_params, &size);
 	if (packed == NULL)
@@ -687,6 +691,11 @@ wg_create(int s, struct ifreq *ifr)
 	ifr->ifr_data = (caddr_t)&iov;
 	if (ioctl(s, SIOCIFCREATE2, ifr) < 0)
 		err(1, "SIOCIFCREATE2");
+	return;
+legacy:
+	ifr->ifr_data == NULL;
+	if (ioctl(s, SIOCIFCREATE, ifr) < 0)
+		err(1, "SIOCIFCREATE");
 }
 
 static __constructor void
