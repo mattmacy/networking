@@ -124,6 +124,7 @@ _LIBRARIES=	\
 		heimntlm \
 		heimsqlite \
 		hx509 \
+		icp \
 		ipsec \
 		ipt \
 		jail \
@@ -171,6 +172,7 @@ _LIBRARIES=	\
 		sdp \
 		sm \
 		smb \
+		spl \
 		ssl \
 		ssp_nonshared \
 		stats \
@@ -180,6 +182,7 @@ _LIBRARIES=	\
 		tacplus \
 		termcap \
 		termcapw \
+		tpool \
 		ufs \
 		ugidfw \
 		ulog \
@@ -198,6 +201,7 @@ _LIBRARIES=	\
 		zfs_core \
 		zfs \
 		zpool \
+		zutil
 
 .if ${MK_BLACKLIST} != "no"
 _LIBRARIES+= \
@@ -354,9 +358,10 @@ _DP_lzma=	md pthread
 _DP_ucl=	m
 _DP_vmmapi=	util
 _DP_opencsd=	cxxrt
-_DP_ctf=	z
+_DP_ctf=	spl z
 _DP_dtrace=	ctf elf proc pthread rtld_db
 _DP_xo=		util
+_DP_ztest=	geom m nvpair umem zpool pthread avl zfs_core spl zutil zfs uutil icp
 # The libc dependencies are not strictly needed but are defined to make the
 # assert happy.
 _DP_c=		compiler_rt
@@ -374,11 +379,14 @@ _DP_smb=	kiconv
 _DP_ulog=	md
 _DP_fifolog=	z
 _DP_ipf=	kvm
-_DP_zfs=	md pthread umem util uutil m nvpair avl bsdxml geom nvpair z \
-		zfs_core
+_DP_tpool=	spl
+_DP_uutil=	avl spl
+_DP_zfs=	md pthread umem util uutil m avl bsdxml geom nvpair \
+	z zfs_core zutil
 _DP_zfs_core=	nvpair
-_DP_zpool=	md pthread z nvpair avl umem
-_DP_be=		zfs nvpair
+_DP_zpool=	md pthread z icp spl nvpair avl umem
+_DP_zutil=	avl tpool
+_DP_be=		zfs spl nvpair
 
 # OFED support
 .if ${MK_OFED} != "no"
@@ -582,12 +590,15 @@ LIBC_NOSSP_PIC?=	${LIBC_NOSSP_PICDIR}/libc_nossp_pic.a
 LIBAVLDIR=	${OBJTOP}/cddl/lib/libavl
 LIBCTFDIR=	${OBJTOP}/cddl/lib/libctf
 LIBDTRACEDIR=	${OBJTOP}/cddl/lib/libdtrace
+LIBICPDIR=	${OBJTOP}/cddl/lib/libicp
 LIBNVPAIRDIR=	${OBJTOP}/cddl/lib/libnvpair
 LIBUMEMDIR=	${OBJTOP}/cddl/lib/libumem
 LIBUUTILDIR=	${OBJTOP}/cddl/lib/libuutil
 LIBZFSDIR=	${OBJTOP}/cddl/lib/libzfs
 LIBZFS_COREDIR=	${OBJTOP}/cddl/lib/libzfs_core
 LIBZPOOLDIR=	${OBJTOP}/cddl/lib/libzpool
+LIBZUTILDIR=	${OBJTOP}/cddl/lib/libzutil
+LIBTPOOLDIR=	${OBJTOP}/cddl/lib/libtpool
 
 # OFED support
 LIBCXGB4DIR=	${OBJTOP}/lib/ofed/libcxgb4
@@ -653,6 +664,7 @@ LIBNCURSESWDIR=	${OBJTOP}/lib/ncurses/ncursesw
 LIBPANELDIR=	${OBJTOP}/lib/ncurses/panel
 LIBPANELWDIR=	${OBJTOP}/lib/ncurses/panelw
 LIBCRYPTODIR=	${OBJTOP}/secure/lib/libcrypto
+LIBSPLDIR=	${OBJTOP}/cddl/lib/libspl
 LIBSSHDIR=	${OBJTOP}/secure/lib/libssh
 LIBSSLDIR=	${OBJTOP}/secure/lib/libssl
 LIBTEKENDIR=	${OBJTOP}/sys/teken/libteken

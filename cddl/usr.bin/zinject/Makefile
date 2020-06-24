@@ -1,24 +1,24 @@
 # $FreeBSD$
 
-.PATH: ${SRCTOP}/cddl/contrib/opensolaris/cmd/zinject
+.PATH: ${SRCTOP}/sys/contrib/openzfs/cmd/zinject
 
 PROG=	zinject
+INCS=	zinject.h
 SRCS=	zinject.c translate.c
 MAN=
 
-WARNS?=	0
-CFLAGS+= -I${SRCTOP}/sys/cddl/compat/opensolaris
+WARNS?=	2
+CFLAGS+= -DIN_BASE
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
-CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/lib/libumem
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libzfs/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libzfs_core/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libzpool/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libnvpair
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common/fs/zfs
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/common/zfs/
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/head
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/module/icp/include
+CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
+CFLAGS+= -DHAVE_ISSETUGID
+CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
 
-LIBADD=	geom m nvpair umem uutil zfs_core zfs zpool
+LIBADD=	geom m nvpair umem uutil avl spl zfs_core zfs zutil zpool
 
 .include <bsd.prog.mk>
