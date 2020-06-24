@@ -6,20 +6,30 @@ SUBDIR=	${_drti} \
 	libavl \
 	libctf \
 	${_libdtrace} \
+	${_libicp} \
+	${_libicp_rescue} \
 	libnvpair \
+	${_libspl} \
+	${_libtpool} \
 	libumem \
 	libuutil \
 	${_libzfs_core} \
 	${_libzfs} \
 	${_libzpool} \
+	${_libzutil} 
 
 SUBDIR.${MK_TESTS}+= tests
 
 .if ${MK_ZFS} != "no"
 _libzfs_core=	libzfs_core
+_libicp=	libicp
+_libicp_rescue=	libicp_rescue
 _libzfs=	libzfs
+_libzutil=	libzutil
 .if ${MK_LIBTHR} != "no"
 _libzpool=	libzpool
+_libspl=	libspl
+_libtpool=	libtpool
 .endif
 .endif
 
@@ -29,9 +39,12 @@ _libdtrace=	libdtrace
 .endif
 
 SUBDIR_DEPEND_libdtrace=	libctf
+SUBDIR_DEPEND_libtpool=		libspl
+SUBDIR_DEPEND_libuutil=		libavl libspl
 SUBDIR_DEPEND_libzfs_core=	libnvpair
-SUBDIR_DEPEND_libzfs=	libavl libnvpair libumem libuutil libzfs_core
-SUBDIR_DEPEND_libzpool=	libavl libnvpair libumem
+SUBDIR_DEPEND_libzfs=	libavl libnvpair libumem libuutil libzfs_core libzutil
+SUBDIR_DEPEND_libzpool=	libavl libnvpair libumem libicp
+SUBDIR_DEPEND_libzutil=	libavl libtpool
 
 SUBDIR_PARALLEL=
 

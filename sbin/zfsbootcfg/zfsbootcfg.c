@@ -36,6 +36,7 @@ __FBSDID("$FreeBSD$");
 #include <kenv.h>
 
 #include <libzfs.h>
+#include <libzfs_os.h>
 
 /* Keep in sync with zfsboot.c. */
 #define MAX_COMMAND_LEN	512

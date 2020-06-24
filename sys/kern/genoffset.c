@@ -32,6 +32,7 @@
 #endif
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
+#include <sys/endian.h>
 #include <sys/param.h>
 #include <sys/assym.h>
 #include <sys/proc.h>

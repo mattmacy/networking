@@ -29,6 +29,7 @@
  * Utility functions
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,8 @@
 
 #include "ctftools.h"
 #include "memory.h"
+
+int aok;
 
 static void (*terminate_cleanup)(void) = NULL;
 

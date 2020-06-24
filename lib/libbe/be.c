@@ -35,10 +35,14 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/zfs_context.h>
 #include <sys/mntent.h>
+#include <sys/zfs_ioctl.h>
 
+#include <libzutil.h>
 #include <ctype.h>
 #include <libgen.h>
 #include <libzfs_core.h>
+#include <libzfs_impl.h>
+#include <libzfs_os.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -67,6 +71,15 @@ static int be_create_child_cloned(libbe_handle_t *lbh, const char *active);
 
 /* Arbitrary... should tune */
 #define	BE_SNAP_SERIAL_MAX	1024
+
+static void
+optadd(char *mntopts, size_t size, const char *opt)
+{
+
+	if (mntopts[0] != '\0')
+		strlcat(mntopts, ",", size);
+	strlcat(mntopts, opt, size);
+}
 
 /*
  * Iterator function for locating the rootfs amongst the children of the
@@ -993,12 +1006,8 @@ be_rename(libbe_handle_t *lbh, const char *old, const char *new)
 	    ZFS_TYPE_FILESYSTEM)) == NULL)
 		return (set_error(lbh, BE_ERR_ZFSOPEN));
 
-	/* recurse, nounmount, forceunmount */
-	struct renameflags flags = {
-		.nounmount = 1,
-	};
 
-	err = zfs_rename(zfs_hdl, NULL, full_new, flags);
+	err = zfs_rename(zfs_hdl,full_new, B_FALSE, B_FALSE);
 
 	zfs_close(zfs_hdl);
 	if (err != 0)
@@ -1025,7 +1034,7 @@ be_export(libbe_handle_t *lbh, const char *bootenv, int fd)
 	if ((zfs = zfs_open(lbh->lzh, buf, ZFS_TYPE_DATASET)) == NULL)
 		return (set_error(lbh, BE_ERR_ZFSOPEN));
 
-	err = zfs_send_one(zfs, NULL, fd, flags);
+	err = zfs_send_one(zfs, NULL, fd, &flags, /* redactbook */ "");
 	zfs_close(zfs);
 
 	return (err);

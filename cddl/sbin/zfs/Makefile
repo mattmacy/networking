@@ -1,27 +1,35 @@
 # $FreeBSD$
 
-.PATH: ${SRCTOP}/cddl/contrib/opensolaris/cmd/zfs
+.PATH: ${SRCTOP}/sys/contrib/openzfs/cmd/zfs
+.PATH: ${SRCTOP}/sys/contrib/openzfs/module/os/freebsd/spl
 
 PACKAGE=	runtime
 PROG=	zfs
-MAN=	zfs.8 zfs-program.8
-SRCS=	zfs_main.c zfs_iter.c
+MAN=
+#MAN=	zfs.8 zfs-program.8
+SRCS = \
+	zfs_iter.c \
+	zfs_iter.h \
+	zfs_main.c \
+	zfs_util.h \
+	zfs_project.c \
+	zfs_projectutil.h
 
-WARNS?=	0
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libzpool/common
+WARNS?=	2
+CFLAGS+= -DIN_BASE
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include/os/freebsd
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
-CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/lib/libumem
-CFLAGS+= -I${SRCTOP}/sys/cddl/compat/opensolaris
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/head
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libuutil/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libzfs/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libzfs_core/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libumem/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libnvpair
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common/fs/zfs
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/common/zfs
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/module/icp/include
+CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
+CFLAGS+= -DHAVE_ISSETUGID
+CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
 
-LIBADD=	jail nvpair uutil zfs_core zfs
+CFLAGS+= -I${SRCTOP}/sys/modules/zfs
 
+LIBADD=	jail avl nvpair geom  uutil zfs_core spl tpool zutil zfs m
+LDADD+=	-pthread
 .include <bsd.prog.mk>

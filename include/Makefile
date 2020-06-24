@@ -243,7 +243,7 @@ copies: .PHONY .META
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 teken.h \
 	    ${SDESTDIR}${INCLUDEDIR}/teken
 .if ${MK_CDDL} != "no"
-	cd ${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common/sys; \
+	cd ${SRCTOP}/sys/contrib/openzfs/include/sys; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 nvpair.h \
 	    ${SDESTDIR}${INCLUDEDIR}/sys
 .endif
@@ -376,7 +376,7 @@ symlinks: .PHONY .META
 	done
 .if ${MK_CDDL} != "no"
 	${INSTALL_SYMLINK} ${TAG_ARGS} \
-	    ../../../sys/cddl/contrib/opensolaris/uts/common/sys/nvpair.h \
+	    ../../../sys/contrib/openenzfs/include/sys/nvpair.h \
 	    ${SDESTDIR}${INCLUDEDIR}/sys
 .endif
 .if ${MK_MLX5TOOL} != "no"
