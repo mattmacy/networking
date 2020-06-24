@@ -50,25 +50,20 @@ extern "C" {
 #ifndef _ASM
 
 #include <sys/types.h>
+#include <sys/endian.h>
 #include <sys/modctl.h>
 #include <sys/processor.h>
-#ifdef illumos
-#include <sys/systm.h>
-#else
 #include <sys/cpuvar.h>
 #include <sys/param.h>
 #include <sys/linker.h>
 #include <sys/ioccom.h>
+#include <sys/cred.h>
+#include <sys/proc.h>
+#include <sys/types.h>
 #include <sys/ucred.h>
 typedef int model_t;
-#endif
 #include <sys/ctf_api.h>
-#ifdef illumos
-#include <sys/cyclic.h>
-#include <sys/int_limits.h>
-#else
 #include <sys/stdint.h>
-#endif
 
 /*
  * DTrace Universal Constants and Typedefs
@@ -559,7 +554,7 @@ typedef struct dtrace_difv {
 	((((uint64_t)(y)) << 32) | ((x) & UINT32_MAX))
 
 #ifndef _LP64
-#if BYTE_ORDER == _BIG_ENDIAN
+#if BYTE_ORDER == BIG_ENDIAN
 #define	DTRACE_PTR(type, name)	uint32_t name##pad; type *name
 #else
 #define	DTRACE_PTR(type, name)	type *name; uint32_t name##pad
@@ -669,7 +664,7 @@ typedef struct dof_hdr {
 #define	DOF_ENCODE_LSB	1
 #define	DOF_ENCODE_MSB	2
 
-#if BYTE_ORDER == _BIG_ENDIAN
+#if BYTE_ORDER == BIG_ENDIAN
 #define	DOF_ENCODE_NATIVE	DOF_ENCODE_MSB
 #else
 #define	DOF_ENCODE_NATIVE	DOF_ENCODE_LSB
