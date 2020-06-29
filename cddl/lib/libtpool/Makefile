@@ -1,21 +1,18 @@
 # $FreeBSD$
 
-.PATH: ${SRCTOP}/sys/contrib/openzfs/cmd/zfs
-.PATH: ${SRCTOP}/sys/contrib/openzfs/module/os/freebsd/spl
+.PATH: ${SRCTOP}/sys/contrib/openzfs/lib/libtpool
+.PATH: ${SRCTOP}/sys/contrib/openzfs/include
 
+
+LIB=	tpool
+LIBADD=	spl
 PACKAGE=	runtime
-PROG=	zfs
-MAN=
-#MAN=	zfs.8 zfs-program.8
-SRCS = \
-	zfs_iter.c \
-	zfs_iter.h \
-	zfs_main.c \
-	zfs_util.h \
-	zfs_project.c \
-	zfs_projectutil.h
+
+INCS=	thread_pool_impl.h
+SRCS=	thread_pool.c
 
 WARNS?=	2
+CSTD=	c99
 CFLAGS+= -DIN_BASE
 CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
 CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
@@ -27,8 +24,4 @@ CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccomp
 CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID 
 CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
 
-CFLAGS+= -I${SRCTOP}/sys/modules/zfs
-
-LIBADD=	jail avl nvpair geom  uutil zfs_core spl tpool zutil zfs m
-LDADD+=	-pthread
-.include <bsd.prog.mk>
+.include <bsd.lib.mk>
