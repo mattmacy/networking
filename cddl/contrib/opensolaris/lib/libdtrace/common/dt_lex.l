@@ -451,7 +451,7 @@ if (yypcb->pcb_token != 0) {
 				xyerror(D_CHR_OFLOW, "character constant is "
 				    "too long");
 			}
-#if BYTE_ORDER == _LITTLE_ENDIAN
+#if BYTE_ORDER == LITTLE_ENDIAN
 			p = ((char *)&yylval.l_int) + nbytes - 1;
 			for (q = s; nbytes != 0; nbytes--)
 				*p-- = *q++;

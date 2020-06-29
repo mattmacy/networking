@@ -33,8 +33,6 @@
 #include <sys/types.h>
 #ifdef illumos
 #include <sys/sysmacros.h>
-#else
-#define	P2ROUNDUP(x, align)		(-(-(x) & -(align)))
 #endif
 
 #include <unistd.h>

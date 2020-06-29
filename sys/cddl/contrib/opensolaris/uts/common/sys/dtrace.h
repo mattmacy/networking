@@ -50,7 +50,9 @@ extern "C" {
 #ifndef _ASM
 
 #include <sys/types.h>
+#ifdef _KERNEL
 #include <sys/endian.h>
+#endif
 #include <sys/modctl.h>
 #include <sys/processor.h>
 #include <sys/cpuvar.h>
