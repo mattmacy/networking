@@ -8,6 +8,7 @@ SUBDIR= \
 	ctfmerge \
 	${_zinject} \
 	${_zlook} \
+	${_zstream} \
 	${_zstreamdump} \
 	${_ztest}
 
@@ -18,6 +19,7 @@ _zinject= zinject
 #_zlook= zlook
 .if ${MK_LIBTHR} != "no"
 _ztest=	ztest
+_zstream = zstream
 _zstreamdump = zstreamdump
 .endif
 .endif
