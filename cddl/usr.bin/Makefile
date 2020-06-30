@@ -20,7 +20,6 @@ _zinject= zinject
 .if ${MK_LIBTHR} != "no"
 _ztest=	ztest
 _zstream = zstream
-_zstreamdump = zstreamdump
 .endif
 .endif
 

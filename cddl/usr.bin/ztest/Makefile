@@ -17,7 +17,7 @@ CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccomp
 CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID 
 CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
 
-LIBADD=	geom m nvpair umem zpool pthread avl zfs_core spl zutil zfs uutil
+LIBADD=	geom m nvpair umem zpool pthread avl zfs_core spl zutil zfs uutil icp
 
 CSTD=	c99
 

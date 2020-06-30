@@ -124,6 +124,7 @@ _LIBRARIES=	\
 		heimntlm \
 		heimsqlite \
 		hx509 \
+		icp \
 		ipsec \
 		ipt \
 		jail \
@@ -360,6 +361,7 @@ _DP_opencsd=	cxxrt
 _DP_ctf=	z
 _DP_dtrace=	ctf elf proc pthread rtld_db
 _DP_xo=		util
+_DP_ztest=	geom m nvpair umem zpool pthread avl zfs_core spl zutil zfs uutil icp
 # The libc dependencies are not strictly needed but are defined to make the
 # assert happy.
 _DP_c=		compiler_rt
@@ -378,8 +380,8 @@ _DP_ulog=	md
 _DP_fifolog=	z
 _DP_ipf=	kvm
 _DP_tpool=	spl
-_DP_zfs=	jail avl nvpair geom md pthread util uutil m bsdxml spl tpool nvpair z \
-		zutil zfs_core
+_DP_zfs=	md pthread umem util uutil m avl bsdxml geom nvpair \
+	z zfs_core
 _DP_zfs_core=	nvpair
 _DP_zpool=	md pthread z nvpair avl umem
 _DP_zutil=	tpool
@@ -587,6 +589,7 @@ LIBC_NOSSP_PIC?=	${LIBC_NOSSP_PICDIR}/libc_nossp_pic.a
 LIBAVLDIR=	${OBJTOP}/cddl/lib/libavl
 LIBCTFDIR=	${OBJTOP}/cddl/lib/libctf
 LIBDTRACEDIR=	${OBJTOP}/cddl/lib/libdtrace
+LIBICPDIR=	${OBJTOP}/cddl/lib/libicp
 LIBNVPAIRDIR=	${OBJTOP}/cddl/lib/libnvpair
 LIBUMEMDIR=	${OBJTOP}/cddl/lib/libumem
 LIBUUTILDIR=	${OBJTOP}/cddl/lib/libuutil
