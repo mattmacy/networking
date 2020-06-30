@@ -10,6 +10,13 @@ BINDIR?=	/usr/sbin
 
 WARNS?=		1
 
+CFLAGS+= -DIN_BASE
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd/spl
+CFLAGS+= -I${SRCTOP}/sys
+CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
 CFLAGS+=	-I${SRCTOP}/sys/cddl/compat/opensolaris \
 		-I${SRCTOP}/cddl/compat/opensolaris/include \
 		-I${OPENSOLARIS_USR_DISTDIR}/head \
@@ -17,6 +24,7 @@ CFLAGS+=	-I${SRCTOP}/sys/cddl/compat/opensolaris \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/libproc/common \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common \
 		-I${OPENSOLARIS_SYS_DISTDIR}/compat
+CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID
 
 # Optional debugging stuff...
 #CFLAGS+=	-DNEED_ERRLOC
