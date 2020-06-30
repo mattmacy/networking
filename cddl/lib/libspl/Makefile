@@ -27,7 +27,16 @@ SRCS += \
         mnttab.c
 
 
-
+.if ${MACHINE_ARCH} == "amd64"
+.PATH: ${SRCTOP}/sys/contrib/openzfs/lib/libspl/asm-x86_64
+SRCS += atomic.S
+.elif ${MACHINE_ARCH} == "i386"
+.PATH: ${SRCTOP}/sys/contrib/openzfs/lib/libspl/asm-i386
+SRCS += atomic.S
+.else
+.PATH: ${SRCTOP}/sys/contrib/openzfs/lib/libspl/asm-generic
+SRCS += atomic.c
+.endif
 
 
 WARNS?=	2
@@ -42,5 +51,6 @@ CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/module/icp/include
 CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID 
 CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
+CFLAGS.atomic.S+= -DLOCORE
 
 .include <bsd.lib.mk>
