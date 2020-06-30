@@ -43,6 +43,8 @@
 #include "ctftools.h"
 #include "memory.h"
 
+int aok;
+
 static void (*terminate_cleanup)(void) = NULL;
 
 /* returns 1 if s1 == s2, 0 otherwise */
