@@ -384,7 +384,7 @@ _DP_zfs=	md pthread umem util uutil m avl bsdxml geom nvpair \
 	z zfs_core
 _DP_zfs_core=	nvpair
 _DP_zpool=	md pthread z nvpair avl umem
-_DP_zutil=	tpool
+_DP_zutil=	avl tpool
 _DP_be=		zfs nvpair
 
 # OFED support

@@ -13,9 +13,13 @@ LIBADD+= nvpair
 LIBADD+= be
 
 CFLAGS+= -I${SRCTOP}/lib/libbe
-CFLAGS+= -I${SRCTOP}/sys/cddl/compat/opensolaris
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common
-
-CFLAGS+= -DNEED_SOLARIS_BOOLEAN
+CFLAGS+= -DIN_BASE -DHAVE_RPC_TYPES
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS+= -I${SRCTOP}/sys
+CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
+CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
+CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID 
 
 .include <bsd.test.mk>

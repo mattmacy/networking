@@ -33,7 +33,7 @@ CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
 CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libzutil
-CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID 
+CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID -DIN_BASE
 CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
 
 .include <bsd.lib.mk>

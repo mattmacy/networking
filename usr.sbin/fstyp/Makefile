@@ -28,15 +28,18 @@ SUBDIR.${MK_TESTS}+= tests
 .if ${MK_ZFS} != "no"
 IGNORE_PRAGMA=  YES
 
-CFLAGS+= -DNEED_SOLARIS_BOOLEAN -DHAVE_ZFS
-CFLAGS+= -I${SRCTOP}/sys/cddl/compat/opensolaris
+
+WARNS?=	0
+CFLAGS+= -DIN_BASE
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
-CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/lib/libumem
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libnvpair
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/lib/libzpool/common
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common/fs/zfs
-CFLAGS+= -I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common
-CFLAGS+= -I${SRCTOP}/cddl/contrib/opensolaris/head
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/module/icp/include
+CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
+CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID 
+CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
 .endif
 
 CFLAGS+=-I${SRCTOP}/sys

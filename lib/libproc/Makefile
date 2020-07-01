@@ -29,6 +29,13 @@ LIBADD+=	elf procstat rtld_db util
 .if ${MK_CDDL} != "no"
 LIBADD+=	ctf
 IGNORE_PRAGMA=	YES
+CFLAGS+= -DIN_BASE
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd/spl
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
+CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
+CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID -DHAVE_BOOLEAN
 CFLAGS+=	-I${SRCTOP}/cddl/contrib/opensolaris/lib/libctf/common \
 		-I${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common \
 		-I${SRCTOP}/sys/cddl/compat/opensolaris

@@ -7,19 +7,25 @@ SUBDIR=	${_drti} \
 	libctf \
 	${_libdtrace} \
 	libnvpair \
+	${_libspl} \
+	${_libtpool} \
 	libumem \
 	libuutil \
 	${_libzfs_core} \
 	${_libzfs} \
 	${_libzpool} \
+	${_libzutil} 
 
 SUBDIR.${MK_TESTS}+= tests
 
 .if ${MK_ZFS} != "no"
 _libzfs_core=	libzfs_core
 _libzfs=	libzfs
+_libzutil=	libzutil
 .if ${MK_LIBTHR} != "no"
 _libzpool=	libzpool
+_libspl=	libspl
+_libtpool=	libtpool
 .endif
 .endif
 

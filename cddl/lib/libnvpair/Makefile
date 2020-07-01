@@ -6,7 +6,6 @@
 LIB=	nvpair
 
 PACKAGE=	runtime
-INCS=	libnvpair.h
 # user
 SRCS=	libnvpair.c \
 	libnvpair_json.c \

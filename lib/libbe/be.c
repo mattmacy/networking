@@ -35,10 +35,13 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/zfs_context.h>
 #include <sys/mntent.h>
+#include <sys/zfs_ioctl.h>
 
+#include <libzutil.h>
 #include <ctype.h>
 #include <libgen.h>
 #include <libzfs_core.h>
+#include <libzfs_impl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -67,6 +70,51 @@ static int be_create_child_cloned(libbe_handle_t *lbh, const char *active);
 
 /* Arbitrary... should tune */
 #define	BE_SNAP_SERIAL_MAX	1024
+
+static void
+optadd(char *mntopts, size_t size, const char *opt)
+{
+
+	if (mntopts[0] != '\0')
+		strlcat(mntopts, ",", size);
+	strlcat(mntopts, opt, size);
+}
+
+void
+statfs2mnttab(struct statfs *sfs, struct mnttab *mp)
+{
+	static char mntopts[MNTMAXSTR];
+	long flags;
+
+	mntopts[0] = '\0';
+
+	flags = sfs->f_flags;
+#define	OPTADD(opt)	optadd(mntopts, sizeof (mntopts), (opt))
+	if (flags & MNT_RDONLY)
+		OPTADD(MNTOPT_RO);
+	else
+		OPTADD(MNTOPT_RW);
+	if (flags & MNT_NOSUID)
+		OPTADD(MNTOPT_NOSETUID);
+	else
+		OPTADD(MNTOPT_SETUID);
+	if (flags & MNT_UPDATE)
+		OPTADD(MNTOPT_REMOUNT);
+	if (flags & MNT_NOATIME)
+		OPTADD(MNTOPT_NOATIME);
+	else
+		OPTADD(MNTOPT_ATIME);
+	OPTADD(MNTOPT_NOXATTR);
+	if (flags & MNT_NOEXEC)
+		OPTADD(MNTOPT_NOEXEC);
+	else
+		OPTADD(MNTOPT_EXEC);
+#undef	OPTADD
+	mp->mnt_special = strdup(sfs->f_mntfromname);
+	mp->mnt_mountp = strdup(sfs->f_mntonname);
+	mp->mnt_fstype = strdup(sfs->f_fstypename);
+	mp->mnt_mntopts = strdup(mntopts);
+}
 
 /*
  * Iterator function for locating the rootfs amongst the children of the
@@ -993,12 +1041,8 @@ be_rename(libbe_handle_t *lbh, const char *old, const char *new)
 	    ZFS_TYPE_FILESYSTEM)) == NULL)
 		return (set_error(lbh, BE_ERR_ZFSOPEN));
 
-	/* recurse, nounmount, forceunmount */
-	struct renameflags flags = {
-		.nounmount = 1,
-	};
 
-	err = zfs_rename(zfs_hdl, NULL, full_new, flags);
+	err = zfs_rename(zfs_hdl,full_new, B_FALSE, B_FALSE);
 
 	zfs_close(zfs_hdl);
 	if (err != 0)
@@ -1025,7 +1069,7 @@ be_export(libbe_handle_t *lbh, const char *bootenv, int fd)
 	if ((zfs = zfs_open(lbh->lzh, buf, ZFS_TYPE_DATASET)) == NULL)
 		return (set_error(lbh, BE_ERR_ZFSOPEN));
 
-	err = zfs_send_one(zfs, NULL, fd, flags);
+	err = zfs_send_one(zfs, NULL, fd, &flags, /* redactbook */ "");
 	zfs_close(zfs);
 
 	return (err);
@@ -1218,6 +1262,27 @@ be_add_child(libbe_handle_t *lbh, const char *child_path, bool cp_if_exists)
 	return (set_error(lbh, BE_ERR_EXISTS));
 }
 #endif	/* SOON */
+
+
+int
+zpool_nextboot(libzfs_handle_t *hdl, uint64_t pool_guid, uint64_t dev_guid,
+    const char *command)
+{
+	zfs_cmd_t zc = { 0 };
+	nvlist_t *args;
+	int error;
+
+	args = fnvlist_alloc();
+	fnvlist_add_uint64(args, ZPOOL_CONFIG_POOL_GUID, pool_guid);
+	fnvlist_add_uint64(args, ZPOOL_CONFIG_GUID, dev_guid);
+	fnvlist_add_string(args, "command", command);
+	error = zcmd_write_src_nvlist(hdl, &zc, args);
+	if (error == 0)
+		error = ioctl(hdl->libzfs_fd, ZFS_IOC_NEXTBOOT, &zc);
+	zcmd_free_nvlists(&zc);
+	nvlist_free(args);
+	return (error);
+}
 
 static int
 be_set_nextboot(libbe_handle_t *lbh, nvlist_t *config, uint64_t pool_guid,
