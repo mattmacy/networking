@@ -42,6 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <libgen.h>
 #include <libzfs_core.h>
 #include <libzfs_impl.h>
+#include <libzfs_os.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -1262,27 +1263,6 @@ be_add_child(libbe_handle_t *lbh, const char *child_path, bool cp_if_exists)
 	return (set_error(lbh, BE_ERR_EXISTS));
 }
 #endif	/* SOON */
-
-
-int
-zpool_nextboot(libzfs_handle_t *hdl, uint64_t pool_guid, uint64_t dev_guid,
-    const char *command)
-{
-	zfs_cmd_t zc = { 0 };
-	nvlist_t *args;
-	int error;
-
-	args = fnvlist_alloc();
-	fnvlist_add_uint64(args, ZPOOL_CONFIG_POOL_GUID, pool_guid);
-	fnvlist_add_uint64(args, ZPOOL_CONFIG_GUID, dev_guid);
-	fnvlist_add_string(args, "command", command);
-	error = zcmd_write_src_nvlist(hdl, &zc, args);
-	if (error == 0)
-		error = ioctl(hdl->libzfs_fd, ZFS_IOC_NEXTBOOT, &zc);
-	zcmd_free_nvlists(&zc);
-	nvlist_free(args);
-	return (error);
-}
 
 static int
 be_set_nextboot(libbe_handle_t *lbh, nvlist_t *config, uint64_t pool_guid,
