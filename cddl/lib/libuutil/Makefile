@@ -25,4 +25,6 @@ CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
 CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -D_MACHINE_ENDIAN_H_
 
+LIBADD= avl spl
+
 .include <bsd.lib.mk>

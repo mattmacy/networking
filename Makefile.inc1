@@ -2805,6 +2805,8 @@ _cddl_lib_libzutil= cddl/lib/libzutil
 _cddl_lib_libzfs_core= cddl/lib/libzfs_core
 _cddl_lib_libzfs= cddl/lib/libzfs
 
+cddl/lib/libuutil__L: cddl/lib/libavl__L cddl/lib/libspl__L
+
 cddl/lib/libtpool__L: cddl/lib/libspl__L
 
 cddl/lib/libzutil__L: cddl/lib/libavl__L cddl/lib/libtpool__L
