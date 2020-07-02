@@ -28,21 +28,23 @@ SUBDIR.${MK_TESTS}+= tests
 .if ${MK_ZFS} != "no"
 IGNORE_PRAGMA=  YES
 
-
 WARNS?=	0
-CFLAGS+= -DIN_BASE
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
-CFLAGS+= -I${SRCTOP}/sys
-CFLAGS+= -I${SRCTOP}/cddl/compat/opensolaris/include
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/module/icp/include
-CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
-CFLAGS+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID 
-CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
+CFLAGS.zfs.c+= -DIN_BASE
+CFLAGS.zfs.c+= -I${SRCTOP}/sys/contrib/openzfs/include
+CFLAGS.zfs.c+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include
+CFLAGS.zfs.c+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS.zfs.c+= -I${SRCTOP}/sys/contrib/openzfs/module/icp/include
+CFLAGS.zfs.c+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
+CFLAGS.zfs.c+= -D_MACHINE_ENDIAN_H_ -DHAVE_ISSETUGID
+CFLAGS.zfs.c+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
 .endif
 
-CFLAGS+=-I${SRCTOP}/sys
+.for src in ${SRCS}
+.if ${src} != "zfs.c"
+CFLAGS.${src}+=-I${SRCTOP}/sys
+.endif
+.endfor
+
 
 LIBADD=	geom md ufs
 
