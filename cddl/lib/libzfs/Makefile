@@ -7,7 +7,7 @@
 
 PACKAGE=	runtime
 LIB=	zfs
-LIBADD=	md pthread umem util uutil m avl bsdxml geom nvpair z zfs_core
+LIBADD=	md pthread umem util uutil m avl bsdxml geom nvpair z zfs_core zutil
 
 USER_C = \
         libzfs_changelist.c \
