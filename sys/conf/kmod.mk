@@ -537,7 +537,6 @@ OPENZFS_CFLAGS=     \
 	-D_SYS_VMEM_H_  \
 	-D__KERNEL__ \
 	-nostdinc \
-	-D_MACHINE_ENDIAN_H_ \
 	-DSMP \
 	-I${ZINCDIR}  \
 	-I${ZINCDIR}/spl \

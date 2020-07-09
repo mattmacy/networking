@@ -211,7 +211,6 @@ CDDL_CFLAGS=	\
 	-D_SYS_VMEM_H_ \
 	-D__KERNEL \
 	-D__KERNEL__ \
-	-D_MACHINE_ENDIAN_H_ \
 	-DKERNEL_STATIC \
 	-nostdinc \
 	-include opt_global.h \
