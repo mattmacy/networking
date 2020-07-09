@@ -213,7 +213,6 @@ CDDL_CFLAGS=	\
 	-D__KERNEL__ \
 	-DKERNEL_STATIC \
 	-nostdinc \
-	-include opt_global.h \
 	-include $S/modules/zfs/static_ccompile.h \
 	-I${ZINCDIR} \
 	-I${ZINCDIR}/spl \
@@ -247,7 +246,8 @@ ZFS_CFLAGS+=	${CDDL_CFLAGS} -DBUILDING_ZFS -DHAVE_UIO_ZEROCOPY -DWITH_NETDUMP
 ZFS_CFLAGS+=	-D__KERNEL__ -D_SYS_CONDVAR_H_ -DSMP 
 
 .if ${MACHINE_ARCH} == "amd64"
-ZFS_CFLAGS+= -DHAVE_AVX2 -DHAVE_AVX -D__x86_64 -DHAVE_SSE2 -DHAVE_AVX512F
+ZFS_CFLAGS+= -DHAVE_AVX2 -DHAVE_AVX -D__x86_64 -DHAVE_SSE2 -DHAVE_AVX512F \
+	-DHAVE_SSSE3 -DHAVE_AVX512BW
 .endif
 
 .if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "powerpc" || \
