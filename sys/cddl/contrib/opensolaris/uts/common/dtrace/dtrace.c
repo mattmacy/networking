@@ -67,6 +67,8 @@
  * on capital-f functions.
  */
 #include <sys/errno.h>
+#include <sys/param.h>
+#include <sys/types.h>
 #ifndef illumos
 #include <sys/time.h>
 #endif
