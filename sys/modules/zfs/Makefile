@@ -14,7 +14,6 @@ KMOD=	zfs
 	${SRCDIR}/zcommon \
 	${SRCDIR}/zfs
 
-CFLAGS+= -include ${.OBJDIR}/opt_global.h
 CFLAGS+= -I${INCDIR}
 CFLAGS+= -I${INCDIR}/spl
 CFLAGS+= -I${INCDIR}/os/freebsd
