@@ -44,6 +44,7 @@
 /* Define if host toolchain supports AES */
 #define HAVE_AES 1
 
+#ifdef __amd64__
 #ifndef RESCUE
 /* Define if host toolchain supports AVX */
 #define HAVE_AVX 1
@@ -78,6 +79,7 @@
 
 /* Define if host toolchain supports AVX512VL */
 #define HAVE_AVX512VL 1
+#endif
 
 /* bio->bi_opf is defined */
 /* #undef HAVE_BIO_BI_OPF */
@@ -452,6 +454,7 @@
 /* ->count_objects exists */
 /* #undef HAVE_SPLIT_SHRINKER_CALLBACK */
 
+#if defined(__amd64__) || defined(__i386__)
 /* Define if host toolchain supports SSE */
 #define HAVE_SSE 1
 
@@ -469,6 +472,7 @@
 
 /* Define if host toolchain supports SSSE3 */
 #define HAVE_SSSE3 1
+#endif
 
 /* STACK_FRAME_NON_STANDARD is defined */
 /* #undef HAVE_STACK_FRAME_NON_STANDARD */

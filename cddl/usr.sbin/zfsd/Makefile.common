@@ -24,8 +24,8 @@ CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -I${SRCTOP}/cddl/usr.sbin
 
-# Avoid pulling in FreeBSD version of machine/endian.h, use issetugid(2)
-CFLAGS+= -D_MACHINE_ENDIAN_H_ -D_MACHINE_FLOAT_H_ -DHAVE_ISSETUGID
+# use issetugid(2)
+CFLAGS+= -D_MACHINE_FLOAT_H_ -DHAVE_ISSETUGID
 
 LIBADD+=	devdctl zfs zfs_core util geom bsdxml sbuf nvpair avl uutil zutil
 

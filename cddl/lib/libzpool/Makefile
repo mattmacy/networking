@@ -37,10 +37,6 @@ KERNEL_C = \
 	zfs_comutil.c \
 	zfs_deleg.c \
 	zfs_fletcher.c \
-	zfs_fletcher_aarch64_neon.c \
-	zfs_fletcher_avx512.c \
-	zfs_fletcher_intel.c \
-	zfs_fletcher_sse.c \
 	zfs_fletcher_superscalar.c \
 	zfs_fletcher_superscalar4.c \
 	zfs_namecheck.c \
@@ -174,6 +170,21 @@ KERNEL_C = \
 	zrlock.c \
 	zthr.c
 
+ARCH_C =
+.if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386"
+ARCH_C += 	zfs_fletcher_intel.c \
+		zfs_fletcher_sse.c 
+CFLAGS +=  -DHAVE_SSE2
+.endif
+.if ${MACHINE_ARCH} == "amd64"
+ARCH_C +=	zfs_fletcher_avx512.c
+CFLAGS+= -DHAVE_AVX2 -DHAVE_AVX -D__x86_64 -DHAVE_AVX512F \
+	-DHAVE_AVX512BW	-DHAVE_SSE3
+.endif
+.if ${MACHINE_ARCH} == "aarch64"
+ARCH_C +=	zfs_fletcher_aarch64_neon.c
+.endif
+
 LUA_C = \
 	lapi.c \
 	lauxlib.c \
@@ -202,7 +213,7 @@ LUA_C = \
 
 UNICODE_C = u8_textprep.c uconv.c
 
-SRCS=		${USER_C} ${KERNEL_C} ${LUA_C} ${UNICODE_C}
+SRCS=		${USER_C} ${KERNEL_C} ${LUA_C} ${UNICODE_C} ${ARCH_C}
 
 WARNS?=		2
 CFLAGS+= -DIN_BASE
