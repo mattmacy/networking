@@ -135,9 +135,6 @@ KERNEL_C = \
 	vdev_raidz_math_avx512f.c \
 	vdev_raidz_math.c \
 	vdev_raidz_math_scalar.c \
-	vdev_raidz_math_sse2.c \
-	vdev_raidz_math_ssse3.c \
-	vdev_raidz_math_powerpc_altivec.c \
 	vdev_rebuild.c \
 	vdev_removal.c \
 	vdev_root.c \
@@ -172,14 +169,16 @@ KERNEL_C = \
 
 ARCH_C =
 .if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386"
-ARCH_C += 	zfs_fletcher_intel.c \
+ARCH_C += 	vdev_raidz_math_sse2.c \
+		vdev_raidz_math_ssse3.c \
+		zfs_fletcher_intel.c \
 		zfs_fletcher_sse.c 
-CFLAGS +=  -DHAVE_SSE2
+CFLAGS +=  -DHAVE_SSE2 	-DHAVE_SSE3
 .endif
 .if ${MACHINE_ARCH} == "amd64"
 ARCH_C +=	zfs_fletcher_avx512.c
 CFLAGS+= -DHAVE_AVX2 -DHAVE_AVX -D__x86_64 -DHAVE_AVX512F \
-	-DHAVE_AVX512BW	-DHAVE_SSE3
+	-DHAVE_AVX512BW
 .endif
 .if ${MACHINE_ARCH} == "aarch64"
 ARCH_C +=	zfs_fletcher_aarch64_neon.c
