@@ -9,7 +9,7 @@ SUBDIR=	${_drti} \
 	${_libicp} \
 	${_libicp_rescue} \
 	libnvpair \
-	${_libspl} \
+	libspl \
 	${_libtpool} \
 	libumem \
 	libuutil \
@@ -28,7 +28,6 @@ _libzfs=	libzfs
 _libzutil=	libzutil
 .if ${MK_LIBTHR} != "no"
 _libzpool=	libzpool
-_libspl=	libspl
 _libtpool=	libtpool
 .endif
 .endif
