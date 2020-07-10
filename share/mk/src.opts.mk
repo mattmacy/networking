@@ -365,11 +365,6 @@ __DEFAULT_YES_OPTIONS+=OPENMP
 __DEFAULT_NO_OPTIONS+=OPENMP
 .endif
 
-.if ${__T} == "powerpc"
-MK_ZFS:=	no
-MK_LOADER_ZFS:=	no
-.endif
-
 .include <bsd.mkopt.mk>
 
 #
