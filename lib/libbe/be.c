@@ -72,15 +72,6 @@ static int be_create_child_cloned(libbe_handle_t *lbh, const char *active);
 /* Arbitrary... should tune */
 #define	BE_SNAP_SERIAL_MAX	1024
 
-static void
-optadd(char *mntopts, size_t size, const char *opt)
-{
-
-	if (mntopts[0] != '\0')
-		strlcat(mntopts, ",", size);
-	strlcat(mntopts, opt, size);
-}
-
 /*
  * Iterator function for locating the rootfs amongst the children of the
  * zfs_be_root set by loader(8).  data is expected to be a libbe_handle_t *.
