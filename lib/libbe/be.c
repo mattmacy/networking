@@ -1034,7 +1034,7 @@ be_export(libbe_handle_t *lbh, const char *bootenv, int fd)
 	if ((zfs = zfs_open(lbh->lzh, buf, ZFS_TYPE_DATASET)) == NULL)
 		return (set_error(lbh, BE_ERR_ZFSOPEN));
 
-	err = zfs_send_one(zfs, NULL, fd, &flags, /* redactbook */ "");
+	err = zfs_send_one(zfs, NULL, fd, &flags, /* redactbook */ NULL);
 	zfs_close(zfs);
 
 	return (err);
