@@ -1,23 +1,28 @@
 # $FreeBSD$
 
-.PATH: ${SRCTOP}/sys/contrib/openzfs/cmd/zdb
+ZFSTOP=	${SRCTOP}/sys/contrib/openzfs
+
+.PATH: ${ZFSTOP}/cmd/zdb
+.PATH: ${ZFSTOP}/man/man8
 
 PROG=	zdb
-#MAN=	zdb.8
-MAN=
+MAN=	zdb.8
 INCS=	zdb.h
 SRCS=	zdb.c zdb_il.c
 
 WARNS?=	2
 CSTD=	c99
-CFLAGS+= -DIN_BASE
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd/spl
-CFLAGS+= -I${SRCTOP}/sys
-CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
-CFLAGS+= -DHAVE_ISSETUGID
+
+CFLAGS+= \
+	-DIN_BASE \
+	-I${ZFSTOP}/include \
+	-I${ZFSTOP}/lib/libspl/include \
+	-I${ZFSTOP}/lib/libspl/include/os/freebsd \
+	-I${ZFSTOP}/lib/libspl/include/os/freebsd/spl \
+	-I${SRCTOP}/sys \
+	-include ${ZFSTOP}/include/os/freebsd/spl/sys/ccompile.h \
+	-DHAVE_ISSETUGID
+
 LIBADD=	nvpair umem uutil zfs spl avl zutil zpool
 
 CFLAGS.gcc+= -fms-extensions
