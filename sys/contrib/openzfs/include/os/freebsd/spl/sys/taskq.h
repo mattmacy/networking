@@ -30,6 +30,7 @@
 #include <sys/proc.h>
 #include <sys/taskqueue.h>
 #include <sys/thread.h>
+#include <sys/rwlock.h>
 #include <sys/ck.h>
 
 #ifdef	__cplusplus

@@ -107,6 +107,10 @@ typedef struct zio_checksum_info {
 #include "sha256.c"
 #include "skein_zfs.c"
 
+extern int zfs_zstd_decompress(void *s_start, void *d_start, size_t s_len,
+    size_t d_len, int n);
+
+
 static zio_checksum_info_t zio_checksum_table[ZIO_CHECKSUM_FUNCTIONS] = {
 	{{NULL, NULL}, NULL, NULL, 0, "inherit"},
 	{{NULL, NULL}, NULL, NULL, 0, "on"},
@@ -181,6 +185,7 @@ static zio_compress_info_t zio_compress_table[ZIO_COMPRESS_FUNCTIONS] = {
 	{NULL,			NULL,			9,	"gzip-9"},
 	{NULL,			zle_decompress,		64,	"zle"},
 	{NULL,			lz4_decompress,		0,	"lz4"},
+	{NULL,			zfs_zstd_decompress, ZIO_ZSTD_LEVEL_DEFAULT, "zstd"}
 };
 
 static void
