@@ -52,8 +52,8 @@
 	for (c = (p)->p_cidrs; c < (p)->p_cidrs + (p)->p_num_cidrs; c++)
 
 struct wg_allowedip {
-	struct sockaddr a_addr;
-	struct sockaddr a_mask;
+	struct sockaddr_storage a_addr;
+	struct sockaddr_storage a_mask;
 };
 
 enum {

@@ -1050,13 +1050,13 @@ wg_route_add(struct wg_route_table *tbl, struct wg_peer *peer,
 	struct wg_allowedip *cidr;
 	bool needfree = false;
 
-	family = cidr_->a_addr.sa_family;
+	family = cidr_->a_addr.ss_family;
 	if (family == AF_INET) {
 		root = tbl->t_ip;
 	} else if (family == AF_INET6) {
 		root = tbl->t_ip6;
 	} else {
-		printf("bad sa_family %d\n", cidr_->a_addr.sa_family);
+		printf("bad sa_family %d\n", cidr_->a_addr.ss_family);
 		return (EINVAL);
 	}
 	route = malloc(sizeof(*route), M_WG, M_WAITOK|M_ZERO);
