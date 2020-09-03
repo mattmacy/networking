@@ -57,6 +57,7 @@
 #include <stddef.h>		/* NB: for offsetof */
 #include <locale.h>
 #include <langinfo.h>
+#include <resolv.h>
 
 #include "ifconfig.h"
 
@@ -73,8 +74,8 @@ static bool do_peer;
 static int allowed_ips_count;
 static int allowed_ips_max;
 struct allowedip {
-	struct sockaddr a_addr;
-	struct sockaddr a_mask;
+	struct sockaddr_storage a_addr;
+	struct sockaddr_storage a_mask;
 };
 struct allowedip *allowed_ips;
 
@@ -83,6 +84,8 @@ struct allowedip *allowed_ips;
 #define	WG_KEY_LEN_BASE64 ((((WG_KEY_LEN) + 2) / 3) * 4 + 1)
 #define	WG_KEY_LEN_HEX (WG_KEY_LEN * 2 + 1)
 #define	WG_MAX_STRLEN 64
+
+#if 0
 
 //CTASSERT(WG_MAX_STRLEN > WG_KEY_LEN_BASE64);
 //CTASSERT(WG_MAX_STRLEN > INET6_ADDRSTRLEN);
@@ -180,6 +183,10 @@ encode_base64(u_int8_t *buffer, const uint8_t *data, u_int16_t len)
 	}
 	*bp = '\0';
 }
+#endif
+
+#define encode_base64(dst, src, srclen) b64_ntop(src, srclen, dst, WG_MAX_STRLEN)
+#define decode_base64(dst, dstlen, src) b64_pton(src, dst, dstlen)
 
 static bool
 key_from_base64(uint8_t key[static WG_KEY_LEN], const char *base64)
@@ -223,7 +230,7 @@ parse_endpoint(const char *endpoint_)
 	hints.ai_flags = AI_NUMERICHOST;
 	err = getaddrinfo(endpoint, port, &hints, &res);
 	if (err)
-		errx(err, "address resolution for endpoint %s:%s failed\n", endpoint, port);
+		errx(1, "%s", gai_strerror(err));
 	nvlist_add_binary(nvl_params, "endpoint", res->ai_addr, res->ai_addrlen);
 	freeaddrinfo(res);
 	free(base);
@@ -325,54 +332,45 @@ in6_mask2len(struct in6_addr *mask, u_char *lim0)
 static bool
 parse_ip(struct allowedip *aip, const char *value)
 {
-	struct sockaddr *sa = __DECONST(void *, &aip->a_addr);
+	struct addrinfo hints, *res;
+	int err;
 
 	bzero(&aip->a_addr, sizeof(aip->a_addr));
-	aip->a_addr.sa_family = AF_UNSPEC;
+	bzero(&hints, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_flags = AI_NUMERICHOST;
+	err = getaddrinfo(value, NULL, &hints, &res);
+	if (err)
+		errx(1, "%s", gai_strerror(err));
 
-	if (strchr(value, ':')) {
-		struct sockaddr_in6 *sin6 = (void *)sa;
-		if (inet_pton(AF_INET6, value, &sin6->sin6_addr) == 1)
-			aip->a_addr.sa_family = AF_INET6;
-		aip->a_addr.sa_len = sizeof(struct sockaddr_in6);
-	} else {
-		struct sockaddr_in *sin = (void *)sa;
-		if (inet_pton(AF_INET, value, &sin->sin_addr) == 1)
-			aip->a_addr.sa_family = AF_INET;
-		aip->a_addr.sa_len = sizeof(struct sockaddr_in);
-	}
-	if (aip->a_addr.sa_family == AF_UNSPEC)
-		return (false);
+	memcpy(&aip->a_addr, res->ai_addr, res->ai_addrlen);
+
+	freeaddrinfo(res);
 	return (true);
 }
 
-static const char *
+static void
 sa_ntop(const struct sockaddr *sa, char *buf, int *port)
 {
 	const struct sockaddr_in *sin;
 	const struct sockaddr_in6 *sin6;
-	const char *bufp;
+	int err;
+
+	err = getnameinfo(sa, sa->sa_len, buf, INET6_ADDRSTRLEN, NULL,
+	    0, NI_NUMERICHOST);
 
 	if (sa->sa_family == AF_INET) {
 		sin = (const struct sockaddr_in *)sa;
-		bufp = inet_ntop(AF_INET, &sin->sin_addr, buf,
-						 INET6_ADDRSTRLEN);
 		if (port)
 			*port = sin->sin_port;
 	} else if (sa->sa_family == AF_INET6) {
 		sin6 = (const struct sockaddr_in6 *)sa;
-		bufp = inet_ntop(AF_INET6, &sin6->sin6_addr, buf,
-						 INET6_ADDRSTRLEN);
 		if (port)
 			*port = sin6->sin6_port;
-	}  else {
-		errx(1, "%s got invalid sockaddr family %d\n", __func__, sa->sa_family);
 	}
-	if (bufp == NULL) {
-		perror("failed to convert address for peer\n");
-		errx(1, "peer list failure");
-	}
-	return (bufp);
+
+	if (err)
+		errx(1, "%s", gai_strerror(err));
 }
 
 static void
@@ -383,7 +381,6 @@ dump_peer(const nvlist_t *nvl_peer)
 	const struct sockaddr *endpoint;
 	char outbuf[WG_MAX_STRLEN];
 	char addr_buf[INET6_ADDRSTRLEN];
-	const char *bufp;
 	size_t size;
 	int count, port;
 
@@ -395,8 +392,8 @@ dump_peer(const nvlist_t *nvl_peer)
 	}
 	if (nvlist_exists_binary(nvl_peer, "endpoint")) {
 		endpoint = nvlist_get_binary(nvl_peer, "endpoint", &size);
-		bufp = sa_ntop(endpoint, addr_buf, &port);
-		printf("Endpoint = %s:%d\n", bufp, ntohs(port));
+		sa_ntop(endpoint, addr_buf, &port);
+		printf("Endpoint = %s:%d\n", addr_buf, ntohs(port));
 	}
 
 	if (!nvlist_exists_binary(nvl_peer, "allowed-ips"))
@@ -414,8 +411,9 @@ dump_peer(const nvlist_t *nvl_peer)
 		struct sockaddr *sa;
 
 		sa = __DECONST(void *, &aips->a_addr);
-		bitmask = __DECONST(void *, &aips->a_mask.sa_data);
-		family = aips[i].a_addr.sa_family;
+		bitmask = __DECONST(void *,
+		    ((const struct sockaddr *)&aips->a_mask)->sa_data);
+		family = aips[i].a_addr.ss_family;
 		inet_ntop(family, sa->sa_data, addr_buf, INET6_ADDRSTRLEN);
 		if (family == AF_INET)
 			mask = in_mask2len(bitmask);
@@ -523,12 +521,26 @@ DECL_CMD_FUNC(peerstart, val, d)
 static
 DECL_CMD_FUNC(setwglistenport, val, d)
 {
-	char *endp;
-	u_long ul;
+	struct addrinfo hints, *res;
+	const struct sockaddr_in *sin;
+	const struct sockaddr_in6 *sin6;
 
-	ul = strtoul(val, &endp, 0);
-	if (*endp != '\0')
-		errx(1, "invalid value for listen-port");
+	u_long ul;
+	int err;
+
+	err = getaddrinfo(NULL, val, &hints, &res);
+	if (err)
+		errx(1, "%s", gai_strerror(err));
+
+	if (res->ai_family == AF_INET) {
+		sin = (struct sockaddr_in *)res->ai_addr;
+		ul = sin->sin_port;
+	} else if (res->ai_family == AF_INET6) {
+		sin6 = (struct sockaddr_in6 *)res->ai_addr;
+		ul = sin6->sin6_port;
+	} else {
+		errx(1, "unknown family");
+	}
 
 	nvlist_add_number(nvl_params, "listen-port", ul);
 }
@@ -581,12 +593,12 @@ DECL_CMD_FUNC(setallowedips, val, d)
 	if (*endp != '\0')
 		errx(1, "invalid value for allowedip mask");
 	bzero(&aip->a_mask, sizeof(aip->a_mask));
-	if (aip->a_addr.sa_family == AF_INET)
-		in_len2mask((struct in_addr *)&aip->a_mask.sa_data, ul);
-	else if (aip->a_addr.sa_family == AF_INET6)
-		in6_prefixlen2mask((struct in6_addr *)&aip->a_mask.sa_data, ul);
+	if (aip->a_addr.ss_family == AF_INET)
+		in_len2mask((struct in_addr *)&((struct sockaddr *)&aip->a_mask)->sa_data, ul);
+	else if (aip->a_addr.ss_family == AF_INET6)
+		in6_prefixlen2mask((struct in6_addr *)&((struct sockaddr *)&aip->a_mask)->sa_data, ul);
 	else
-		errx(1, "invalid address family %d\n", aip->a_addr.sa_family);
+		errx(1, "invalid address family %d\n", aip->a_addr.ss_family);
 	allowed_ips_count++;
 	if (allowed_ips_count > 1)
 		nvlist_free_binary(nvl_params, "allowed-ips");
