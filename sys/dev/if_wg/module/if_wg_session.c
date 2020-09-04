@@ -16,9 +16,12 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "opt_inet.h"
+#include "opt_inet6.h"
+
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/systm.h>
-#include <sys/param.h>
 #include <vm/uma.h>
 
 #include <sys/mbuf.h>
@@ -38,6 +41,7 @@
 #include <net/bpf.h>
 
 
+#include <sys/support.h>
 #include <sys/if_wg_session.h>
 #include <sys/if_wg_session_vars.h>
 //#include <sys/wg_module.h>

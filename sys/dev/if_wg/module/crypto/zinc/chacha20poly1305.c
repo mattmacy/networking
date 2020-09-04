@@ -7,10 +7,12 @@
  * Information: https://tools.ietf.org/html/rfc8439
  */
 
+#include <sys/support.h>
 #include <zinc/chacha20poly1305.h>
 #include <zinc/chacha20.h>
 #include <zinc/poly1305.h>
 #include "selftest/run.h"
+
 #if 0
 
 #include <asm/unaligned.h>

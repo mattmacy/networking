@@ -30,6 +30,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_inet6.h"
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/priv.h>
@@ -41,7 +42,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/sockio.h>
 #include <sys/queue.h>
 #include <sys/smp.h>
-
 
 #include <net/if.h>
 #include <net/ethernet.h>
@@ -59,7 +59,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/wg_noise.h>
 #include <sys/if_wg_session_vars.h>
 #include <sys/if_wg_session.h>
-
 
 MALLOC_DEFINE(M_WG, "WG", "wireguard");
 

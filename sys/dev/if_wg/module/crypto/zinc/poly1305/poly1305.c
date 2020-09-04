@@ -7,6 +7,7 @@
  * Information: https://cr.yp.to/mac.html
  */
 
+#include <sys/support.h>
 #include <zinc/poly1305.h>
 #include "../selftest/run.h"
 
