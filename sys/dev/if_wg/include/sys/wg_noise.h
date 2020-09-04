@@ -101,6 +101,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/rwlock.h>
+#include <sys/support.h>
 
 #include <crypto/blake2s.h>
 #include <zinc/chacha20poly1305.h>

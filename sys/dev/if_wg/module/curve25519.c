@@ -14,6 +14,7 @@
 /* Added for compatibility */
 #include <sys/types.h>
 #include <sys/systm.h>
+#include <sys/support.h>
 #include <crypto/curve25519.h>
 
 /* fe means field element. Here the field is \Z/(2^255-19). An element t,

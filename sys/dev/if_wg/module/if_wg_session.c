@@ -16,9 +16,12 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "opt_inet.h"
+#include "opt_inet6.h"
+
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/systm.h>
-#include <sys/param.h>
 #include <vm/uma.h>
 
 #include <sys/mbuf.h>
@@ -38,6 +41,7 @@
 #include <net/bpf.h>
 
 
+#include <sys/support.h>
 #include <sys/if_wg_session.h>
 #include <sys/if_wg_session_vars.h>
 //#include <sys/wg_module.h>
@@ -1046,13 +1050,13 @@ wg_route_add(struct wg_route_table *tbl, struct wg_peer *peer,
 	struct wg_allowedip *cidr;
 	bool needfree = false;
 
-	family = cidr_->a_addr.sa_family;
+	family = cidr_->a_addr.ss_family;
 	if (family == AF_INET) {
 		root = tbl->t_ip;
 	} else if (family == AF_INET6) {
 		root = tbl->t_ip6;
 	} else {
-		printf("bad sa_family %d\n", cidr_->a_addr.sa_family);
+		printf("bad sa_family %d\n", cidr_->a_addr.ss_family);
 		return (EINVAL);
 	}
 	route = malloc(sizeof(*route), M_WG, M_WAITOK|M_ZERO);
