@@ -37,6 +37,7 @@
 #include <sys/protosw.h>
 #include <sys/endian.h>
 #include <sys/kdb.h>
+#include <sys/sysctl.h>
 
 #include <net/bpf.h>
 
@@ -100,8 +101,13 @@ struct wg_pkt_data {
 #define MTAG_WIREGUARD 0xBEAD
 #define WG_PKT_WITH_PADDING(n)	(((n) + (16-1)) & (~(16-1)))
 
+SYSCTL_NODE(_net, OID_AUTO, wg, CTLFLAG_RW, 0, "Wireguard");
+static int wireguard_debug;
+SYSCTL_INT(_net_wg, OID_AUTO, debug, CTLFLAG_RWTUN, &wireguard_debug, 0,
+	"enable debug logging");
 
-#define DPRINTF(sc,  ...) if_printf(sc->sc_ifp, ##__VA_ARGS__)
+
+#define DPRINTF(sc,  ...) if (wireguard_debug) if_printf(sc->sc_ifp, ##__VA_ARGS__)
 
 /* Socket */
 int	wg_socket_close(struct wg_socket *);
@@ -1843,7 +1849,7 @@ wg_decap(struct wg_softc *sc, struct mbuf *m)
 
 	res = noise_remote_decrypt(&peer->p_remote, &data->data, plaintext_len);
 	if (__predict_false(res)) {
-		printf("noise_remote_decrypt fail %d \n", res);
+		DPRINTF(sc, "noise_remote_decrypt fail %d \n", res);
 		if (res == EINVAL) {
 			goto error;
 		} else if (res == ECONNRESET) {
