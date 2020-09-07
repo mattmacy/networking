@@ -67,7 +67,8 @@ static void __init chacha20_fpu_init(void)
 		!!(cpu_stdext_feature & CPUID_STDEXT_AVX512F)  &&
 		!!(cpu_stdext_feature & CPUID_STDEXT_AVX512VL);
 #endif
-	printf("ssse3: %d  avx2: %d avx512: %d avx512vl: %d\n",
+	if (bootverbose)
+		printf("ssse3: %d  avx2: %d avx512: %d avx512vl: %d\n",
 		   chacha20_use_ssse3,
 		   chacha20_use_avx2,
 		   chacha20_use_avx512,

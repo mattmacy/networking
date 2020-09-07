@@ -35,7 +35,7 @@ static inline bool selftest_run(const char *name, bool (*selftest)(void),
 	for (i = 0; i < nobs_len; ++i)
 		*nobs[i] = BIT(i) & largest_subset;
 
-	if (largest_subset == set && !failed)
+	if (largest_subset == set && !failed && bootverbose)
 		pr_info("%s self-tests: pass\n", name);
 
 	return !WARN_ON(largest_subset != set);
