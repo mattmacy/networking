@@ -312,6 +312,13 @@ wg_mtu_set(if_ctx_t ctx, uint32_t mtu)
 }
 
 static int
+wg_set_promisc(if_ctx_t ctx, int flags)
+{
+
+	return (0);
+}
+
+static int
 wg_detach(if_ctx_t ctx)
 {
 	struct wg_softc *sc;
@@ -839,6 +846,7 @@ static device_method_t wg_if_methods[] = {
 	DEVMETHOD(ifdi_stop, wg_stop),
 	DEVMETHOD(ifdi_priv_ioctl, wg_priv_ioctl),
 	DEVMETHOD(ifdi_mtu_set, wg_mtu_set),
+	DEVMETHOD(ifdi_promisc_set, wg_set_promisc),
 	DEVMETHOD_END
 };
 
