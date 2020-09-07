@@ -311,7 +311,8 @@ dump_peer(const nvlist_t *nvl_peer)
 		bitmask = __DECONST(void *,
 		    ((const struct sockaddr *)&aips->a_mask)->sa_data);
 		family = aips[i].a_addr.ss_family;
-		inet_ntop(family, sa->sa_data, addr_buf, INET6_ADDRSTRLEN);
+		getnameinfo(sa, sa->sa_len, addr_buf, INET6_ADDRSTRLEN, NULL,
+		    0, NI_NUMERICHOST);
 		if (family == AF_INET)
 			mask = in_mask2len(bitmask);
 		else if (family == AF_INET6)
