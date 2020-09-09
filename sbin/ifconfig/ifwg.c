@@ -124,7 +124,6 @@ parse_endpoint(const char *endpoint_)
 	}
 	bzero(&hints, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
-	hints.ai_flags = AI_NUMERICHOST;
 	err = getaddrinfo(endpoint, port, &hints, &res);
 	if (err)
 		errx(1, "%s", gai_strerror(err));
