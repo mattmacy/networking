@@ -232,6 +232,14 @@ wg_transmit(struct ifnet *ifp, struct mbuf *m)
 	struct wg_tag *t;
 	int rc;
 
+
+	/*
+	 * Work around the raw, unbridled, steaming
+	 * brokenness of the ipv6 mld code.
+	 */
+	if (__predict_false(ifp->if_flags & IFF_DYING))
+		return (ENXIO);
+
 	rc = 0;
 	sc = iflib_get_softc(ifp->if_softc);
 
