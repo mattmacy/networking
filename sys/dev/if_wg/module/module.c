@@ -774,47 +774,6 @@ out:
 }
 
 static int
-wg_peer_list(struct wg_softc *sc, struct ifdrv *ifd)
-{
-	size_t size;
-	void *packed;
-	nvlist_t *nvl, **nvl_array;
-	int err, peer_count;;
-
-	nvl = NULL;
-	peer_count = 0;
-	err = wg_marshal_peers(sc, &nvl, &nvl_array, &peer_count);
-	if (err)
-		return (err);
-	packed = nvlist_pack(nvl, &size);
-	if (packed == NULL) {
-		err = nvlist_error(nvl);
-		printf("failed to pack peer-list nvlist %d\n", err);
-		goto out;
-	}
-	if (ifd->ifd_len == 0) {
-		ifd->ifd_len = size;
-		goto out;
-	}
-	if (ifd->ifd_data == NULL) {
-		err = EFAULT;
-		goto out;
-	}
-	if (ifd->ifd_len && ifd->ifd_len < size) {
-		err = ENOSPC;
-		goto out;
-	}
-	if (ifd->ifd_len >= size)
-		err = copyout(packed, ifd->ifd_data, size);
-	ifd->ifd_len = size;
- out:
-	//wg_marshalled_peers_free(nvl, nvl_array, peer_count);
-	nvlist_destroy(nvl);
-	free(packed, M_NVLIST);
-	return (err);
-}
-
-static int
 wg_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 {
 	struct wg_softc *sc = iflib_get_softc(ctx);
@@ -838,9 +797,6 @@ wg_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 			break;
 		case WGC_PEER_ADD:
 			return (wgc_peer_add(sc, ifd));
-			break;
-		case WGC_PEER_LIST:
-			return (wg_peer_list(sc, ifd));
 			break;
 	}
 	return (ENOTSUP);

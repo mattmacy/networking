@@ -65,8 +65,9 @@ typedef enum {
 	WGC_PEER_ADD = 0x1,
 	WGC_PEER_DEL = 0x2,
 	WGC_PEER_UPDATE = 0x3,
-	WGC_PEER_LIST = 0x4,
-	WGC_LOCAL_SHOW = 0x5,
+	/* WGC_PEER_LIST */
+	WGC_GET = 0x5,
+	WGC_SET = 0x6,
 } wg_cmd_t;
 
 static nvlist_t *nvl_params;
@@ -368,11 +369,11 @@ DECL_CMD_FUNC(peerlist, val, d)
 	const nvlist_t *nvl, *nvl_peer;
 	const nvlist_t *const *nvl_peerlist;
 
-	if (get_nvl_out_size(s, WGC_PEER_LIST, &size))
+	if (get_nvl_out_size(s, WGC_GET, &size))
 		errx(1, "can't get peer list size");
 	if ((packed = malloc(size)) == NULL)
 		errx(1, "malloc failed for peer list");
-	if (do_cmd(s, WGC_PEER_LIST, packed, size, 0))
+	if (do_cmd(s, WGC_GET, packed, size, 0))
 		errx(1, "failed to obtain peer list");
 
 	nvl = nvlist_unpack(packed, size, 0);
@@ -543,11 +544,11 @@ wireguard_status(int s)
 		/* If it's not a wg interface just return */
 		return;
 	}
-	if (get_nvl_out_size(s, WGC_LOCAL_SHOW, &size))
+	if (get_nvl_out_size(s, WGC_GET, &size))
 		return;
 	if ((packed = malloc(size)) == NULL)
 		return;
-	if (do_cmd(s, WGC_LOCAL_SHOW, packed, size, 0))
+	if (do_cmd(s, WGC_GET, packed, size, 0))
 		return;
 	nvl = nvlist_unpack(packed, size, 0);
 	if (nvlist_exists_number(nvl, "listen-port")) {
