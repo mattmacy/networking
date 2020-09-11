@@ -1913,8 +1913,8 @@ wg_softc_decrypt(struct wg_softc *sc)
 	struct mbuf *m;
 
 #if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
-	if (PCB_USER_FPU(curpcb))
-		fpu_kern_thread(0);
+	if (__predict_false(!is_fpu_kern_thread(0)))
+		fpu_kern_thread(FPU_KERN_NORMAL);
 #endif
 	NET_EPOCH_ENTER(et);
 	while ((m = buf_ring_dequeue_mc(sc->sc_decap_ring)) != NULL)
@@ -1929,8 +1929,8 @@ wg_softc_encrypt(struct wg_softc *sc)
 	struct epoch_tracker et;
 
 #if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
-	if (PCB_USER_FPU(curpcb))
-		fpu_kern_thread(0);
+	if (__predict_false(!is_fpu_kern_thread(0)))
+		fpu_kern_thread(FPU_KERN_NORMAL);
 #endif
 	NET_EPOCH_ENTER(et);
 	while ((m = buf_ring_dequeue_mc(sc->sc_encap_ring)) != NULL)
