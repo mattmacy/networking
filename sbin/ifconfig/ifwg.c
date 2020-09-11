@@ -518,18 +518,6 @@ DECL_CMD_FUNC(setendpoint, val, d)
 	parse_endpoint(val);
 }
 
-static int
-is_match(void)
-{
-	if (strncmp("wg", name, 2))
-		return (-1);
-	if (strlen(name) < 3)
-		return (-1);
-	if (!isdigit(name[2]))
-		return (-1);
-	return (0);
-}
-
 static void
 wireguard_status(int s)
 {
@@ -540,10 +528,6 @@ wireguard_status(int s)
 	const void *key;
 	uint16_t listen_port;
 
-	if (is_match() < 0) {
-		/* If it's not a wg interface just return */
-		return;
-	}
 	if (get_nvl_out_size(s, WGC_GET, &size))
 		return;
 	if ((packed = malloc(size)) == NULL)
