@@ -748,32 +748,6 @@ out:
 }
 
 static int
-wgc_peer_add(struct wg_softc *sc, struct ifdrv *ifd)
-{
-	void *nvlpacked;
-	nvlist_t *nvl;
-	int err;
-
-	if (ifd->ifd_len == 0 || ifd->ifd_data == NULL)
-		return (EFAULT);
-	nvlpacked = malloc(ifd->ifd_len, M_TEMP, M_WAITOK);
-
-	err = copyin(ifd->ifd_data, nvlpacked, ifd->ifd_len);
-	if (err)
-		goto out;
-	nvl = nvlist_unpack(nvlpacked, ifd->ifd_len, 0);
-	if (nvl == NULL) {
-		err = EBADMSG;
-		goto out;
-	}
-	err = wg_peer_add(sc, nvl);
-	nvlist_destroy(nvl);
-out:
-	free(nvlpacked, M_TEMP);
-	return (err);
-}
-
-static int
 wg_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 {
 	struct wg_softc *sc = iflib_get_softc(ctx);
@@ -794,9 +768,6 @@ wg_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 			break;
 		case WGC_SET:
 			return (wgc_set(sc, ifd));
-			break;
-		case WGC_PEER_ADD:
-			return (wgc_peer_add(sc, ifd));
 			break;
 	}
 	return (ENOTSUP);

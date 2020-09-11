@@ -62,10 +62,6 @@
 #include "ifconfig.h"
 
 typedef enum {
-	WGC_PEER_ADD = 0x1,
-	WGC_PEER_DEL = 0x2,
-	WGC_PEER_UPDATE = 0x3,
-	/* WGC_PEER_LIST */
 	WGC_GET = 0x5,
 	WGC_SET = 0x6,
 } wg_cmd_t;
@@ -377,6 +373,8 @@ DECL_CMD_FUNC(peerlist, val, d)
 		errx(1, "failed to obtain peer list");
 
 	nvl = nvlist_unpack(packed, size, 0);
+	if (!nvlist_exists_nvlist_array(nvl, "peer-list"))
+		return;
 	nvl_peerlist = nvlist_get_nvlist_array(nvl, "peer-list", &peercount);
 
 	for (int i = 0; i < peercount; i++, nvl_peerlist++) {
@@ -388,9 +386,14 @@ DECL_CMD_FUNC(peerlist, val, d)
 static void
 peerfinish(int s, void *arg)
 {
+	nvlist_t *nvl, **nvl_array;
 	void *packed;
 	size_t size;
 
+	if ((nvl = nvlist_create(0)) == NULL)
+		errx(1, "failed to allocate nvlist");
+	if ((nvl_array = calloc(sizeof(void *), 1)) == NULL)
+		errx(1, "failed to allocate nvl_array");
 	if (!nvlist_exists_binary(nvl_params, "public-key"))
 		errx(1, "must specify a public-key for adding peer");
 	if (!nvlist_exists_binary(nvl_params, "endpoint"))
@@ -398,10 +401,11 @@ peerfinish(int s, void *arg)
 	if (allowed_ips_count == 0)
 		errx(1, "must specify at least one range of allowed-ips to add a peer");
 
-	packed = nvlist_pack(nvl_params, &size);
-	if (packed == NULL)
-		errx(1, "failed to setup create request");
-	if (do_cmd(s, WGC_PEER_ADD, packed, size, true))
+	nvl_array[0] = nvl_params;
+	nvlist_add_nvlist_array(nvl, "peer-list", (const nvlist_t * const *)nvl_array, 1);
+	packed = nvlist_pack(nvl, &size);
+
+	if (do_cmd(s, WGC_SET, packed, size, true))
 		errx(1, "failed to install peer");
 }
 
