@@ -307,10 +307,11 @@ restart:
 				    (*sipp)->udata);
 		}
 #endif
-
+		KASSERT((curpcb->pcb_flags & PCB_FPUNOSAVE) == 0, ("init_main has nosave set"));
 		/* Call function */
 		(*((*sipp)->func))((*sipp)->udata);
 
+		KASSERT((curpcb->pcb_flags & PCB_FPUNOSAVE) == 0, ("%p left nosave set", (*sipp)->func));
 #if defined(VERBOSE_SYSINIT)
 		if (verbose)
 			printf("done.\n");

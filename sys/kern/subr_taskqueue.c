@@ -465,6 +465,7 @@ taskqueue_run_locked(struct taskqueue *queue)
 		tb.tb_seq = ++queue->tq_seq;
 		TQ_UNLOCK(queue);
 
+		KASSERT((curpcb->pcb_flags & PCB_FPUNOSAVE) == 0, ("taskq for %p started with nosave", task->ta_func));
 		KASSERT(task->ta_func != NULL, ("task->ta_func is NULL"));
 		if (!in_net_epoch && TASK_IS_NET(task)) {
 			in_net_epoch = true;
@@ -474,7 +475,7 @@ taskqueue_run_locked(struct taskqueue *queue)
 			in_net_epoch = false;
 		}
 		task->ta_func(task->ta_context, pending);
-
+		KASSERT((curpcb->pcb_flags & PCB_FPUNOSAVE) == 0, ("%p returned with nosave", task->ta_func));
 		TQ_LOCK(queue);
 		wakeup(task);
 	}
