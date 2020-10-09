@@ -303,7 +303,7 @@ dump_peer(const nvlist_t *nvl_peer)
 		void *bitmask;
 		struct sockaddr *sa;
 
-		sa = __DECONST(void *, &aips->a_addr);
+		sa = __DECONST(void *, &aips[i].a_addr);
 		bitmask = __DECONST(void *,
 		    ((const struct sockaddr *)&aips->a_mask)->sa_data);
 		family = aips[i].a_addr.ss_family;
