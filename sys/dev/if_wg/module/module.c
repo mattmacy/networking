@@ -523,7 +523,8 @@ wgc_get(struct wg_softc *sc, struct ifdrv *ifd)
 		nvlist_add_number(nvl, "listen-port", sc->sc_socket.so_port);
 	if (sc->sc_local.l_has_identity) {
 		nvlist_add_binary(nvl, "public-key", sc->sc_local.l_public, WG_KEY_SIZE);
-		nvlist_add_binary(nvl, "private-key", sc->sc_local.l_private, WG_KEY_SIZE);
+		if (curthread->td_ucred->cr_uid == 0)
+			nvlist_add_binary(nvl, "private-key", sc->sc_local.l_private, WG_KEY_SIZE);
 	}
 	if (sc->sc_hashtable.h_num_peers > 0) {
 		err = wg_marshal_peers(sc, NULL, &nvl_array, &peer_count);
@@ -767,6 +768,8 @@ wg_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 			return (wgc_get(sc, ifd));
 			break;
 		case WGC_SET:
+			if (priv_check(curthread, PRIV_DRIVER))
+				return (EPERM);
 			return (wgc_set(sc, ifd));
 			break;
 	}
