@@ -803,7 +803,7 @@ wg_timers_run_send_keepalive(struct wg_timers *t)
 		t->t_need_another_keepalive = 0;
 		callout_reset(&t->t_send_keepalive,
 		    KEEPALIVE_TIMEOUT*hz,
-		     (timeout_t *)wg_timers_run_send_keepalive, peer);
+		     (timeout_t *)wg_timers_run_send_keepalive, t);
 	}
 }
 
