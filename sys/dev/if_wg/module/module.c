@@ -330,6 +330,8 @@ wg_detach(if_ctx_t ctx)
 	struct wg_softc *sc;
 
 	sc = iflib_get_softc(ctx);
+	if_link_state_change(sc->sc_ifp, LINK_STATE_DOWN);
+	pause("link_down", hz/4);
 	//sc->wg_accept_port = 0;
 	wg_socket_reinit(sc, NULL, NULL);
 	wg_peer_remove_all(sc);
