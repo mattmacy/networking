@@ -766,7 +766,7 @@ wg_priv_ioctl(if_ctx_t ctx, u_long command, caddr_t data)
 			return (wgc_get(sc, ifd));
 			break;
 		case WGC_SET:
-			if (priv_check(curthread, PRIV_DRIVER))
+			if (priv_check(curthread, PRIV_NET_HWIOCTL))
 				return (EPERM);
 			return (wgc_set(sc, ifd));
 			break;
