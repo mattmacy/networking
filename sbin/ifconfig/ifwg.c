@@ -608,7 +608,7 @@ wireguard_ctor(void)
 	for (i = 0; i < nitems(wireguard_cmds);  i++)
 		cmd_register(&wireguard_cmds[i]);
 	af_register(&af_wireguard);
-	clone_setdefcallback("wg", wg_create);
+	clone_setdefcallback_prefix("wg", wg_create);
 }
 
 #endif
