@@ -758,13 +758,20 @@ wg_timers_event_want_initiation(struct wg_timers *t)
 }
 
 static void
+wg_grouptaskqueue_enqueue(struct wg_peer *peer, struct grouptask *task)
+{
+	if (peer->p_sc->sc_ifp->if_link_state == LINK_STATE_UP)
+		GROUPTASK_ENQUEUE(task);
+}
+
+static void
 wg_timers_run_send_initiation(struct wg_timers *t, int is_retry)
 {
 	struct wg_peer	 *peer = CONTAINER_OF(t, struct wg_peer, p_timers);
 	if (!is_retry)
 		t->t_handshake_retries = 0;
 	if (wg_timers_expired_handshake_last_sent(t) == ETIMEDOUT)
-		GROUPTASK_ENQUEUE(&peer->p_send_initiation);
+		wg_grouptask_enqueue(peer, &peer->p_send_initiation);
 }
 
 static void
@@ -798,7 +805,7 @@ wg_timers_run_send_keepalive(struct wg_timers *t)
 {
 	struct wg_peer	*peer = CONTAINER_OF(t, struct wg_peer, p_timers);
 
-	GROUPTASK_ENQUEUE(&peer->p_send_keepalive);
+	wg_grouptask_enqueue(peer, &peer->p_send_keepalive);
 	if (t->t_need_another_keepalive) {
 		t->t_need_another_keepalive = 0;
 		callout_reset(&t->t_send_keepalive,
@@ -837,7 +844,7 @@ wg_timers_run_persistent_keepalive(struct wg_timers *t)
 	struct wg_peer	 *peer = CONTAINER_OF(t, struct wg_peer, p_timers);
 
 	if (t->t_persistent_keepalive_interval != 0)
-		GROUPTASK_ENQUEUE(&peer->p_send_keepalive);
+		wg_grouptask_enqueue(peer, &peer->p_send_keepalive);
 }
 
 static void
@@ -1778,6 +1785,11 @@ wg_encap(struct wg_softc *sc, struct mbuf *m)
 	struct wg_tag *t;
 	int res;
 
+	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN) {
+		m_freem(m);
+		return;
+	}
+
 	NET_EPOCH_ASSERT();
 	t = wg_tag_get(m);
 	peer = t->t_peer;
@@ -1839,6 +1851,11 @@ wg_decap(struct wg_softc *sc, struct mbuf *m)
 	size_t plaintext_len;
 	uint8_t version;
 	int res;
+
+	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN) {
+		m_freem(m);
+		return;
+	}
 
 	NET_EPOCH_ASSERT();
 	data = mtod(m, struct wg_pkt_data *);
@@ -2110,12 +2127,10 @@ wg_peer_remove_all(struct wg_softc *sc)
 	struct wg_peer *peer, *tpeer;
 	struct epoch_tracker et;
 
-	NET_EPOCH_ENTER(et);
 	CK_LIST_FOREACH_SAFE(peer, &sc->sc_hashtable.h_peers_list,
 	    p_entry, tpeer) {
 		wg_hashtable_peer_remove(&peer->p_sc->sc_hashtable, peer);
 		/* FIXME -- needs to be deferred */
 		wg_peer_destroy(peer);
 	}
-	NET_EPOCH_EXIT(et);
 }

@@ -240,7 +240,6 @@ wg_transmit(struct ifnet *ifp, struct mbuf *m)
 
 	rc = 0;
 	sc = iflib_get_softc(ifp->if_softc);
-
 	if ((t = wg_tag_get(m)) == NULL) {
 		rc = ENOBUFS;
 		goto early_out;
@@ -332,6 +331,7 @@ wg_detach(if_ctx_t ctx)
 	sc = iflib_get_softc(ctx);
 	if_link_state_change(sc->sc_ifp, LINK_STATE_DOWN);
 	pause("link_down", hz/4);
+	taskqgroup_drain_all(qgroup_if_io_tqg);
 	//sc->wg_accept_port = 0;
 	wg_socket_reinit(sc, NULL, NULL);
 	wg_peer_remove_all(sc);
