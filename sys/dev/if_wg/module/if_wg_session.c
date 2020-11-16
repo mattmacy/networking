@@ -758,7 +758,7 @@ wg_timers_event_want_initiation(struct wg_timers *t)
 }
 
 static void
-wg_grouptaskqueue_enqueue(struct wg_peer *peer, struct grouptask *task)
+wg_grouptask_enqueue(struct wg_peer *peer, struct grouptask *task)
 {
 	if (peer->p_sc->sc_ifp->if_link_state == LINK_STATE_UP)
 		GROUPTASK_ENQUEUE(task);
@@ -2125,7 +2125,6 @@ void
 wg_peer_remove_all(struct wg_softc *sc)
 {
 	struct wg_peer *peer, *tpeer;
-	struct epoch_tracker et;
 
 	CK_LIST_FOREACH_SAFE(peer, &sc->sc_hashtable.h_peers_list,
 	    p_entry, tpeer) {

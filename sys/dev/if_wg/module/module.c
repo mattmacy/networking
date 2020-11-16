@@ -330,9 +330,8 @@ wg_detach(if_ctx_t ctx)
 
 	sc = iflib_get_softc(ctx);
 	if_link_state_change(sc->sc_ifp, LINK_STATE_DOWN);
-	pause("link_down", hz/4);
 	taskqgroup_drain_all(qgroup_if_io_tqg);
-	//sc->wg_accept_port = 0;
+	pause("link_down", hz/4);
 	wg_socket_reinit(sc, NULL, NULL);
 	wg_peer_remove_all(sc);
 	mtx_destroy(&sc->sc_mtx);
