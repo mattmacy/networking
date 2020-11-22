@@ -112,7 +112,7 @@ SYSCTL_INT(_net_wg, OID_AUTO, debug, CTLFLAG_RWTUN, &wireguard_debug, 0,
 /* Socket */
 int	wg_socket_close(struct wg_socket *);
 static int	wg_socket_bind(struct wg_softc *sc, struct wg_socket *);
-static int	wg_send(struct wg_socket *, struct wg_endpoint *, struct mbuf *);
+static int	wg_send(struct wg_softc *, struct wg_endpoint *, struct mbuf *);
 
 /* Timers */
 static int	wg_timers_expired_handshake_last_sent(struct wg_timers *);
@@ -163,7 +163,7 @@ static void	wg_peer_get_endpoint(struct wg_peer *, struct wg_endpoint *);
 
 static void	wg_deliver_out(struct wg_peer *);
 static void	wg_deliver_in(struct wg_peer *);
-static void	wg_send_buf(struct wg_socket *, struct wg_endpoint *, uint8_t *, size_t);
+static void	wg_send_buf(struct wg_softc *, struct wg_endpoint *, uint8_t *, size_t);
 
 
 static void	wg_send_keepalive(struct wg_peer *);
@@ -397,199 +397,14 @@ wg_socket_bind(struct wg_softc *sc, struct wg_socket *so)
 	return (rc);
 }
 
-#ifdef USE_LEGACY
 static int
-wg_laddr_v4(struct inpcb *inp, struct in_addr *laddr4, struct wg_endpoint *e)
-{
-	int err;
-
-	if (e->e_local.l_in.s_addr == INADDR_ANY) {
-			CURVNET_SET(inp->inp_vnet);
-			err = in_pcbladdr(inp, &e->e_remote.r_sin.sin_addr, laddr4, curthread->td_ucred);
-			CURVNET_RESTORE();
-			if (err != 0) {
-				printf("in_pcbladdr() -> %d\n", err);
-				return err;
-			}
-			e->e_local.l_in = *laddr4;
-		}
-		return (0);
-}
-
-static int
-wg_laddr_v6(struct inpcb *inp, struct in6_addr *laddr6, struct wg_endpoint *e)
-{
-	int err;
-
-		if (IN6_IS_ADDR_UNSPECIFIED(&e->e_local.l_in6)) {
-			err = in6_selectsrc_addr(0, &e->e_remote.r_sin6.sin6_addr, 0,
-									 NULL, laddr6, NULL);
-			if (err != 0)
-				return err;
-			e->e_local.l_in6 = *laddr6;
-		}
-		return (0);
-}
-
-static int
-wg_mbuf_add_ipudp(struct wg_socket *so, struct wg_endpoint *e, struct mbuf **m0)
-{
-	struct mbuf *m = *m0;
-	int err, len = m->m_pkthdr.len;
-	struct inpcb *inp;
-	struct thread *td;
-
-	struct ip *ip4;
-	struct ip6_hdr *ip6;
-	struct udphdr *udp;
-
-	struct in_addr laddr4;
-	struct in6_addr laddr6;
-	in_port_t rport;
-	uint8_t  pr;
-
-	td = curthread;
-	if (e->e_remote.r_sa.sa_family == AF_INET) {
-		int size = sizeof(*ip4) + sizeof(*udp);
-		m = m_prepend(m, size, M_WAITOK);
-		bzero(m->m_data, size);
-		m->m_pkthdr.flowid = AF_INET;
-		inp = sotoinpcb(so->so_so4);
-
-		ip4 = mtod(m, struct ip *);
-		ip4->ip_v	= IPVERSION;
-		ip4->ip_hl	= sizeof(*ip4) >> 2;
-		// XXX
-		// ip4->ip_tos	= inp->inp_ip.ip_tos; /* TODO ECN */
-		ip4->ip_len	= htons(sizeof(*ip4) + sizeof(*udp) + len);
-		//ip4->ip_id	= htons(ip_randomid());
-		ip4->ip_off	= 0;
-		ip4->ip_ttl	= 127;
-		ip4->ip_p	= IPPROTO_UDP;
-
-		if ((err = wg_laddr_v4(inp, &laddr4, e)))
-			return (err);
-
-		ip4->ip_src	= e->e_local.l_in;
-		ip4->ip_dst	= e->e_remote.r_sin.sin_addr;
-		rport		= e->e_remote.r_sin.sin_port;
-
-		udp = (struct udphdr *)(mtod(m, caddr_t) + sizeof(*ip4));
-		udp->uh_dport = rport;
-		udp->uh_ulen = htons(sizeof(*udp) + len);
-		udp->uh_sport = htons(so->so_port);
-		pr  = inp->inp_socket->so_proto->pr_protocol;
-		udp->uh_sum =  in_pseudo(ip4->ip_src.s_addr, ip4->ip_dst.s_addr,
-		    htons((u_short)len + sizeof(struct udphdr) + pr));
-	} else if (e->e_remote.r_sa.sa_family == AF_INET6) {
-		m = m_prepend(m, sizeof(*ip6) + sizeof(*udp), M_WAITOK);
-		m->m_pkthdr.flowid = AF_INET;
-
-		inp = sotoinpcb(so->so_so6);
-
-		ip6 = mtod(m, struct ip6_hdr *);
-		/* TODO ECN */
-		//ip6->ip6_flow	 = inp->inp_flowinfo & IPV6_FLOWINFO_MASK;
-		ip6->ip6_vfc	&= ~IPV6_VERSION_MASK;
-		ip6->ip6_vfc	|= IPV6_VERSION;
-#if 0	/* ip6_plen will be filled in ip6_output. */
-		ip6->ip6_plen	 = htons(XXX);
-#endif
-		ip6->ip6_nxt	 = IPPROTO_UDP;
-		ip6->ip6_hlim	 = in6_selecthlim(inp, NULL);
-
-		if ((err = wg_laddr_v6(inp, &laddr6, e)))
-			return (err);
-
-		ip6->ip6_src	 = e->e_local.l_in6;
-		/* ip6->ip6_dst	 = e->e_remote.r_sin6.sin6_addr; */
-		rport		 = e->e_remote.r_sin6.sin6_port;
-
-		if (sa6_embedscope(&e->e_remote.r_sin6, 0) != 0)
-			return ENXIO;
-
-		udp = (struct udphdr *)(mtod(m, caddr_t) + sizeof(*ip6));
-
-	} else {
-		return EAFNOSUPPORT;
-	}
-
-	m->m_flags &= ~(M_BCAST|M_MCAST);
-	m->m_pkthdr.csum_flags = CSUM_UDP | CSUM_UDP_IPV6;
-	m->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
-	*m0 = m;
-
-	return 0;
-}
-
-static int
-wg_socket_send_mbuf(struct wg_socket *so, struct mbuf *m, uint16_t family)
-{
-	int err, size;
-	struct inpcb *inp;
-	struct mbuf *mp;
-
-	err = 0;
-	switch (family) {
-		case AF_INET: {
-			size = sizeof(struct ip) + sizeof(struct udphdr);
-			inp = sotoinpcb(so->so_so4);
-			break;
-		}
-		case AF_INET6: {
-			size = sizeof(struct ip6_hdr) + sizeof(struct udphdr);
-			inp = sotoinpcb(so->so_so6);
-			break;
-		}
-	default:
-		wg_m_freem(m);
-		err = EAFNOSUPPORT;
-	}
-	if (err)
-		return (err);
-	if (m->m_len == 0) {
-		if ((mp = m_pullup(m, size)) == NULL)
-			return (ENOMEM);
-	}
-
-	CURVNET_SET(inp->inp_vnet);
-	switch (family) {
-		case AF_INET: {
-			err = ip_output(m, NULL, NULL, IP_RAWOUTPUT, NULL, NULL);
-			break;
-		}
-		case AF_INET6: {
-			err = ip6_output(m, NULL, NULL, IPV6_MINMTU, NULL, NULL, NULL);
-			break;
-		}
-	}
-	if (err)
-		log(LOG_WARNING, "ip_output()->%d\n", err);
-	CURVNET_RESTORE();
-	return (err);
-}
-
-static int
-wg_send(struct wg_socket *so, struct wg_endpoint *e, struct mbuf *m)
-{
-	int rc;
-
-	if ((rc = wg_mbuf_add_ipudp(so, e, &m))) {
-		printf("add ipudp fail %d\n", rc);
-		return (rc);
-	}
-	rc = wg_socket_send_mbuf(so, m, e->e_remote.r_sa.sa_family);
-	printf("wg_socket_send_mbuf returned %d\n", rc);
-	return (rc);
-}
-#else
-static int
-wg_send(struct wg_socket *so, struct wg_endpoint *e, struct mbuf *m)
+wg_send(struct wg_softc *sc, struct wg_endpoint *e, struct mbuf *m)
 {
 	struct epoch_tracker et;
 	struct sockaddr *sa;
+	struct wg_socket *so = &sc->sc_socket;
 	struct mbuf	 *control = NULL;
-	int		 ret;
+	int		 ret = 0;
 
 	/* Get local control address before locking */
 	if (e->e_remote.r_sa.sa_family == AF_INET) {
@@ -610,6 +425,8 @@ wg_send(struct wg_socket *so, struct wg_endpoint *e, struct mbuf *m)
 	sa = &e->e_remote.r_sa;
 
 	NET_EPOCH_ENTER(et);
+	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN)
+		goto done;
 	if (e->e_remote.r_sa.sa_family == AF_INET && so->so_so4 != NULL)
 		ret = sosend(so->so_so4, sa, NULL, m, control, 0, curthread);
 	else if (e->e_remote.r_sa.sa_family == AF_INET6 && so->so_so6 != NULL)
@@ -619,14 +436,10 @@ wg_send(struct wg_socket *so, struct wg_endpoint *e, struct mbuf *m)
 		wg_m_freem(control);
 		wg_m_freem(m);
 	}
+done:
 	NET_EPOCH_EXIT(et);
-	if (ret)
-		printf("sosend->%d\n", ret);
 	return (ret);
 }
-#endif
-
-
 
 /* Timers */
 /* Should be called after an authenticated data packet is sent. */
@@ -1402,7 +1215,7 @@ wg_peer_send_buf(struct wg_peer *peer, uint8_t *buf, size_t len)
 	wg_timers_event_any_authenticated_packet_traversal(&peer->p_timers);
 	wg_timers_event_any_authenticated_packet_sent(&peer->p_timers);
 	wg_peer_get_endpoint(peer, &endpoint);
-	wg_send_buf(&peer->p_sc->sc_socket, &endpoint, buf, len);
+	wg_send_buf(peer->p_sc, &endpoint, buf, len);
 }
 
 static void
@@ -1468,7 +1281,7 @@ wg_send_cookie(struct wg_softc *sc, struct cookie_macs *cm, uint32_t idx,
 	e = wg_mbuf_endpoint_get(m);
 	cookie_checker_create_payload(&sc->sc_cookie, cm, pkt.nonce,
 	    pkt.ec, &e->e_remote.r_sa);
-	wg_send_buf(&sc->sc_socket, e, (uint8_t *)&pkt, sizeof(pkt));
+	wg_send_buf(sc, e, (uint8_t *)&pkt, sizeof(pkt));
 }
 
 static void
@@ -1506,9 +1319,12 @@ wg_deliver_out(struct wg_peer *peer)
 	struct wg_endpoint endpoint;
 	int ret;
 
+	NET_EPOCH_ENTER(et);
+	if (peer->p_sc->sc_ifp->if_link_state == LINK_STATE_DOWN)
+		goto done;
+
 	wg_peer_get_endpoint(peer, &endpoint);
 
-	NET_EPOCH_ENTER(et);
 	while ((m = wg_queue_dequeue(&peer->p_encap_queue, &t)) != NULL) {
 		/* t_mbuf will contain the encrypted packet */
 		if (t->t_mbuf == NULL){
@@ -1517,7 +1333,7 @@ wg_deliver_out(struct wg_peer *peer)
 			continue;
 		}
 		M_MOVE_PKTHDR(t->t_mbuf, m);
-		ret = wg_send(&peer->p_sc->sc_socket, &endpoint, t->t_mbuf);
+		ret = wg_send(peer->p_sc, &endpoint, t->t_mbuf);
 
 		if (ret == 0) {
 			wg_timers_event_any_authenticated_packet_traversal(
@@ -1533,6 +1349,7 @@ wg_deliver_out(struct wg_peer *peer)
 		}
 		wg_m_freem(m);
 	}
+done:
 	NET_EPOCH_EXIT(et);
 }
 
@@ -1545,12 +1362,17 @@ wg_deliver_in(struct wg_peer *peer)
 	struct epoch_tracker et;
 	struct wg_tag *t;
 	struct inpcb *inp;
+	uint32_t af;
 	int version;
 
-	sc = peer->p_sc;
-	so = &sc->sc_socket;
 
 	NET_EPOCH_ENTER(et);
+	sc = peer->p_sc;
+	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN)
+		goto done;
+
+	so = &sc->sc_socket;
+
 	while ((m = wg_queue_dequeue(&peer->p_decap_queue, &t)) != NULL) {
 		/* t_mbuf will contain the encrypted packet */
 		if (t->t_mbuf == NULL){
@@ -1574,27 +1396,31 @@ wg_deliver_in(struct wg_peer *peer)
 		m->m_flags &= ~(M_MCAST | M_BCAST);
 		m->m_pkthdr.rcvif = sc->sc_ifp;
 		version = mtod(m, struct ip *)->ip_v;
-		BPF_MTAP(sc->sc_ifp, m);
 		if (version == IPVERSION) {
+			af = AF_INET;
+			BPF_MTAP2(sc->sc_ifp, &af, sizeof(af), m);
 			inp = sotoinpcb(so->so_so4);
 			CURVNET_SET(inp->inp_vnet);
 			ip_input(m);
 			CURVNET_RESTORE();
 		}	else if (version == 6) {
+			af = AF_INET;
+			BPF_MTAP2(sc->sc_ifp, &af, sizeof(af), m);
 			inp = sotoinpcb(so->so_so6);
 			CURVNET_SET(inp->inp_vnet);
 			ip6_input(m);
 			CURVNET_RESTORE();
 		} else
-				wg_m_freem(m);
+			wg_m_freem(m);
 
 		wg_timers_event_data_received(&peer->p_timers);
 	}
+done:
 	NET_EPOCH_EXIT(et);
 }
 
 static void
-wg_send_buf(struct wg_socket *so, struct wg_endpoint *e, uint8_t *buf,
+wg_send_buf(struct wg_softc *sc, struct wg_endpoint *e, uint8_t *buf,
     size_t len)
 {
 	struct mbuf	*m;
@@ -1606,14 +1432,14 @@ retry:
 	m_copyback(m, 0, len, buf);
 
 	if (ret == 0) {
-		ret = wg_send(so, e, m);
+		ret = wg_send(sc, e, m);
 		/* Retry if we couldn't bind to e->e_local */
 		if (ret == EADDRNOTAVAIL) {
 			bzero(&e->e_local, sizeof(e->e_local));
 			goto retry;
 		}
 	} else {
-		wg_send(so, e, m);
+		wg_send(sc, e, m);
 	}
 }
 
@@ -1852,10 +1678,8 @@ wg_decap(struct wg_softc *sc, struct mbuf *m)
 	uint8_t version;
 	int res;
 
-	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN) {
-		m_freem(m);
+	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN)
 		return;
-	}
 
 	NET_EPOCH_ASSERT();
 	data = mtod(m, struct wg_pkt_data *);
