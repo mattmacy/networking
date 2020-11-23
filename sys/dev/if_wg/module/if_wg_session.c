@@ -1611,10 +1611,8 @@ wg_encap(struct wg_softc *sc, struct mbuf *m)
 	struct wg_tag *t;
 	int res;
 
-	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN) {
-		m_freem(m);
+	if (sc->sc_ifp->if_link_state == LINK_STATE_DOWN)
 		return;
-	}
 
 	NET_EPOCH_ASSERT();
 	t = wg_tag_get(m);
