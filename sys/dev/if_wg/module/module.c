@@ -62,7 +62,9 @@ __FBSDID("$FreeBSD$");
 
 MALLOC_DEFINE(M_WG, "WG", "wireguard");
 
-#define WG_CAPS		IFCAP_LINKSTATE
+#define	WG_CAPS		IFCAP_LINKSTATE
+#define	ph_family	PH_loc.eight[5]
+
 TASKQGROUP_DECLARE(if_io_tqg);
 
 static int clone_count;
@@ -228,6 +230,7 @@ wg_transmit(struct ifnet *ifp, struct mbuf *m)
 	struct epoch_tracker et;
 	struct wg_peer *peer;
 	struct wg_tag *t;
+	uint32_t af;
 	int rc;
 
 
@@ -244,7 +247,8 @@ wg_transmit(struct ifnet *ifp, struct mbuf *m)
 		rc = ENOBUFS;
 		goto early_out;
 	}
-	ETHER_BPF_MTAP(ifp, m);
+	af = m->m_pkthdr.ph_family;
+	BPF_MTAP2(ifp, &af, sizeof(af), m);
 
 	NET_EPOCH_ENTER(et);
 	peer = wg_route_lookup(&sc->sc_routes, m, OUT);
@@ -283,6 +287,7 @@ early_out:
 static int
 wg_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *sa, struct route *rt)
 {
+	m->m_pkthdr.ph_family =  sa->sa_family;
 	return (wg_transmit(ifp, m));
 }
 
