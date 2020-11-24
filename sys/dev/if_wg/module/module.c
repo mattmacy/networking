@@ -340,6 +340,7 @@ wg_detach(if_ctx_t ctx)
 	taskqgroup_drain_all(qgroup_if_io_tqg);
 	pause("link_down", hz/4);
 	wg_peer_remove_all(sc);
+	pause("link_down", hz);
 	mtx_destroy(&sc->sc_mtx);
 	rw_destroy(&sc->sc_index_lock);
 	taskqgroup_detach(qgroup_if_io_tqg, &sc->sc_handshake);
