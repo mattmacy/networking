@@ -11,13 +11,6 @@
 #include <zinc/poly1305.h>
 #include "../selftest/run.h"
 
-#if 0
-#include <asm/unaligned.h>
-#include <linux/kernel.h>
-#include <linux/string.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#endif
 #if defined(CONFIG_ZINC_ARCH_X86_64)
 #include "poly1305-x86_64-glue.c"
 #elif defined(CONFIG_ZINC_ARCH_ARM) || defined(CONFIG_ZINC_ARCH_ARM64)

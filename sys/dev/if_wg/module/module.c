@@ -497,20 +497,6 @@ wg_marshal_peers(struct wg_softc *sc, nvlist_t **nvlp, nvlist_t ***nvl_arrayp, i
 	return (err);
 }
 
-#if 0
-static void
-wg_marshalled_peers_free(nvlist_t *nvl, nvlist_t **nvl_array, int peer_count)
-{
-	if (nvl_array != NULL) {
-		for (int i = 0; i < peer_count; i++)
-			nvlist_destroy(nvl_array[i]);
-		free(nvl_array, M_TEMP);
-	}
-	if (nvl)
-		nvlist_destroy(nvl);
-}
-#endif
-
 static int
 wgc_get(struct wg_softc *sc, struct ifdrv *ifd)
 {

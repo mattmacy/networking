@@ -34,12 +34,7 @@ static inline void blake2s(uint8_t *out, const uint8_t *in, const uint8_t *key,
 			   const size_t keylen)
 {
 	struct blake2s_state state;
-#if 0
-	
-	WARN_ON(IS_ENABLED(DEBUG) && ((!in && inlen > 0) || !out || !outlen ||
-		outlen > BLAKE2S_HASH_SIZE || keylen > BLAKE2S_KEY_SIZE ||
-		(!key && keylen)));
-#endif
+
 	if (keylen)
 		blake2s_init_key(&state, outlen, key, keylen);
 	else

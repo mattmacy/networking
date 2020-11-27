@@ -8380,34 +8380,6 @@ static bool __init chacha20poly1305_selftest(void)
 			success = false;
 		}
 	}
-#if 0
-	simd_get(&simd_context);
-	for (i = 0; i < ARRAY_SIZE(chacha20poly1305_enc_vectors); ++i) {
-		if (chacha20poly1305_enc_vectors[i].nlen != 8)
-			continue;
-		memcpy(computed_output, chacha20poly1305_enc_vectors[i].input,
-		       chacha20poly1305_enc_vectors[i].ilen);
-		sg_init_one(sg_src, computed_output,
-			    chacha20poly1305_enc_vectors[i].ilen +
-				POLY1305_MAC_SIZE);
-		ret = chacha20poly1305_encrypt_sg_inplace(sg_src,
-			chacha20poly1305_enc_vectors[i].ilen,
-			chacha20poly1305_enc_vectors[i].assoc,
-			chacha20poly1305_enc_vectors[i].alen,
-			get_unaligned_le64(chacha20poly1305_enc_vectors[i].nonce),
-			chacha20poly1305_enc_vectors[i].key,
-			&simd_context);
-		if (!ret || memcmp(computed_output,
-				   chacha20poly1305_enc_vectors[i].output,
-				   chacha20poly1305_enc_vectors[i].ilen +
-							POLY1305_MAC_SIZE)) {
-			pr_err("chacha20poly1305 sg encryption self-test %zu: FAIL\n",
-			       i + 1);
-			success = false;
-		}
-	}
-	simd_put(&simd_context);
-#endif	
 	for (i = 0; i < ARRAY_SIZE(chacha20poly1305_dec_vectors); ++i) {
 		memset(computed_output, 0, MAXIMUM_TEST_BUFFER_LEN);
 		ret = chacha20poly1305_decrypt(computed_output,
@@ -8428,31 +8400,6 @@ static bool __init chacha20poly1305_selftest(void)
 			success = false;
 		}
 	}
-#if 0
-	simd_get(&simd_context);
-	for (i = 0; i < ARRAY_SIZE(chacha20poly1305_dec_vectors); ++i) {
-		memcpy(computed_output, chacha20poly1305_dec_vectors[i].input,
-		       chacha20poly1305_dec_vectors[i].ilen);
-		sg_init_one(sg_src, computed_output,
-			    chacha20poly1305_dec_vectors[i].ilen);
-		ret = chacha20poly1305_decrypt_sg_inplace(sg_src,
-			chacha20poly1305_dec_vectors[i].ilen,
-			chacha20poly1305_dec_vectors[i].assoc,
-			chacha20poly1305_dec_vectors[i].alen,
-			get_unaligned_le64(chacha20poly1305_dec_vectors[i].nonce),
-			chacha20poly1305_dec_vectors[i].key, &simd_context);
-		if (!decryption_success(ret,
-			chacha20poly1305_dec_vectors[i].failure,
-			memcmp(computed_output, chacha20poly1305_dec_vectors[i].output,
-			       chacha20poly1305_dec_vectors[i].ilen -
-							POLY1305_MAC_SIZE))) {
-			pr_err("chacha20poly1305 sg decryption self-test %zu: FAIL\n",
-			       i + 1);
-			success = false;
-		}
-	}
-	simd_put(&simd_context);
-#endif
 	for (i = 0; i < ARRAY_SIZE(xchacha20poly1305_enc_vectors); ++i) {
 		memset(computed_output, 0, MAXIMUM_TEST_BUFFER_LEN);
 		xchacha20poly1305_encrypt(computed_output,
@@ -8491,56 +8438,6 @@ static bool __init chacha20poly1305_selftest(void)
 			success = false;
 		}
 	}
-#if 0
-	simd_get(&simd_context);
-	for (total_len = POLY1305_MAC_SIZE; IS_ENABLED(DEBUG_CHACHA20POLY1305_SLOW_CHUNK_TEST)
-	     && total_len <= 1 << 10; ++total_len) {
-		for (i = 0; i <= total_len; ++i) {
-			for (j = i; j <= total_len; ++j) {
-				sg_init_table(sg_src, 3);
-				sg_set_buf(&sg_src[0], input, i);
-				sg_set_buf(&sg_src[1], input + i, j - i);
-				sg_set_buf(&sg_src[2], input + j, total_len - j);
-				memset(computed_output, 0, total_len);
-				memset(input, 0, total_len);
-
-				if (!chacha20poly1305_encrypt_sg_inplace(sg_src,
-					total_len - POLY1305_MAC_SIZE, NULL, 0,
-					0, enc_key001, &simd_context))
-					goto chunkfail;
-				chacha20poly1305_encrypt(computed_output,
-					computed_output,
-					total_len - POLY1305_MAC_SIZE, NULL, 0, 0,
-					enc_key001);
-				if (memcmp(computed_output, input, total_len))
-					goto chunkfail;;
-				if (!chacha20poly1305_decrypt(computed_output,
-					input, total_len, NULL, 0, 0, enc_key001))
-					goto chunkfail;
-				for (k = 0; k < total_len - POLY1305_MAC_SIZE; ++k) {
-					if (computed_output[k])
-						goto chunkfail;
-				}
-				if (!chacha20poly1305_decrypt_sg_inplace(sg_src,
-					total_len, NULL, 0, 0, enc_key001,
-					&simd_context))
-					goto chunkfail;
-				for (k = 0; k < total_len - POLY1305_MAC_SIZE; ++k) {
-					if (input[k])
-						goto chunkfail;
-				}
-				continue;
-
-			chunkfail:
-				pr_err("chacha20poly1305 chunked self-test %zu/%zu/%zu: FAIL\n",
-				       total_len, i, j);
-				success = false;
-			}
-
-		}
-	}
-	simd_put(&simd_context);
-#endif
 out:
 	kfree(computed_output);
 	kfree(input);
