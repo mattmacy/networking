@@ -144,8 +144,6 @@ static struct mbuf *wg_queue_dequeue(struct wg_queue *, struct wg_tag **);
 /* Route */
 void	wg_route_destroy(struct wg_route_table *);
 
-/* Hashtable */
-
 /* Cookie */
 
 static int wg_cookie_validate_packet(struct cookie_checker *, struct mbuf *,
@@ -196,13 +194,13 @@ wg_m_freem(struct mbuf *m)
 static void
 m_calchdrlen(struct mbuf *m)
 {
-       struct mbuf *n;
-       int plen = 0;
+	struct mbuf *n;
+	int plen = 0;
 
-       MPASS(m->m_flags & M_PKTHDR);
-       for (n = m; n; n = n->m_next)
-               plen += n->m_len;
-       m->m_pkthdr.len = plen;
+	MPASS(m->m_flags & M_PKTHDR);
+	for (n = m; n; n = n->m_next)
+		plen += n->m_len;
+	m->m_pkthdr.len = plen;
 }
 
 static inline int
@@ -410,7 +408,7 @@ wg_send(struct wg_softc *sc, struct wg_endpoint *e, struct mbuf *m)
 			    sizeof(struct in6_pktinfo), IPV6_PKTINFO,
 			    IPPROTO_IPV6);
 	} else {
-		return EAFNOSUPPORT;
+		return (EAFNOSUPPORT);
 	}
 
 	/* Get remote address */
@@ -484,7 +482,6 @@ wg_timers_event_any_authenticated_packet_sent(struct wg_timers *t)
 static void
 wg_timers_event_any_authenticated_packet_received(struct wg_timers *t)
 {
-
 	callout_del(&t->t_new_handshake);
 }
 
@@ -532,6 +529,7 @@ wg_timers_event_handshake_complete(struct wg_timers *t)
 {
 	if (t->t_disabled)
 		return;
+
 	callout_del(&t->t_retry_handshake);
 	t->t_handshake_retries = 0;
 	getnanotime(&t->t_handshake_complete);
@@ -545,9 +543,9 @@ wg_timers_event_handshake_complete(struct wg_timers *t)
 static void
 wg_timers_event_session_derived(struct wg_timers *t)
 {
-
 	if (t->t_disabled)
 		return;
+
 	callout_reset(&t->t_zero_key_material,
 	    REJECT_AFTER_TIME * 3 * hz,
 	    (timeout_t *)wg_timers_run_zero_key_material, t);
@@ -556,9 +554,9 @@ wg_timers_event_session_derived(struct wg_timers *t)
 static void
 wg_timers_event_want_initiation(struct wg_timers *t)
 {
-
 	if (t->t_disabled)
 		return;
+
 	wg_timers_run_send_initiation(t, 0);
 }
 
@@ -573,6 +571,7 @@ static void
 wg_timers_run_send_initiation(struct wg_timers *t, int is_retry)
 {
 	struct wg_peer	 *peer = CONTAINER_OF(t, struct wg_peer, p_timers);
+
 	if (!is_retry)
 		t->t_handshake_retries = 0;
 	if (wg_timers_expired_handshake_last_sent(t) == ETIMEDOUT)
@@ -1927,11 +1926,6 @@ free:
 		wg_m_freem(m);
 	}
 }
-/*
- * XXX
- */
-uint16_t default_port = 5000;
-
 
 void
 wg_peer_remove_all(struct wg_softc *sc)
