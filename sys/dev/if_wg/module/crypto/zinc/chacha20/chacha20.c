@@ -233,7 +233,6 @@ static void __exit mod_exit(void)
 {
 }
 
-//module_param(nosimd, bool, 0);
 module_init(mod_init);
 module_exit(mod_exit);
 #endif

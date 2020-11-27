@@ -235,8 +235,7 @@ wg_transmit(struct ifnet *ifp, struct mbuf *m)
 
 
 	/*
-	 * Work around the raw, unbridled, steaming
-	 * brokenness of the ipv6 mld code.
+	 * Work around lifetime issue in the ipv6 mld code.
 	 */
 	if (__predict_false(ifp->if_flags & IFF_DYING))
 		return (ENXIO);
@@ -304,8 +303,6 @@ wg_attach_post(if_ctx_t ctx)
 	if_setflagbits(ifp, IFF_NOARP, IFF_POINTOPOINT);
 	ifp->if_transmit = wg_transmit;
 	ifp->if_output = wg_output;
-	//CK_LIST_INIT(&sc->wg_peer_list);
-	//mtx_init(&sc->wg_socket_lock, "sock lock", NULL, MTX_DEF);
 
 	wg_hashtable_init(&sc->sc_hashtable);
 	sc->sc_index = hashinit(HASHTABLE_INDEX_SIZE, M_DEVBUF, &sc->sc_index_mask);
@@ -359,7 +356,6 @@ wg_init(if_ctx_t ctx)
 {
 	struct ifnet *ifp;
 	struct wg_softc *sc;
-	//struct wg_peer *peer;
 	int rc;
 
 	sc = iflib_get_softc(ctx);
@@ -368,13 +364,6 @@ wg_init(if_ctx_t ctx)
 	if (rc)
 		return;
 	if_link_state_change(ifp, LINK_STATE_UP);
-	/*
-	CK_STAILQ_FOREACH(&sc->wg_peer_list, ...) {
-		wg_pkt_staged_tx(peer);
-		if (peer->wp_keepalive_intvl)
-			wg_pkt_keepalive_tx(peer);
-			}
-	*/
 }
 
 static void
@@ -386,17 +375,6 @@ wg_stop(if_ctx_t ctx)
 	sc  = iflib_get_softc(ctx);
 	ifp = iflib_get_ifp(ctx);
 	if_link_state_change(ifp, LINK_STATE_DOWN);
-	/*
-	CK_LIST_FOREACH(&sc->wg_peer_list, ...) {
-		wg_staged_pktq_purge(peer);
-		wg_timers_stop(peer);
-		wg_noise_handshake_clear(&peer->handshake);
-		wg_noise_keypairs_clear(&peer->keypairs);
-		wg_noise_reset_last_sent_handshake(&peer->last_sent_handshake);
-		}
-	*/
-	//mbufq_drain(&sc->wg_rx_handshakes);
-	//wg_socket_reinit(sc, NULL, NULL);
 }
 
 static nvlist_t *
@@ -543,8 +521,6 @@ wgc_get(struct wg_softc *sc, struct ifdrv *ifd)
 	err = copyout(packed, ifd->ifd_data, size);
 	ifd->ifd_len = size;
  out:
-	//if (peer_count)
-	// wg_marshalled_peers_free(nvl_peers, nvl_array, peer_count);
 	nvlist_destroy(nvl);
 	free(packed, M_NVLIST);
 	return (err);

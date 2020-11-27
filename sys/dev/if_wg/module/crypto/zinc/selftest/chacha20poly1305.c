@@ -8350,8 +8350,6 @@ static bool __init chacha20poly1305_selftest(void)
 	size_t i, j __unused, k __unused, total_len __unused;
 	u8 *computed_output = NULL, *input = NULL;
 	bool success = true, ret;
-	// simd_context_t simd_context;
-	//	struct scatterlist sg_src[3];
 
 	computed_output = kmalloc(MAXIMUM_TEST_BUFFER_LEN, GFP_KERNEL);
 	input = kmalloc(MAXIMUM_TEST_BUFFER_LEN, GFP_KERNEL);

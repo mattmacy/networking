@@ -8,9 +8,6 @@
 #ifndef _BLAKE2S_H_
 #define _BLAKE2S_H_
 
-/*#define WARN_ON(a) if(a) printf("%s failed at %s:%d\n", #a, __FILE__, __LINE__)
-#define IS_ENABLED(...) true*/
-
 
 enum blake2s_lengths {
 	BLAKE2S_BLOCK_SIZE = 64,
@@ -38,10 +35,11 @@ static inline void blake2s(uint8_t *out, const uint8_t *in, const uint8_t *key,
 			   const size_t keylen)
 {
 	struct blake2s_state state;
-
-	/*WARN_ON(IS_ENABLED(DEBUG) && ((!in && inlen > 0) || !out || !outlen ||
+#ifdef __linux___
+	WARN_ON(IS_ENABLED(DEBUG) && ((!in && inlen > 0) || !out || !outlen ||
 		outlen > BLAKE2S_HASH_SIZE || keylen > BLAKE2S_KEY_SIZE ||
-		(!key && keylen)));*/
+		(!key && keylen)));
+#endif
 
 	if (keylen)
 		blake2s_init_key(&state, outlen, key, keylen);

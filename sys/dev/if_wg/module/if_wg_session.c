@@ -45,7 +45,6 @@
 #include <sys/support.h>
 #include <sys/if_wg_session.h>
 #include <sys/if_wg_session_vars.h>
-//#include <sys/wg_module.h>
 #include <sys/syslog.h>
 
 #include <netinet/in.h>
@@ -64,7 +63,6 @@
 
 #include <crypto/blake2s.h>
 #include <crypto/curve25519.h>
-//#include <crypto/chachapoly.h>
 #include <machine/in_cksum.h>
 
 #define MAX_STAGED_PKT		128
@@ -238,12 +236,6 @@ wg_mbuf_endpoint_get(struct mbuf *m)
 
 	return (&hdr->t_endpoint);
 }
-
-
-/*
- * Magic values baked in to handshake protocol
- */
-//static atomic64_t keypair_counter = ATOMIC64_INIT(0);
 
 /* Socket */
 
@@ -891,8 +883,6 @@ wg_route_add(struct wg_route_table *tbl, struct wg_peer *peer,
 	cidr = &route->r_cidr;
 
 	RADIX_NODE_HEAD_LOCK(root);
-	//	printf("addaddr(%16D, %16D)\n",
-	//		   &cidr->a_addr, ":", &cidr->a_mask, ":");
 	node = root->rnh_addaddr(&cidr->a_addr, &cidr->a_mask, &root->rh,
 							route->r_nodes);
 	if (node == route->r_nodes) {
