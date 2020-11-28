@@ -1239,8 +1239,8 @@ wg_send_response(struct wg_peer *peer)
 
 	NET_EPOCH_ENTER(et);
 
-	DPRINTF(peer->p_sc, "Sending handshake response to peer %lu\n",
-			peer->p_id);
+	DPRINTF(peer->p_sc, "Sending handshake response to peer %llu\n",
+	    (unsigned long long));
 
 	ret = noise_create_response(&peer->p_remote, &pkt.resp);
 	if (ret)
@@ -1527,8 +1527,8 @@ wg_handshake(struct wg_softc *sc, struct mbuf *m)
 		}
 
 		peer = CONTAINER_OF(remote, struct wg_peer, p_remote);
-		DPRINTF(sc, "Receiving handshake initiation from peer %lu\n",
-				peer->p_id);
+		DPRINTF(sc, "Receiving handshake initiation from peer %llu\n",
+		    (unsigned long long)peer->p_id);
 		res = wg_send_response(peer);
 		if (res == 0 && noise_remote_begin_session(&peer->p_remote) == 0)
 			wg_timers_event_session_derived(&peer->p_timers);
