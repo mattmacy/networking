@@ -184,8 +184,10 @@ simd_get(simd_context_t *ctx)
 static inline void
 simd_put(simd_context_t *ctx)
 {
+#if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
 	if (is_fpu_kern_thread(0))
 		return;
+#endif
 	if (ctx->sc_state & HAVE_SIMD_IN_USE)
 		kfpu_end(ctx);
 	ctx->sc_state = HAVE_NO_SIMD;
@@ -194,8 +196,12 @@ simd_put(simd_context_t *ctx)
 static __must_check inline bool
 simd_use(simd_context_t *ctx)
 {
+#if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
 	if (is_fpu_kern_thread(0))
 		return true;
+#else
+	return false;
+#endif
 	if (ctx == NULL)
 		return false;
 	if (!(ctx->sc_state & HAVE_FULL_SIMD))
