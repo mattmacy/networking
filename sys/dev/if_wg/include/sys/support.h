@@ -132,7 +132,7 @@ put_unaligned_le32(u32 val, void *p)
 #define EXPORT_SYMBOL(x)
 
 #define U32_MAX		((u32)~0U)
-
+#if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
 #define	kfpu_begin(ctx) {							\
 		if (ctx->sc_fpu_ctx == NULL)	 {			 \
 			ctx->sc_fpu_ctx = fpu_kern_alloc_ctx(0); \
@@ -146,6 +146,10 @@ put_unaligned_le32(u32 val, void *p)
 		fpu_kern_leave(curthread, ctx->sc_fpu_ctx);	\
 		critical_exit();			     \
 }
+#else
+#define	kfpu_begin(ctx)
+#define	kfpu_end(ctx)
+#endif
 
 typedef enum {
 	HAVE_NO_SIMD = 1 << 0,
