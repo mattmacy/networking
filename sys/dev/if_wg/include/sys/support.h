@@ -149,6 +149,7 @@ put_unaligned_le32(u32 val, void *p)
 #else
 #define	kfpu_begin(ctx)
 #define	kfpu_end(ctx)
+#define	fpu_kern_free_ctx(p)
 #endif
 
 typedef enum {
