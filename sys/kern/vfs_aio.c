@@ -1423,10 +1423,7 @@ aio_queue_vfs(struct kaiocb *job)
 	cmd = cb->aio_lio_opcode == LIO_WRITE ? UIO_BIO_WRITE : UIO_BIO_READ;
 	map_bytes = btoc(cb->aio_nbytes + page_offset)*PAGE_SIZE;
 	io_pages = btoc(map_bytes);
-	if (io_pages <= (MAXPHYS >> PAGE_SHIFT))
-		ma = job->pages;
-	else
-		ma = malloc(sizeof(vm_page_t )*io_pages, M_AIOS, M_WAITOK);
+	ma = malloc(sizeof(vm_page_t )*io_pages, M_AIOS, M_WAITOK);
 
 	bio_size = sizeof(*ubio) + sizeof(*bv)*io_pages;
 	ubio = malloc(bio_size, M_AIOS, M_WAITOK);
@@ -1466,16 +1463,13 @@ aio_queue_vfs(struct kaiocb *job)
 		bv->bv_page = ma[i];
 		page_offset = 0;
 	}
-	if (ma != job->pages) {
-		free(ma, M_AIOS);
-		ma = NULL;
-	}
+	free(ma, M_AIOS);
+	ma = NULL;
 	error = VOP_UBOP(vp, ubio, FOF_OFFSET);
 	if (error == EINPROGRESS || error == 0)
 		return (0);
 err:
-	if (ma != job->pages)
-		free(ma, M_AIOS);
+	free(ma, M_AIOS);
 	free(ubio, M_AIOS);
 	return (error);
 }
