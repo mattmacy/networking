@@ -80,7 +80,7 @@ npf_worker_sysinit(unsigned nworkers)
 
 	winfo = kmem_zalloc(len, KM_SLEEP);
 	winfo->worker_count = nworkers;
-	mutex_init(&winfo->lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&winfo->lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	cv_init(&winfo->exit_cv, "npfgcx");
 	cv_init(&winfo->cv, "npfgcw");
 	LIST_INIT(&winfo->instances);

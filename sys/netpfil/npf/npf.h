@@ -42,10 +42,16 @@
 #if defined(_NPF_STANDALONE)
 #include "npf_stand.h"
 #else
-#include <sys/ioctl.h>
+#include <sys/ioccom.h>
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
 #endif
+
+typedef struct nvlist_ref {
+	void *buf;
+	uintptr_t len;
+	int flags;
+} nvlist_ref_t;
 
 struct npf;
 typedef struct npf npf_t;
@@ -89,6 +95,7 @@ typedef uint8_t			npf_netmask_t;
     MODULE(MODULE_CLASS_MISC, name, (sizeof(req) - 1) ? ("npf," req) : "npf")
 
 #include <net/if.h>
+#include <net/vnet.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
@@ -189,7 +196,7 @@ typedef struct {
 static inline bool
 npf_iscached(const npf_cache_t *npc, const int inf)
 {
-	KASSERT(npc->npc_nbuf != NULL);
+	MPASS(npc->npc_nbuf != NULL);
 	return __predict_true((npc->npc_info & inf) != 0);
 }
 

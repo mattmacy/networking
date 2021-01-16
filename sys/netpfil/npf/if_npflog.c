@@ -114,7 +114,7 @@ npflog_clone_create(struct if_clone *ifc, int unit)
 	ifnet_t *ifp;
 
 	sc = kmem_zalloc(sizeof(npflog_softc_t), KM_SLEEP);
-	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 
 	ifp = &sc->sc_if;
 	ifp->if_softc = sc;

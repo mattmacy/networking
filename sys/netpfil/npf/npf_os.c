@@ -523,55 +523,28 @@ npf_active_p(void)
  * which provides sufficient guarantees for NPF.
  */
 
-ebr_t *
-npf_ebr_create(void)
-{
-	return pserialize_create();
-}
-
-void
-npf_ebr_destroy(ebr_t *ebr)
-{
-	pserialize_destroy(ebr);
-}
-
-void
-npf_ebr_register(ebr_t *ebr)
-{
-	KASSERT(ebr != NULL); (void)ebr;
-}
-
-void
-npf_ebr_unregister(ebr_t *ebr)
-{
-	KASSERT(ebr != NULL); (void)ebr;
-}
-
 int
-npf_ebr_enter(ebr_t *ebr)
+npf_ebr_enter(epoch_tracker_t et)
 {
-	KASSERT(ebr != NULL); (void)ebr;
-	return pserialize_read_enter();
+	epoch_enter_preempt(net_epoch_preempt, et)
 }
 
 void
-npf_ebr_exit(ebr_t *ebr, int s)
+npf_ebr_exit(epoch_tracker_t et)
 {
-	KASSERT(ebr != NULL); (void)ebr;
-	pserialize_read_exit(s);
+	epoch_exit_preempt(net_epoch_preempt, et)
 }
 
 void
 npf_ebr_full_sync(ebr_t *ebr)
 {
-	pserialize_perform(ebr);
+	epoch_wait_preempt(net_epoch_preempt);
 }
 
 bool
-npf_ebr_incrit_p(ebr_t *ebr)
+npf_ebr_incrit_p(void)
 {
-	KASSERT(ebr != NULL); (void)ebr;
-	return pserialize_in_read_section();
+	in_epoch(net_epoch_preempt);
 }
 
 #endif

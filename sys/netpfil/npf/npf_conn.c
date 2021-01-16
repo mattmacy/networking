@@ -166,14 +166,14 @@ npf_conn_init(npf_t *npf)
 	};
 	npf_param_register(npf, param_map, __arraycount(param_map));
 
-	npf->conn_cache[0] = pool_cache_init(
+	npf->conn_cache[0] = uma_zcreate("npfcnp4l",
 	    offsetof(npf_conn_t, c_keys[NPF_CONNKEY_V4WORDS * 2]),
-	    0, 0, 0, "npfcn4pl", NULL, IPL_NET, NULL, NULL, NULL);
-	npf->conn_cache[1] = pool_cache_init(
+		NULL, NULL, NULL, 0, 0);
+	npf->conn_cache[0] = uma_zcreate("npfcnp6l",
 	    offsetof(npf_conn_t, c_keys[NPF_CONNKEY_V6WORDS * 2]),
-	    0, 0, 0, "npfcn6pl", NULL, IPL_NET, NULL, NULL, NULL);
+		NULL, NULL, NULL, 0, 0);
 
-	mutex_init(&npf->conn_lock, MUTEX_DEFAULT, IPL_NONE);
+	npf_mutex_init(&npf->conn_lock, MUTEX_DEFAULT, IPL_NONE);
 	atomic_store_relaxed(&npf->conn_tracking, CONN_TRACKING_OFF);
 	npf->conn_db = npf_conndb_create();
 	npf_conndb_sysinit(npf);
@@ -448,7 +448,7 @@ npf_conn_establish(npf_cache_t *npc, const unsigned di, bool global)
 	NPF_PRINTF(("NPF: create conn %p\n", con));
 	npf_stats_inc(npf, NPF_STAT_CONN_CREATE);
 
-	mutex_init(&con->c_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&con->c_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	atomic_store_relaxed(&con->c_flags, di & PFIL_ALL);
 	atomic_store_relaxed(&con->c_refcnt, 0);
 	con->c_rproc = NULL;
@@ -874,7 +874,7 @@ npf_conn_import(npf_t *npf, npf_conndb_t *cd, const nvlist_t *cdict,
 	/* Allocate a connection and initialize it (clear first). */
 	con = pool_cache_get(npf->conn_cache[idx], PR_WAITOK);
 	memset(con, 0, sizeof(npf_conn_t));
-	mutex_init(&con->c_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&con->c_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	npf_stats_inc(npf, NPF_STAT_CONN_CREATE);
 
 	con->c_proto = dnvlist_get_number(cdict, "proto", 0);

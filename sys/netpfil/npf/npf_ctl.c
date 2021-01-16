@@ -41,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/conf.h>
 #include <sys/kmem.h>
+#include <sys/mbuf.h>
 #include <net/bpf.h>
 #endif
 
@@ -73,7 +74,7 @@ npf_mk_params(npf_t *npf, const nvlist_t *req, nvlist_t *resp, bool set)
 		if (set) {
 			/* Actually set the parameter. */
 			error = npfk_param_set(npf, name, val);
-			KASSERT(error == 0);
+			MPASS(error == 0);
 			continue;
 		}
 
@@ -150,7 +151,7 @@ npf_mk_table(npf_t *npf, const nvlist_t *req, nvlist_t *resp,
 	int type;
 	int error = 0;
 
-	KASSERT(tblp != NULL);
+	MPASS(tblp != NULL);
 
 	/* Table name, ID and type.  Validate them. */
 	name = dnvlist_get_string(req, "name", NULL);
@@ -221,7 +222,7 @@ npf_mk_tables(npf_t *npf, const nvlist_t *req, nvlist_t *resp, npf_config_t *nc)
 		}
 
 		error = npf_tableset_insert(tblset, t);
-		KASSERT(error == 0);
+		MPASS(error == 0);
 	}
 	nc->tableset = tblset;
 	return error;
@@ -443,7 +444,7 @@ npf_mk_singlenat(npf_t *npf, const nvlist_t *nat, nvlist_t *resp,
 	if (error) {
 		return error;
 	}
-	KASSERT(rl != NULL);
+	MPASS(rl != NULL);
 	*rlp = rl;
 
 	/* If this rule is named, then it is a group with NAT policies. */
@@ -777,7 +778,7 @@ out:
 	npf_config_exit(npf);
 
 	if (rl) {
-		KASSERT(error);
+		MPASS(error);
 		npf_rule_free(rl);
 	}
 	return error;

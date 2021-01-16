@@ -196,7 +196,7 @@ npf_natpolicy_create(npf_t *npf, const nvlist_t *nat, npf_ruleset_t *rset)
 	if (((np->n_type == NPF_NATIN) ^ (np->n_type == NPF_NATOUT)) == 0) {
 		goto err;
 	}
-	mutex_init(&np->n_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&np->n_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	LIST_INIT(&np->n_nat_list);
 
 	/*

@@ -80,7 +80,7 @@ struct npf_rproc {
 void
 npf_ext_init(npf_t *npf)
 {
-	mutex_init(&npf->ext_lock, MUTEX_DEFAULT, IPL_NONE);
+	npf_mutex_init(&npf->ext_lock, MUTEX_DEFAULT, IPL_NONE);
 	LIST_INIT(&npf->ext_list);
 }
 

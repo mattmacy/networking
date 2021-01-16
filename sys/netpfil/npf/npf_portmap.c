@@ -142,7 +142,7 @@ npf_portmap_create(int min_port, int max_port)
 	npf_portmap_t *pm;
 
 	pm = kmem_zalloc(sizeof(npf_portmap_t), KM_SLEEP);
-	mutex_init(&pm->list_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&pm->list_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	pm->addr_map = thmap_create(0, NULL, THMAP_NOCOPY);
 	pm->min_port = min_port;
 	pm->max_port = max_port;

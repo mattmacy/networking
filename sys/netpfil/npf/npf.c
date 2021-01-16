@@ -74,8 +74,7 @@ npfk_create(int flags, const npf_mbufops_t *mbufops,
 	npf_t *npf;
 
 	npf = kmem_zalloc(sizeof(npf_t), KM_SLEEP);
-	npf->ebr = npf_ebr_create();
-	npf->stats_percpu = percpu_alloc(NPF_STATS_SIZE);
+	COUNTER_ARRAY_ALLOC(npf->stats_percpu, NPF_STATS_SIZE, M_WAITOK);
 	npf->mbufops = mbufops;
 	npf->arg = arg;
 
@@ -116,8 +115,7 @@ npfk_destroy(npf_t *npf)
 	npf_state_sysfini(npf);
 	npf_param_fini(npf);
 
-	npf_ebr_destroy(npf->ebr);
-	percpu_free(npf->stats_percpu, NPF_STATS_SIZE);
+	COUNTER_ARRAY_FREE(npf->stats_percpu, NPF_STATS_SIZE);
 	kmem_free(npf, sizeof(npf_t));
 }
 
@@ -127,6 +125,7 @@ npfk_destroy(npf_t *npf)
  *
  * => Will not modify the configuration reference.
  */
+#ifdef notyet
 __dso_public int
 npfk_load(npf_t *npf, const void *config_ref, npf_error_t *err)
 {
@@ -140,6 +139,7 @@ npfk_load(npf_t *npf, const void *config_ref, npf_error_t *err)
 
 	return error;
 }
+#endif
 
 __dso_public void
 npfk_gc(npf_t *npf)
@@ -150,14 +150,12 @@ npfk_gc(npf_t *npf)
 __dso_public void
 npfk_thread_register(npf_t *npf)
 {
-	npf_ebr_register(npf->ebr);
+	
 }
 
 __dso_public void
 npfk_thread_unregister(npf_t *npf)
 {
-	npf_ebr_full_sync(npf->ebr);
-	npf_ebr_unregister(npf->ebr);
 }
 
 __dso_public void *
@@ -185,37 +183,13 @@ npf_getkernctx(void)
 void
 npf_stats_inc(npf_t *npf, npf_stats_t st)
 {
-	uint64_t *stats = percpu_getref(npf->stats_percpu);
-	stats[st]++;
-	percpu_putref(npf->stats_percpu);
+	counter_u64_add(npf->stats_percpu[st], 1);
 }
 
 void
 npf_stats_dec(npf_t *npf, npf_stats_t st)
 {
-	uint64_t *stats = percpu_getref(npf->stats_percpu);
-	stats[st]--;
-	percpu_putref(npf->stats_percpu);
-}
-
-static void
-npf_stats_collect(void *mem, void *arg, struct cpu_info *ci)
-{
-	uint64_t *percpu_stats = mem, *full_stats = arg;
-
-	for (unsigned i = 0; i < NPF_STATS_COUNT; i++) {
-		full_stats[i] += percpu_stats[i];
-	}
-}
-
-static void
-npf_stats_clear_cb(void *mem, void *arg, struct cpu_info *ci)
-{
-	uint64_t *percpu_stats = mem;
-
-	for (unsigned i = 0; i < NPF_STATS_COUNT; i++) {
-		percpu_stats[i] = 0;
-	}
+	counter_u64_add(npf->stats_percpu[st], -1);
 }
 
 /*
@@ -225,14 +199,14 @@ npf_stats_clear_cb(void *mem, void *arg, struct cpu_info *ci)
 __dso_public void
 npfk_stats(npf_t *npf, uint64_t *buf)
 {
-	memset(buf, 0, NPF_STATS_SIZE);
-	percpu_foreach_xcall(npf->stats_percpu, XC_HIGHPRI_IPL(IPL_SOFTNET),
-	    npf_stats_collect, buf);
+	for (unsigned i = 0; i < NPF_STATS_COUNT; i++) {
+		buf[i] = counter_u64_fetch(npf->stats_percpu[i]);
+	}
 }
 
 __dso_public void
 npfk_stats_clear(npf_t *npf)
 {
-	percpu_foreach_xcall(npf->stats_percpu, XC_HIGHPRI_IPL(IPL_SOFTNET),
-	    npf_stats_clear_cb, NULL);
+
+	COUNTER_ARRAY_ZERO(npf->stats_percpu, NPF_STATS_COUNT);
 }

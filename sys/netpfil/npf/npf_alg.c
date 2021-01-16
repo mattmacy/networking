@@ -222,11 +222,12 @@ npf_alg_match(npf_cache_t *npc, npf_nat_t *nt, int di)
 	npf_algset_t *aset = npf->algset;
 	bool match = false;
 	unsigned count;
+	struct epoch_tracker et;
 	int s;
 
 	KASSERTMSG(npf_iscached(npc, NPC_IP46), "expecting protocol number");
 
-	s = npf_config_read_enter(npf);
+	npf_config_read_enter(&et);
 	count = atomic_load_relaxed(&aset->alg_count);
 	for (unsigned i = 0; i < count; i++) {
 		const npfa_funcs_t *f = &aset->alg_funcs[i];
@@ -238,7 +239,7 @@ npf_alg_match(npf_cache_t *npc, npf_nat_t *nt, int di)
 			break;
 		}
 	}
-	npf_config_read_exit(npf, s);
+	npf_config_read_exit(&et);
 	return match;
 }
 

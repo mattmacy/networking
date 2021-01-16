@@ -53,6 +53,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
+#include <sys/socket.h>
 #include <net/if.h>
 #include <net/pfil.h>
 #include <sys/socketvar.h>
@@ -89,7 +90,7 @@ npf_reassembly(npf_t *npf, npf_cache_t *npc, bool *mff)
 	m = nbuf_head_mbuf(nbuf);
 
 	if (npf_iscached(npc, NPC_IP4) && npf->ip4_reassembly) {
-		error = ip_reass_packet(&m);
+		m = ip_reass(m);
 	} else if (npf_iscached(npc, NPC_IP6) && npf->ip6_reassembly) {
 		error = ip6_reass_packet(&m, npc->npc_hlen);
 	} else {
@@ -152,7 +153,7 @@ npfk_packet_handler(npf_t *npf, struct mbuf **mp, ifnet_t *ifp, int di)
 	npf_match_info_t mi;
 	bool mff;
 
-	KASSERT(ifp != NULL);
+	MPASS(ifp != NULL);
 
 	/*
 	 * Initialize packet information cache.
@@ -206,7 +207,7 @@ npfk_packet_handler(npf_t *npf, struct mbuf **mp, ifnet_t *ifp, int di)
 	/* If "passing" connection found - skip the ruleset inspection. */
 	if (con && npf_conn_pass(con, &mi, &rp)) {
 		npf_stats_inc(npf, NPF_STAT_PASS_CONN);
-		KASSERT(error == 0);
+		MPASS(error == 0);
 		goto pass;
 	}
 	if (__predict_false(error)) {
@@ -216,13 +217,14 @@ npfk_packet_handler(npf_t *npf, struct mbuf **mp, ifnet_t *ifp, int di)
 	}
 
 	/* Acquire the lock, inspect the ruleset using this packet. */
-	int slock = npf_config_read_enter(npf);
+	struct epoch_tracker et;
+	npf_config_read_enter(&et);
 	npf_ruleset_t *rlset = npf_config_ruleset(npf);
 
 	rl = npf_ruleset_inspect(&npc, rlset, di, NPF_LAYER_3);
 	if (__predict_false(rl == NULL)) {
 		const bool pass = npf_default_pass(npf);
-		npf_config_read_exit(npf, slock);
+		npf_config_read_exit(&et);
 
 		if (pass) {
 			npf_stats_inc(npf, NPF_STAT_PASS_DEFAULT);
@@ -236,12 +238,12 @@ npfk_packet_handler(npf_t *npf, struct mbuf **mp, ifnet_t *ifp, int di)
 	 * Get the rule procedure (acquires a reference) for association
 	 * with a connection (if any) and execution.
 	 */
-	KASSERT(rp == NULL);
+	MPASS(rp == NULL);
 	rp = npf_rule_getrproc(rl);
 
 	/* Conclude with the rule and release the lock. */
 	error = npf_rule_conclude(rl, &mi);
-	npf_config_read_exit(npf, slock);
+	npf_config_read_exit(&et);
 
 	if (error) {
 		npf_stats_inc(npf, NPF_STAT_BLOCK_RULESET);
@@ -268,7 +270,7 @@ npfk_packet_handler(npf_t *npf, struct mbuf **mp, ifnet_t *ifp, int di)
 
 pass:
 	decision = NPF_DECISION_PASS;
-	KASSERT(error == 0);
+	MPASS(error == 0);
 
 	/*
 	 * Perform NAT.
@@ -311,7 +313,9 @@ out:
 		 * XXX: Disable for now, it will be set accordingly later,
 		 * for optimisations (to reduce inspection).
 		 */
+#ifdef M_CANFASTFWD
 		m_clear_flag(*mp, M_CANFASTFWD);
+#endif		
 		return 0;
 	}
 

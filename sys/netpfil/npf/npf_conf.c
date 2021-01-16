@@ -56,16 +56,18 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/kmem.h>
 #include <sys/mutex.h>
 #endif
+#include <sys/systm.h>
 
 #include "npf_impl.h"
 #include "npf_conn.h"
+
 
 void
 npf_config_init(npf_t *npf)
 {
 	npf_config_t *nc;
 
-	mutex_init(&npf->config_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&npf->config_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	nc = npf_config_create();
 
 	/*
@@ -78,7 +80,7 @@ npf_config_init(npf_t *npf)
 	nc->default_pass = true;
 
 	npf_config_load(npf, nc, NULL, true);
-	KASSERT(npf->config != NULL);
+	MPASS(npf->config != NULL);
 }
 
 npf_config_t *
@@ -117,7 +119,7 @@ npf_config_fini(npf_t *npf)
 	/* Flush the connections. */
 	mutex_enter(&npf->config_lock);
 	npf_conn_tracking(npf, false);
-	npf_ebr_full_sync(npf->ebr);
+	epoch_wait_preempt(net_epoch_preempt);
 	npf_conn_load(npf, cd, false);
 	npf_ifmap_flush(npf);
 	mutex_exit(&npf->config_lock);
@@ -172,7 +174,7 @@ npf_config_load(npf_t *npf, npf_config_t *nc, npf_conndb_t *conns, bool flush)
 	}
 
 	/* Synchronise: drain all references. */
-	npf_ebr_full_sync(npf->ebr);
+	npf_ebr_full_sync();
 	if (flush) {
 		npf_portmap_flush(npf->portmap);
 		npf_ifmap_flush(npf);
@@ -218,26 +220,26 @@ npf_config_locked_p(npf_t *npf)
 void
 npf_config_sync(npf_t *npf)
 {
-	KASSERT(npf_config_locked_p(npf));
-	npf_ebr_full_sync(npf->ebr);
+	MPASS(npf_config_locked_p(npf));
+	npf_ebr_full_sync();
 }
 
 /*
  * Reader-side synchronization routines.
  */
 
-int
-npf_config_read_enter(npf_t *npf)
+void
+npf_config_read_enter(epoch_tracker_t et)
 {
 	/* Note: issues an acquire fence. */
-	return npf_ebr_enter(npf->ebr);
+	npf_ebr_enter(et);
 }
 
 void
-npf_config_read_exit(npf_t *npf, int s)
+npf_config_read_exit(epoch_tracker_t et)
 {
 	/* Note: issues a release fence. */
-	npf_ebr_exit(npf->ebr, s);
+	npf_ebr_exit(et);
 }
 
 /*
@@ -248,7 +250,7 @@ npf_ruleset_t *
 npf_config_ruleset(npf_t *npf)
 {
 	npf_config_t *config = atomic_load_relaxed(&npf->config);
-	KASSERT(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
+	MPASS(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
 	return config->ruleset;
 }
 
@@ -256,7 +258,7 @@ npf_ruleset_t *
 npf_config_natset(npf_t *npf)
 {
 	npf_config_t *config = atomic_load_relaxed(&npf->config);
-	KASSERT(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
+	MPASS(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
 	return config->nat_ruleset;
 }
 
@@ -264,7 +266,7 @@ npf_tableset_t *
 npf_config_tableset(npf_t *npf)
 {
 	npf_config_t *config = atomic_load_relaxed(&npf->config);
-	KASSERT(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
+	MPASS(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
 	return config->tableset;
 }
 
@@ -272,6 +274,6 @@ bool
 npf_default_pass(npf_t *npf)
 {
 	npf_config_t *config = atomic_load_relaxed(&npf->config);
-	KASSERT(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
+	MPASS(npf_config_locked_p(npf) || npf_ebr_incrit_p(npf->ebr));
 	return config->default_pass;
 }

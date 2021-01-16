@@ -388,7 +388,7 @@ pptp_tcp_ctx_alloc(npf_nat_t *nt)
 	if (ctx == NULL) {
 		return NULL;
 	}
-	mutex_init(&ctx->lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	npf_mutex_init(&ctx->lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	return ctx;
 }
 

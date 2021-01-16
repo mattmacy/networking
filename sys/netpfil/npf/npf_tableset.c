@@ -406,7 +406,7 @@ npf_table_create(const char *name, u_int tid, int type,
 	default:
 		KASSERT(false);
 	}
-	mutex_init(&t->t_lock, MUTEX_DEFAULT, IPL_NET);
+	npf_mutex_init(&t->t_lock, MUTEX_DEFAULT, IPL_NET);
 	t->t_type = type;
 	t->t_id = tid;
 	return t;

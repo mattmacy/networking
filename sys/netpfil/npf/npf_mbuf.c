@@ -65,8 +65,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	m_next_ptr(m)		(m)->m_next
 #define	m_buflen(m)		((size_t)(m)->m_len)
 #define	m_flags_p(m,f)		(((m)->m_flags & (f)) != 0)
+#define m_ensure_contig(m, t) m_defrag((m), M_WAITOK)
 #endif
 
+#define COHERENCY_UNIT	CACHE_LINE_SIZE
 #define	NBUF_ENSURE_ALIGN	(MAX(COHERENCY_UNIT, 64))
 #define	NBUF_ENSURE_MASK	(NBUF_ENSURE_ALIGN - 1)
 #define	NBUF_ENSURE_ROUNDUP(x)	(((x) + NBUF_ENSURE_ALIGN) & ~NBUF_ENSURE_MASK)
@@ -76,7 +78,7 @@ nbuf_init(npf_t *npf, nbuf_t *nbuf, struct mbuf *m, const ifnet_t *ifp)
 {
 	unsigned ifid = npf_ifmap_getid(npf, ifp);
 
-	KASSERT(m_flags_p(m, M_PKTHDR));
+	MPASS(m_flags_p(m, M_PKTHDR));
 	nbuf->nb_mops = npf->mbufops;
 
 	nbuf->nb_mbuf0 = m;
@@ -97,16 +99,16 @@ nbuf_reset(nbuf_t *nbuf)
 void *
 nbuf_dataptr(nbuf_t *nbuf)
 {
-	KASSERT(nbuf->nb_nptr);
+	MPASS(nbuf->nb_nptr);
 	return nbuf->nb_nptr;
 }
 
 size_t
 nbuf_offset(const nbuf_t *nbuf)
 {
-	const struct mbuf *m = nbuf->nb_mbuf;
+	struct mbuf *m = nbuf->nb_mbuf;
 	const unsigned off = (uintptr_t)nbuf->nb_nptr - mtod(m, uintptr_t);
-	const int poff = m_length(nbuf->nb_mbuf0) - m_length(m) + off;
+	const int poff = m_length(nbuf->nb_mbuf0, NULL) - m_length(m, NULL) + off;
 
 	return poff;
 }
@@ -159,11 +161,11 @@ nbuf_advance(nbuf_t *nbuf, size_t len, size_t ensure)
 		}
 		wmark += m_buflen(m);
 	}
-	KASSERT(off < m_length(nbuf->nb_mbuf0));
+	MPASS(off < m_length(nbuf->nb_mbuf0, NULL));
 
 	/* Offset in mbuf data. */
 	d = mtod(m, uint8_t *);
-	KASSERT(off >= (wmark - m_buflen(m)));
+	MPASS(off >= (wmark - m_buflen(m)));
 	d += (off - (wmark - m_buflen(m)));
 
 	nbuf->nb_mbuf = m;
@@ -189,12 +191,12 @@ nbuf_ensure_contig(nbuf_t *nbuf, size_t len)
 	const struct mbuf * const n = nbuf->nb_mbuf;
 	const size_t off = (uintptr_t)nbuf->nb_nptr - mtod(n, uintptr_t);
 
-	KASSERT(off <= m_buflen(n));
+	MPASS(off <= m_buflen(n));
 
 	if (__predict_false(m_buflen(n) < (off + len))) {
-		struct mbuf *m = nbuf->nb_mbuf0;
+		struct mbuf *mret, *m = nbuf->nb_mbuf0;
 		const size_t foff = nbuf_offset(nbuf);
-		const size_t plen = m_length(m);
+		const size_t plen = m_length(m, NULL);
 		const size_t mlen = m_buflen(m);
 		size_t target;
 		bool success;
@@ -207,9 +209,11 @@ nbuf_ensure_contig(nbuf_t *nbuf, size_t len)
 		}
 
 		/* Rearrange the chain to be contiguous. */
-		KASSERT(m_flags_p(m, M_PKTHDR));
-		success = m_ensure_contig(&m, target);
-		KASSERT(m != NULL);
+		MPASS(m_flags_p(m, M_PKTHDR));
+		mret = m_ensure_contig(m, target);
+		success = (mret != NULL);
+		m = mret ? mret : m;
+		MPASS(m != NULL);
 
 		/* If no change in the chain: return what we have. */
 		if (m == nbuf->nb_mbuf0 && m_buflen(m) == mlen) {
@@ -221,11 +225,11 @@ nbuf_ensure_contig(nbuf_t *nbuf, size_t len)
 		 * accordingly and indicate that the references to the data
 		 * might need a reset.
 		 */
-		KASSERT(m_flags_p(m, M_PKTHDR));
+		MPASS(m_flags_p(m, M_PKTHDR));
 		nbuf->nb_mbuf0 = m;
 		nbuf->nb_mbuf = m;
 
-		KASSERT(foff < m_buflen(m) && foff < m_length(m));
+		MPASS(foff < m_buflen(m) && foff < m_length(m, NULL));
 		nbuf->nb_nptr = mtod(m, uint8_t *) + foff;
 		nbuf->nb_flags |= NBUF_DATAREF_RESET;
 
@@ -245,7 +249,7 @@ nbuf_ensure_writable(nbuf_t *nbuf, size_t len)
 	const int tlen = off + len;
 	bool head_buf;
 
-	KASSERT(off < m_length(nbuf->nb_mbuf0));
+	MPASS(off < m_length(nbuf->nb_mbuf0, NULL));
 
 	if (!M_UNWRITABLE(m, tlen)) {
 		return nbuf->nb_nptr;
@@ -256,8 +260,8 @@ nbuf_ensure_writable(nbuf_t *nbuf, size_t len)
 		return NULL;
 	}
 	if (head_buf) {
-		KASSERT(m_flags_p(m, M_PKTHDR));
-		KASSERT(off < m_length(m));
+		MPASS(m_flags_p(m, M_PKTHDR));
+		MPASS(off < m_length(m, NULL));
 		nbuf->nb_mbuf0 = m;
 	}
 	nbuf->nb_mbuf = m;
@@ -276,7 +280,7 @@ nbuf_cksum_barrier(nbuf_t *nbuf, int di)
 		return false;
 	}
 	m = nbuf->nb_mbuf0;
-	KASSERT(m_flags_p(m, M_PKTHDR));
+	MPASS(m_flags_p(m, M_PKTHDR));
 
 	if (m->m_pkthdr.csum_flags & (M_CSUM_TCPv4 | M_CSUM_UDPv4)) {
 		in_undefer_cksum_tcpudp(m);
@@ -309,7 +313,7 @@ nbuf_add_tag(nbuf_t *nbuf, uint32_t val)
 	struct m_tag *mt;
 	uint32_t *dat;
 
-	KASSERT(m_flags_p(m, M_PKTHDR));
+	MPASS(m_flags_p(m, M_PKTHDR));
 
 	mt = m_tag_get(PACKET_TAG_NPF, sizeof(uint32_t), M_NOWAIT);
 	if (mt == NULL) {
@@ -339,7 +343,7 @@ nbuf_find_tag(nbuf_t *nbuf, uint32_t *val)
 #ifdef _KERNEL
 	struct m_tag *mt;
 
-	KASSERT(m_flags_p(m, M_PKTHDR));
+	MPASS(m_flags_p(m, M_PKTHDR));
 
 	mt = m_tag_find(m, PACKET_TAG_NPF);
 	if (mt == NULL) {
