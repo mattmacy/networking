@@ -138,7 +138,7 @@ npf_conndb_create(void)
 
 	cd = kmem_zalloc(sizeof(npf_conndb_t), KM_SLEEP);
 	cd->cd_map = thmap_create(0, NULL, THMAP_NOCOPY);
-	KASSERT(cd->cd_map != NULL);
+	MPASS(cd->cd_map != NULL);
 
 	LIST_INIT(&cd->cd_list);
 	LIST_INIT(&cd->cd_gclist);
@@ -148,10 +148,10 @@ npf_conndb_create(void)
 void
 npf_conndb_destroy(npf_conndb_t *cd)
 {
-	KASSERT(cd->cd_new == NULL);
-	KASSERT(cd->cd_marker == NULL);
-	KASSERT(LIST_EMPTY(&cd->cd_list));
-	KASSERT(LIST_EMPTY(&cd->cd_gclist));
+	MPASS(cd->cd_new == NULL);
+	MPASS(cd->cd_marker == NULL);
+	MPASS(LIST_EMPTY(&cd->cd_list));
+	MPASS(LIST_EMPTY(&cd->cd_gclist));
 
 	thmap_destroy(cd->cd_map);
 	kmem_free(cd, sizeof(npf_conndb_t));
@@ -165,16 +165,17 @@ npf_conndb_lookup(npf_t *npf, const npf_connkey_t *ck, npf_flow_t *flow)
 {
 	npf_conndb_t *cd = atomic_load_relaxed(&npf->conn_db);
 	const unsigned keylen = NPF_CONNKEY_LEN(ck);
+	struct epoch_tracker et;
 	npf_conn_t *con;
 	void *val;
 
 	/*
 	 * Lookup the connection key in the key-value map.
 	 */
-	int s = npf_config_read_enter(npf);
+	npf_config_read_enter(&et);
 	val = thmap_get(cd->cd_map, ck->ck_key, keylen);
 	if (!val) {
-		npf_config_read_exit(npf, s);
+		npf_config_read_exit(&et);
 		return NULL;
 	}
 
@@ -184,13 +185,13 @@ npf_conndb_lookup(npf_t *npf, const npf_connkey_t *ck, npf_flow_t *flow)
 	 */
 	*flow = CONNDB_ISFORW_P(val) ? NPF_FLOW_FORW : NPF_FLOW_BACK;
 	con = CONNDB_GET_PTR(val);
-	KASSERT(con != NULL);
+	MPASS(con != NULL);
 
 	/*
 	 * Acquire a reference and return the connection.
 	 */
 	atomic_inc_uint(&con->c_refcnt);
-	npf_config_read_exit(npf, s);
+	npf_config_read_exit(&et);
 	return con;
 }
 
@@ -211,7 +212,7 @@ npf_conndb_insert(npf_conndb_t *cd, const npf_connkey_t *ck,
 	/*
 	 * Tag the connection pointer if this is the "forwards" key.
 	 */
-	KASSERT(!CONNDB_ISFORW_P(con));
+	MPASS(!CONNDB_ISFORW_P(con));
 	val = (void *)((uintptr_t)(void *)con | tag);
 
 	int s = splsoftnet();
@@ -250,7 +251,7 @@ npf_conndb_enqueue(npf_conndb_t *cd, npf_conn_t *con)
 	do {
 		head = atomic_load_relaxed(&cd->cd_new);
 		atomic_store_relaxed(&con->c_next, head);
-	} while (atomic_cas_ptr(&cd->cd_new, head, con) != head);
+	} while (atomic_cmpset_ptr((void *)&cd->cd_new, (uintptr_t)head, (uintptr_t)con) == 0);
 }
 
 /*
@@ -306,7 +307,7 @@ npf_conndb_gc_incr(npf_t *npf, npf_conndb_t *cd, const time_t now)
 	unsigned gc_conns = 0;
 	npf_conn_t *con;
 
-	KASSERT(mutex_owned(&npf->conn_lock));
+	MPASS(mutex_owned(&npf->conn_lock));
 
 	/*
 	 * Second, start from the "last" (marker) connection.
@@ -444,7 +445,7 @@ npf_conndb_gc(npf_t *npf, npf_conndb_t *cd, bool flush, bool sync)
 
 		if (__predict_false(refcnt)) {
 			if (flush) {
-				kpause("npfcongc", false, 1, NULL);
+				pause("npfcongc", 1 );
 				continue;
 			}
 			break; // exit the loop

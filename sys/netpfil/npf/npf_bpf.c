@@ -38,7 +38,6 @@ __KERNEL_RCSID(0, "$NetBSD: npf_bpf.c,v 1.14 2018/09/29 14:41:36 rmind Exp $");
 #include <sys/types.h>
 #include <sys/param.h>
 
-#include <sys/bitops.h>
 #include <sys/mbuf.h>
 #include <net/bpf.h>
 #endif
@@ -86,7 +85,7 @@ npf_bpf_prepare(npf_cache_t *npc, bpf_args_t *args, uint32_t *M)
 {
 	nbuf_t *nbuf = npc->npc_nbuf;
 	const struct mbuf *mbuf = nbuf_head_mbuf(nbuf);
-	const size_t pktlen = m_length(mbuf);
+	const size_t pktlen = m_length((void*)(uintptr_t)mbuf, NULL);
 
 	/* Prepare the arguments for the BPF programs. */
 #ifdef _NPF_STANDALONE
@@ -126,7 +125,7 @@ int
 npf_bpf_filter(bpf_args_t *args, const void *code, bpfjit_func_t jcode)
 {
 	/* Execute JIT-compiled code. */
-	if (__predict_true(jcode)) {
+	if (__predict_true(jcode != NULL)) {
 		return jcode(npf_bpfctx, args);
 	}
 

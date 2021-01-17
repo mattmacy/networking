@@ -44,16 +44,20 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/systm.h>
+#include <sys/malloc.h>
 
 #include <sys/conf.h>
-#include <sys/kauth.h>
+//#include <sys/kauth.h>
 #include <sys/kmem.h>
-#include <sys/lwp.h>
+//#include <sys/lwp.h>
 #include <sys/module.h>
-#include <sys/pserialize.h>
+//#include <sys/pserialize.h>
 #include <sys/socketvar.h>
 #include <sys/uio.h>
 
+#include <net/if.h>
+#include <net/if_var.h>
 #include <netinet/in.h>
 #include <netinet6/in6_var.h>
 #endif
@@ -63,10 +67,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #ifdef _KERNEL
 #ifndef _MODULE
-#include "opt_modular.h"
-#include "opt_net_mpsafe.h"
+//#include "opt_modular.h"
+//#include "opt_net_mpsafe.h"
 #endif
-#include "ioconf.h"
+//#include "ioconf.h"
 #endif
 
 /*

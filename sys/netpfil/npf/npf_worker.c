@@ -38,7 +38,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/kmem.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
-#include <sys/cprng.h>
 #endif
 
 #include "npf_impl.h"
@@ -49,7 +48,7 @@ typedef struct npf_worker {
 	kcondvar_t		exit_cv;
 	bool			exit;
 	LIST_HEAD(, npf)	instances;
-	unsigned		worker_count;
+	uint32_t		worker_count;
 	lwp_t *			worker[];
 } npf_workerinfo_t;
 
@@ -63,16 +62,17 @@ typedef struct npf_worker {
 #define	WFLAG_INITED		0x02	// worker setup the instance
 #define	WFLAG_REMOVE		0x04	// remove the instance
 
-static void			npf_worker(void *)	__dead;
+static void			npf_worker(void *)	__dead2;
 static npf_workerinfo_t *	worker_info		__read_mostly;
 
 int
 npf_worker_sysinit(unsigned nworkers)
 {
 	const size_t len = offsetof(npf_workerinfo_t, worker[nworkers]);
+	struct proc *p = NULL;
 	npf_workerinfo_t *winfo;
 
-	KASSERT(worker_info == NULL);
+	MPASS(worker_info == NULL);
 
 	if (!nworkers) {
 		return 0;
@@ -87,8 +87,8 @@ npf_worker_sysinit(unsigned nworkers)
 	worker_info = winfo;
 
 	for (unsigned i = 0; i < nworkers; i++) {
-		if (kthread_create(PRI_NONE, KTHREAD_MPSAFE | KTHREAD_MUSTJOIN,
-		    NULL, npf_worker, winfo, &winfo->worker[i], "npfgc%u", i)) {
+		if (kproc_kthread_add(npf_worker, winfo, &p, &winfo->worker[i],
+		    0, 0, "npf", "npfgck%u", i)) {
 			npf_worker_sysfini();
 			return ENOMEM;
 		}
@@ -100,7 +100,6 @@ void
 npf_worker_sysfini(void)
 {
 	npf_workerinfo_t *winfo = worker_info;
-	unsigned nworkers;
 
 	if (!winfo) {
 		return;
@@ -113,14 +112,9 @@ npf_worker_sysfini(void)
 	mutex_exit(&winfo->lock);
 
 	/* Wait for them to finish and then destroy. */
-	nworkers = winfo->worker_count;
-	for (unsigned i = 0; i < nworkers; i++) {
-		lwp_t *worker;
+	while(winfo->worker_count)
+		pause("npf_exit", 1);
 
-		if ((worker = winfo->worker[i]) != NULL) {
-			kthread_join(worker);
-		}
-	}
 	cv_destroy(&winfo->cv);
 	cv_destroy(&winfo->exit_cv);
 	mutex_destroy(&winfo->lock);
@@ -131,8 +125,8 @@ npf_worker_sysfini(void)
 int
 npf_worker_addfunc(npf_t *npf, npf_workfunc_t work)
 {
-	KASSERTMSG(npf->worker_flags == 0,
-	    "the task must be added before the npf_worker_enlist() call");
+	KASSERT(npf->worker_flags == 0,
+	    ("the task must be added before the npf_worker_enlist() call"));
 
 	for (unsigned i = 0; i < NPF_MAX_WORKS; i++) {
 		if (npf->worker_funcs[i] == NULL) {
@@ -151,7 +145,7 @@ npf_worker_signal(npf_t *npf)
 	if ((npf->worker_flags & WFLAG_ACTIVE) == 0) {
 		return;
 	}
-	KASSERT(winfo != NULL);
+	MPASS(winfo != NULL);
 
 	mutex_enter(&winfo->lock);
 	cv_signal(&winfo->cv);
@@ -166,7 +160,7 @@ npf_worker_enlist(npf_t *npf)
 {
 	npf_workerinfo_t *winfo = worker_info;
 
-	KASSERT(npf->worker_flags == 0);
+	MPASS(npf->worker_flags == 0);
 	if (!winfo) {
 		return;
 	}
@@ -190,13 +184,13 @@ npf_worker_discharge(npf_t *npf)
 	if ((npf->worker_flags & WFLAG_ACTIVE) == 0) {
 		return;
 	}
-	KASSERT(winfo != NULL);
+	MPASS(winfo != NULL);
 
 	/*
 	 * Notify the worker(s) that we are removing this instance.
 	 */
 	mutex_enter(&winfo->lock);
-	KASSERT(npf->worker_flags & WFLAG_ACTIVE);
+	MPASS(npf->worker_flags & WFLAG_ACTIVE);
 	npf->worker_flags |= WFLAG_REMOVE;
 	cv_broadcast(&winfo->cv);
 
@@ -205,15 +199,15 @@ npf_worker_discharge(npf_t *npf)
 		cv_wait(&winfo->exit_cv, &winfo->lock);
 	}
 	mutex_exit(&winfo->lock);
-	KASSERT(npf->worker_flags == 0);
+	MPASS(npf->worker_flags == 0);
 }
 
 static void
 remove_npf_instance(npf_workerinfo_t *winfo, npf_t *npf)
 {
-	KASSERT(mutex_owned(&winfo->lock));
-	KASSERT(npf->worker_flags & WFLAG_ACTIVE);
-	KASSERT(npf->worker_flags & WFLAG_REMOVE);
+	MPASS(mutex_owned(&winfo->lock));
+	MPASS(npf->worker_flags & WFLAG_ACTIVE);
+	MPASS(npf->worker_flags & WFLAG_REMOVE);
 
 	/*
 	 * Remove the NPF instance:
@@ -234,7 +228,7 @@ process_npf_instance(npf_workerinfo_t *winfo, npf_t *npf)
 {
 	npf_workfunc_t work;
 
-	KASSERT(mutex_owned(&winfo->lock));
+	MPASS(mutex_owned(&winfo->lock));
 
 	if (npf->worker_flags & WFLAG_REMOVE) {
 		remove_npf_instance(winfo, npf);
@@ -272,8 +266,8 @@ npf_worker(void *arg)
 
 	mutex_enter(&winfo->lock);
 	while (!winfo->exit) {
+		struct timeval tvwait;
 		unsigned wait_time = NPF_GC_MAXWAIT;
-
 		/*
 		 * Iterate all instances.  We do not use LIST_FOREACH here,
 		 * since the instance can be removed.
@@ -292,12 +286,14 @@ npf_worker(void *arg)
 		if (winfo->exit) {
 			break;
 		}
-		cv_timedwait(&winfo->cv, &winfo->lock, mstohz(wait_time));
+		tvwait.tv_sec = NPF_GC_MAXWAIT / 1000;
+		tvwait.tv_usec = NPF_GC_MAXWAIT % 1000;
+		cv_timedwait(&winfo->cv, &winfo->lock, tvtohz(&tvwait));
 	}
 	mutex_exit(&winfo->lock);
+	atomic_add_int(&winfo->worker_count, -1);
+	KASSERT(LIST_EMPTY(&winfo->instances),
+	    ("NPF instances must be discharged before the npfk_sysfini() call"));
 
-	KASSERTMSG(LIST_EMPTY(&winfo->instances),
-	    "NPF instances must be discharged before the npfk_sysfini() call");
-
-	kthread_exit(0);
+	kthread_exit();
 }

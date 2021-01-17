@@ -112,7 +112,7 @@ npf_param_fini(npf_t *npf)
 			void *ret __diagused;
 
 			ret = thmap_del(pinfo->map, name, strlen(name));
-			KASSERT(ret != NULL);
+			MPASS(ret != NULL);
 		}
 
 		/* Destroy this registry. */
@@ -196,11 +196,11 @@ npf_param_register(npf_t *npf, npf_param_t *params, unsigned count)
 		void *ret __diagused;
 
 		ret = thmap_put(pinfo->map, name, strlen(name), param);
-		KASSERT(ret == param);
+		MPASS(ret == param);
 
 		/* Assign the default value. */
-		KASSERT(param->default_val >= param->min);
-		KASSERT(param->default_val <= param->max);
+		MPASS(param->default_val >= param->min);
+		MPASS(param->default_val <= param->max);
 		*param->valp = param->default_val;
 	}
 

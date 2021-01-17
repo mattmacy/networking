@@ -152,7 +152,7 @@ struct npf_nat {
 	npf_conn_t *		nt_conn;
 };
 
-static pool_cache_t		nat_cache	__read_mostly;
+static uma_zone_t		nat_cache	__read_mostly;
 
 /*
  * npf_nat_sys{init,fini}: initialize/destroy NAT subsystem structures.
@@ -161,9 +161,9 @@ static pool_cache_t		nat_cache	__read_mostly;
 void
 npf_nat_sysinit(void)
 {
-	nat_cache = pool_cache_init(sizeof(npf_nat_t), 0,
-	    0, 0, "npfnatpl", NULL, IPL_NET, NULL, NULL, NULL);
-	KASSERT(nat_cache != NULL);
+	nat_cache = uma_zcreate("npfnatpl", sizeof(npf_nat_t),
+	    NULL, NULL, NULL, NULL, 0, 0);
+	MPASS(nat_cache != NULL);
 }
 
 void
@@ -277,12 +277,12 @@ npf_natpolicy_export(const npf_natpolicy_t *np, nvlist_t *nat)
 static void
 npf_natpolicy_release(npf_natpolicy_t *np)
 {
-	KASSERT(atomic_load_relaxed(&np->n_refcnt) > 0);
+	MPASS(atomic_load_relaxed(&np->n_refcnt) > 0);
 
 	if (atomic_dec_uint_nv(&np->n_refcnt) != 0) {
 		return;
 	}
-	KASSERT(LIST_EMPTY(&np->n_nat_list));
+	MPASS(LIST_EMPTY(&np->n_nat_list));
 	mutex_destroy(&np->n_lock);
 	kmem_free(np, sizeof(npf_natpolicy_t));
 }
@@ -306,13 +306,13 @@ npf_natpolicy_destroy(npf_natpolicy_t *np)
 		mutex_enter(&np->n_lock);
 		LIST_FOREACH(nt, &np->n_nat_list, nt_entry) {
 			npf_conn_t *con = nt->nt_conn;
-			KASSERT(con != NULL);
+			MPASS(con != NULL);
 			npf_conn_expire(con);
 		}
 		mutex_exit(&np->n_lock);
 		npf_worker_signal(np->n_npfctx);
 	}
-	KASSERT(atomic_load_relaxed(&np->n_refcnt) >= 1);
+	MPASS(atomic_load_relaxed(&np->n_refcnt) >= 1);
 
 	/*
 	 * Drop the initial reference, but it might not be the last one.
@@ -352,7 +352,7 @@ npf_natpolicy_cmp(npf_natpolicy_t *np, npf_natpolicy_t *mnp)
 	 * Compare the relevant NAT policy information (in its raw form)
 	 * that is enough as a matching criteria.
 	 */
-	KASSERT(np && mnp && np != mnp);
+	MPASS(np && mnp && np != mnp);
 	np_raw = (const uint8_t *)np + NPF_NP_CMP_START;
 	mnp_raw = (const uint8_t *)mnp + NPF_NP_CMP_START;
 	return memcmp(np_raw, mnp_raw, NPF_NP_CMP_SIZE) == 0;
@@ -385,8 +385,8 @@ npf_nat_which(const unsigned type, const npf_flow_t flow)
 	CTASSERT(NPF_SRC == 0 && NPF_DST == 1);
 	CTASSERT(NPF_FLOW_FORW == NPF_SRC && NPF_FLOW_BACK == NPF_DST);
 
-	KASSERT(type == NPF_NATIN || type == NPF_NATOUT);
-	KASSERT(flow == NPF_FLOW_FORW || flow == NPF_FLOW_BACK);
+	MPASS(type == NPF_NATIN || type == NPF_NATOUT);
+	MPASS(flow == NPF_FLOW_FORW || flow == NPF_FLOW_BACK);
 
 	/*
 	 * Outbound NAT rewrites:
@@ -397,7 +397,7 @@ npf_nat_which(const unsigned type, const npf_flow_t flow)
 	 * Inbound NAT is other way round.
 	 */
 	which = (type == NPF_NATOUT) ? flow : !flow;
-	KASSERT(which == NPF_SRC || which == NPF_DST);
+	MPASS(which == NPF_SRC || which == NPF_DST);
 	return which;
 }
 
@@ -411,19 +411,21 @@ static npf_natpolicy_t *
 npf_nat_inspect(npf_cache_t *npc, const unsigned di)
 {
 	npf_t *npf = npc->npc_ctx;
-	int slock = npf_config_read_enter(npf);
-	npf_ruleset_t *rlset = npf_config_natset(npf);
+	npf_ruleset_t *rlset;
+	struct epoch_tracker et;
 	npf_natpolicy_t *np;
 	npf_rule_t *rl;
 
+	npf_config_read_enter(&et);
+	rlset = npf_config_natset(npf);
 	rl = npf_ruleset_inspect(npc, rlset, di, NPF_LAYER_3);
 	if (rl == NULL) {
-		npf_config_read_exit(npf, slock);
+		npf_config_read_exit(&et);
 		return NULL;
 	}
 	np = npf_rule_getnat(rl);
 	atomic_inc_uint(&np->n_refcnt);
-	npf_config_read_exit(npf, slock);
+	npf_config_read_exit(&et);
 	return np;
 }
 
@@ -480,9 +482,10 @@ npf_nat_create(npf_cache_t *npc, npf_natpolicy_t *np, npf_conn_t *con)
 	npf_t *npf = npc->npc_ctx;
 	npf_addr_t *taddr;
 	npf_nat_t *nt;
+	struct epoch_tracker et;
 
-	KASSERT(npf_iscached(npc, NPC_IP46));
-	KASSERT(npf_iscached(npc, NPC_LAYER4));
+	MPASS(npf_iscached(npc, NPC_IP46));
+	MPASS(npf_iscached(npc, NPC_LAYER4));
 
 	/* Construct a new NAT entry and associate it with the connection. */
 	nt = pool_cache_get(nat_cache, PR_NOWAIT);
@@ -501,22 +504,22 @@ npf_nat_create(npf_cache_t *npc, npf_natpolicy_t *np, npf_conn_t *con)
 	 * was established on a different interface, using the global state
 	 * mode (state.key.interface = 0).
 	 */
-	KASSERT(nbuf->nb_ifid != 0);
+	MPASS(nbuf->nb_ifid != 0);
 	nt->nt_ifid = nbuf->nb_ifid;
 
 	/*
 	 * Select the translation address.
 	 */
 	if (np->n_flags & NPF_NAT_USETABLE) {
-		int slock = npf_config_read_enter(npf);
+		npf_config_read_enter(&et);
 		taddr = npf_nat_getaddr(npc, np, alen);
 		if (__predict_false(!taddr)) {
-			npf_config_read_exit(npf, slock);
+			npf_config_read_exit(&et);
 			pool_cache_put(nat_cache, nt);
 			return NULL;
 		}
 		memcpy(&nt->nt_taddr, taddr, alen);
-		npf_config_read_exit(npf, slock);
+		npf_config_read_exit(&et);
 
 	} else if (np->n_algo == NPF_ALGO_NETMAP) {
 		const unsigned which = npf_nat_which(np->n_type, NPF_FLOW_FORW);
@@ -535,7 +538,7 @@ npf_nat_create(npf_cache_t *npc, npf_natpolicy_t *np, npf_conn_t *con)
 		memcpy(&nt->nt_oaddr, npc->npc_ips[NPF_SRC], alen);
 	} else {
 		/* Inbound NAT: destination (think external) address. */
-		KASSERT(np->n_type == NPF_NATIN);
+		MPASS(np->n_type == NPF_NATIN);
 		memcpy(&nt->nt_oaddr, npc->npc_ips[NPF_DST], alen);
 	}
 
@@ -586,8 +589,8 @@ npf_dnat_translate(npf_cache_t *npc, npf_nat_t *nt, npf_flow_t flow)
 	const npf_addr_t *addr;
 	in_port_t port;
 
-	KASSERT(npf_iscached(npc, NPC_IP46));
-	KASSERT(npf_iscached(npc, NPC_LAYER4));
+	MPASS(npf_iscached(npc, NPC_IP46));
+	MPASS(npf_iscached(npc, NPC_LAYER4));
 
 	if (flow == NPF_FLOW_FORW) {
 		/* "Forwards" stream: use translation address/port. */
@@ -598,7 +601,7 @@ npf_dnat_translate(npf_cache_t *npc, npf_nat_t *nt, npf_flow_t flow)
 		addr = &nt->nt_oaddr;
 		port = nt->nt_oport;
 	}
-	KASSERT((np->n_flags & NPF_NAT_PORTS) != 0 || port == 0);
+	MPASS((np->n_flags & NPF_NAT_PORTS) != 0 || port == 0);
 
 	/* Execute ALG translation first. */
 	if ((npc->npc_info & NPC_ALG_EXEC) == 0) {
@@ -606,7 +609,7 @@ npf_dnat_translate(npf_cache_t *npc, npf_nat_t *nt, npf_flow_t flow)
 		npf_alg_exec(npc, nt, flow);
 		npf_recache(npc);
 	}
-	KASSERT(!nbuf_flag_p(npc->npc_nbuf, NBUF_DATAREF_RESET));
+	MPASS(!nbuf_flag_p(npc->npc_nbuf, NBUF_DATAREF_RESET));
 
 	/* Finally, perform the translation. */
 	return npf_napt_rwr(npc, which, addr, port);
@@ -622,7 +625,7 @@ npf_snat_translate(npf_cache_t *npc, const npf_natpolicy_t *np, npf_flow_t flow)
 	const npf_addr_t *taddr;
 	npf_addr_t addr;
 
-	KASSERT(np->n_flags & NPF_NAT_STATIC);
+	MPASS(np->n_flags & NPF_NAT_STATIC);
 
 	switch (np->n_algo) {
 	case NPF_ALGO_NETMAP:
@@ -688,7 +691,7 @@ npf_nat_lookup(const npf_cache_t *npc, npf_conn_t *con,
 	}
 
 	np = nt->nt_natpolicy;
-	KASSERT(atomic_load_relaxed(&np->n_refcnt) > 0);
+	MPASS(atomic_load_relaxed(&np->n_refcnt) > 0);
 
 	/*
 	 * We rely on NPF_NAT{IN,OUT} being equal to PFIL_{IN,OUT}.
@@ -724,7 +727,7 @@ npf_do_nat(npf_cache_t *npc, npf_conn_t *con, const unsigned di)
 	if (!npf_iscached(npc, NPC_IP46) || !npf_iscached(npc, NPC_LAYER4)) {
 		return 0;
 	}
-	KASSERT(!nbuf_flag_p(nbuf, NBUF_DATAREF_RESET));
+	MPASS(!nbuf_flag_p(nbuf, NBUF_DATAREF_RESET));
 
 	/*
 	 * Return the NAT entry associated with the connection, if any.
@@ -785,7 +788,7 @@ npf_do_nat(npf_cache_t *npc, npf_conn_t *con, const unsigned di)
 
 	/* Determine whether any ALG matches. */
 	if (npf_alg_match(npc, nt, di)) {
-		KASSERT(nt->nt_alg != NULL);
+		MPASS(nt->nt_alg != NULL);
 	}
 
 	/* Associate the NAT translation entry with the connection. */
@@ -805,7 +808,7 @@ translate:
 	/* Perform the translation. */
 	error = npf_dnat_translate(npc, nt, flow);
 out:
-	if (__predict_false(ncon)) {
+	if (__predict_false(ncon != NULL)) {
 		if (error) {
 			/* It was created for NAT - just expire. */
 			npf_conn_expire(ncon);

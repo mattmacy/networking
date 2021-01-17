@@ -122,7 +122,7 @@ struct npf_tableset {
 
 #define	NPF_IFADDR_STEP		4
 
-static pool_cache_t		tblent_cache	__read_mostly;
+static uma_zone_t		tblent_cache	__read_mostly;
 
 /*
  * npf_table_sysinit: initialise tableset structures.
@@ -130,14 +130,14 @@ static pool_cache_t		tblent_cache	__read_mostly;
 void
 npf_tableset_sysinit(void)
 {
-	tblent_cache = pool_cache_init(sizeof(npf_tblent_t), 0,
-	    0, 0, "npftblpl", NULL, IPL_NONE, NULL, NULL, NULL);
+	tblent_cache = uma_zcreate("npftblpl", sizeof(npf_tblent_t),
+	    NULL, NULL, NULL, NULL, 0, 0);
 }
 
 void
 npf_tableset_sysfini(void)
 {
-	pool_cache_destroy(tblent_cache);
+	uma_zdestroy(tblent_cache);
 }
 
 npf_tableset_t *
@@ -176,7 +176,7 @@ npf_tableset_insert(npf_tableset_t *ts, npf_table_t *t)
 	const u_int tid = t->t_id;
 	int error;
 
-	KASSERT((u_int)tid < ts->ts_nitems);
+	MPASS((u_int)tid < ts->ts_nitems);
 
 	if (ts->ts_map[tid] == NULL) {
 		atomic_inc_uint(&t->t_refcnt);
@@ -194,8 +194,8 @@ npf_tableset_swap(npf_tableset_t *ts, npf_table_t *newt)
 	const u_int tid = newt->t_id;
 	npf_table_t *oldt = ts->ts_map[tid];
 
-	KASSERT(tid < ts->ts_nitems);
-	KASSERT(oldt->t_id == newt->t_id);
+	MPASS(tid < ts->ts_nitems);
+	MPASS(oldt->t_id == newt->t_id);
 
 	newt->t_refcnt = oldt->t_refcnt;
 	oldt->t_refcnt = 0;
@@ -271,7 +271,7 @@ npf_tableset_reload(npf_t *npf, npf_tableset_t *nts, npf_tableset_t *ots)
 		atomic_inc_uint(&ot->t_refcnt);
 		nts->ts_map[tid] = ot;
 
-		KASSERT(npf_config_locked_p(npf));
+		MPASS(npf_config_locked_p(npf));
 		ot->t_id = tid;
 
 		/* Destroy the new table (we hold the only reference). */
@@ -285,7 +285,7 @@ npf_tableset_export(npf_t *npf, const npf_tableset_t *ts, nvlist_t *nvl)
 {
 	const npf_table_t *t;
 
-	KASSERT(npf_config_locked_p(npf));
+	MPASS(npf_config_locked_p(npf));
 
 	for (u_int tid = 0; tid < ts->ts_nitems; tid++) {
 		nvlist_t *table;
@@ -343,7 +343,7 @@ table_ifaddr_flush(npf_table_t *t)
 		size_t len;
 
 		if (!t->t_allocated[i]) {
-			KASSERT(t->t_elements[i] == NULL);
+			MPASS(t->t_elements[i] == NULL);
 			continue;
 		}
 		len = t->t_allocated[i] * sizeof(npf_tblent_t *);
@@ -404,7 +404,7 @@ npf_table_create(const char *name, u_int tid, int type,
 	case NPF_TABLE_IFADDR:
 		break;
 	default:
-		KASSERT(false);
+		MPASS(false);
 	}
 	npf_mutex_init(&t->t_lock, MUTEX_DEFAULT, IPL_NET);
 	t->t_type = type;
@@ -421,7 +421,7 @@ out:
 void
 npf_table_destroy(npf_table_t *t)
 {
-	KASSERT(t->t_refcnt == 0);
+	MPASS(t->t_refcnt == 0);
 
 	switch (t->t_type) {
 	case NPF_TABLE_IPSET:
@@ -441,7 +441,7 @@ npf_table_destroy(npf_table_t *t)
 		table_ifaddr_flush(t);
 		break;
 	default:
-		KASSERT(false);
+		MPASS(false);
 	}
 	mutex_destroy(&t->t_lock);
 	kmem_free(t, sizeof(npf_table_t));
@@ -514,8 +514,8 @@ table_ifaddr_insert(npf_table_t *t, const int alen, npf_tblent_t *ent)
 			elements[i] = old_elements[i];
 		}
 		if (allocated) {
-			const size_t len = allocated * sizeof(npf_tblent_t *);
-			KASSERT(old_elements != NULL);
+			const size_t len __unused = allocated * sizeof(npf_tblent_t *);
+			MPASS(old_elements != NULL);
 			kmem_free(old_elements, len);
 		}
 		t->t_elements[aidx] = elements;
@@ -594,7 +594,7 @@ npf_table_insert(npf_table_t *t, const int alen,
 		t->t_nitems++;
 		break;
 	default:
-		KASSERT(false);
+		MPASS(false);
 	}
 	mutex_exit(&t->t_lock);
 
@@ -648,7 +648,7 @@ npf_table_remove(npf_table_t *t, const int alen,
 		error = EINVAL;
 		break;
 	default:
-		KASSERT(false);
+		MPASS(false);
 		ent = NULL;
 	}
 	mutex_exit(&t->t_lock);
@@ -701,7 +701,7 @@ npf_table_lookup(npf_table_t *t, const int alen, const npf_addr_t *addr)
 		for (unsigned i = 0; i < t->t_used[aidx]; i++) {
 			const npf_tblent_t *elm = t->t_elements[aidx][i];
 
-			KASSERT(elm->te_alen == alen);
+			MPASS(elm->te_alen == alen);
 
 			if (memcmp(&elm->te_addr, addr, alen) == 0) {
 				found = true;
@@ -711,7 +711,7 @@ npf_table_lookup(npf_table_t *t, const int alen, const npf_addr_t *addr)
 		break;
 	}
 	default:
-		KASSERT(false);
+		MPASS(false);
 		found = false;
 	}
 
@@ -725,8 +725,8 @@ npf_table_getsome(npf_table_t *t, const int alen, unsigned idx)
 	npf_tblent_t *elm;
 	unsigned nitems;
 
-	KASSERT(t->t_type == NPF_TABLE_IFADDR);
-	KASSERT(aidx < NPF_ADDR_SLOTS);
+	MPASS(t->t_type == NPF_TABLE_IFADDR);
+	MPASS(aidx < NPF_ADDR_SLOTS);
 
 	nitems = t->t_used[aidx];
 	if (nitems == 0) {
@@ -814,7 +814,7 @@ npf_table_list(npf_table_t *t, void *ubuf, size_t len)
 		error = table_generic_list(t, ubuf, len);
 		break;
 	default:
-		KASSERT(false);
+		MPASS(false);
 	}
 	mutex_exit(&t->t_lock);
 
@@ -842,7 +842,7 @@ npf_table_flush(npf_table_t *t)
 		error = EINVAL;
 		break;
 	default:
-		KASSERT(false);
+		MPASS(false);
 	}
 	mutex_exit(&t->t_lock);
 	return error;

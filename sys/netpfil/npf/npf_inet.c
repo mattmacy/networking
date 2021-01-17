@@ -42,11 +42,14 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/systm.h>
+#include <sys/malloc.h>
 
 #include <net/pfil.h>
 #include <net/if.h>
-#include <net/ethertypes.h>
-#include <net/if_ether.h>
+#include <net/if_var.h>
+#include <net/ethernet.h>
+
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -111,7 +114,7 @@ npf_addr_cksum(uint16_t cksum, int sz, const npf_addr_t *oaddr,
 	const uint32_t *oip32 = (const uint32_t *)oaddr;
 	const uint32_t *nip32 = (const uint32_t *)naddr;
 
-	KASSERT(sz % sizeof(uint32_t) == 0);
+	MPASS(sz % sizeof(uint32_t) == 0);
 	do {
 		cksum = npf_fixup32_cksum(cksum, *oip32++, *nip32++);
 		sz -= sizeof(uint32_t);
@@ -130,7 +133,7 @@ npf_addr_mix(const int alen, const npf_addr_t *a1, const npf_addr_t *a2)
 	const int nwords = alen >> 2;
 	uint32_t mix = 0;
 
-	KASSERT(alen > 0 && a1 != NULL && a2 != NULL);
+	MPASS(alen > 0 && a1 != NULL && a2 != NULL);
 
 	for (int i = 0; i < nwords; i++) {
 		mix ^= a1->word32[i];
@@ -150,7 +153,7 @@ npf_addr_mask(const npf_addr_t *addr, const npf_netmask_t mask,
 	uint_fast8_t length = mask;
 
 	/* Note: maximum length is 32 for IPv4 and 128 for IPv6. */
-	KASSERT(length <= NPF_MAX_NETMASK);
+	MPASS(length <= NPF_MAX_NETMASK);
 
 	for (int i = 0; i < nwords; i++) {
 		uint32_t wordmask;
@@ -180,7 +183,7 @@ npf_addr_bitor(const npf_addr_t *addr, const npf_netmask_t mask,
 	uint_fast8_t length = mask;
 
 	/* Note: maximum length is 32 for IPv4 and 128 for IPv6. */
-	KASSERT(length <= NPF_MAX_NETMASK);
+	MPASS(length <= NPF_MAX_NETMASK);
 
 	for (int i = 0; i < nwords; i++) {
 		uint32_t wordmask;
@@ -252,7 +255,7 @@ npf_tcpsaw(const npf_cache_t *npc, tcp_seq *seq, tcp_seq *ack, uint32_t *win)
 	const struct tcphdr *th = npc->npc_l4.tcp;
 	u_int thlen;
 
-	KASSERT(npf_iscached(npc, NPC_TCP));
+	MPASS(npf_iscached(npc, NPC_TCP));
 
 	*seq = ntohl(th->th_seq);
 	*ack = ntohl(th->th_ack);
@@ -283,8 +286,8 @@ npf_fetch_tcpopts(npf_cache_t *npc, uint16_t *mss, int *wscale)
 	uint8_t val;
 	bool ok;
 
-	KASSERT(npf_iscached(npc, NPC_IP46));
-	KASSERT(npf_iscached(npc, NPC_TCP));
+	MPASS(npf_iscached(npc, NPC_IP46));
+	MPASS(npf_iscached(npc, NPC_TCP));
 
 	/* Determine if there are any TCP options, get their length. */
 	cnt = (th->th_off << 2) - sizeof(struct tcphdr);
@@ -292,7 +295,7 @@ npf_fetch_tcpopts(npf_cache_t *npc, uint16_t *mss, int *wscale)
 		/* No options. */
 		return false;
 	}
-	KASSERT(cnt <= MAX_TCPOPTLEN);
+	MPASS(cnt <= MAX_TCPOPTLEN);
 
 	/* Fetch all the options at once. */
 	nbuf_reset(nbuf);
@@ -357,8 +360,8 @@ npf_set_mss(npf_cache_t *npc, uint16_t mss, uint16_t *old, uint16_t *new,
 	uint8_t *cp, *base, opt;
 	bool ok;
 
-	KASSERT(npf_iscached(npc, NPC_IP46));
-	KASSERT(npf_iscached(npc, NPC_TCP));
+	MPASS(npf_iscached(npc, NPC_IP46));
+	MPASS(npf_iscached(npc, NPC_TCP));
 
 	/* Determine if there are any TCP options, get their length. */
 	cnt = (th->th_off << 2) - sizeof(struct tcphdr);
@@ -366,7 +369,7 @@ npf_set_mss(npf_cache_t *npc, uint16_t mss, uint16_t *old, uint16_t *new,
 		/* No options. */
 		return false;
 	}
-	KASSERT(cnt <= MAX_TCPOPTLEN);
+	MPASS(cnt <= MAX_TCPOPTLEN);
 
 	/* Fetch all the options at once. */
 	nbuf_reset(nbuf);
@@ -683,8 +686,8 @@ npf_recache(npf_cache_t *npc)
 	npc->npc_info = 0;
 	flags = npf_cache_all(npc);
 
-	KASSERT((flags & mflags) == mflags);
-	KASSERT(nbuf_flag_p(nbuf, NBUF_DATAREF_RESET) == 0);
+	MPASS((flags & mflags) == mflags);
+	MPASS(nbuf_flag_p(nbuf, NBUF_DATAREF_RESET) == 0);
 }
 
 /*
@@ -693,8 +696,8 @@ npf_recache(npf_cache_t *npc)
 bool
 npf_rwrip(const npf_cache_t *npc, u_int which, const npf_addr_t *addr)
 {
-	KASSERT(npf_iscached(npc, NPC_IP46));
-	KASSERT(which == NPF_SRC || which == NPF_DST);
+	MPASS(npf_iscached(npc, NPC_IP46));
+	MPASS(which == NPF_SRC || which == NPF_DST);
 
 	memcpy(npc->npc_ips[which], addr, npc->npc_alen);
 	return true;
@@ -709,9 +712,9 @@ npf_rwrport(const npf_cache_t *npc, u_int which, const in_port_t port)
 	const int proto = npc->npc_proto;
 	in_port_t *oport;
 
-	KASSERT(npf_iscached(npc, NPC_TCP) || npf_iscached(npc, NPC_UDP));
-	KASSERT(proto == IPPROTO_TCP || proto == IPPROTO_UDP);
-	KASSERT(which == NPF_SRC || which == NPF_DST);
+	MPASS(npf_iscached(npc, NPC_TCP) || npf_iscached(npc, NPC_UDP));
+	MPASS(proto == IPPROTO_TCP || proto == IPPROTO_UDP);
+	MPASS(which == NPF_SRC || which == NPF_DST);
 
 	/* Get the offset and store the port in it. */
 	if (proto == IPPROTO_TCP) {
@@ -740,8 +743,8 @@ npf_rwrcksum(const npf_cache_t *npc, u_int which,
 	struct udphdr *uh;
 	in_port_t oport;
 
-	KASSERT(npf_iscached(npc, NPC_LAYER4));
-	KASSERT(which == NPF_SRC || which == NPF_DST);
+	MPASS(npf_iscached(npc, NPC_LAYER4));
+	MPASS(which == NPF_SRC || which == NPF_DST);
 
 	if (npf_iscached(npc, NPC_IP4)) {
 		struct ip *ip = npc->npc_ip.v4;
@@ -751,7 +754,7 @@ npf_rwrcksum(const npf_cache_t *npc, u_int which,
 		ip->ip_sum = npf_addr_cksum(ipsum, alen, oaddr, addr);
 	} else {
 		/* No checksum for IPv6. */
-		KASSERT(npf_iscached(npc, NPC_IP6));
+		MPASS(npf_iscached(npc, NPC_IP6));
 	}
 
 	/*
@@ -762,13 +765,13 @@ npf_rwrcksum(const npf_cache_t *npc, u_int which,
 	 */
 	switch (proto) {
 	case IPPROTO_TCP:
-		KASSERT(npf_iscached(npc, NPC_TCP));
+		MPASS(npf_iscached(npc, NPC_TCP));
 		th = npc->npc_l4.tcp;
 		ocksum = &th->th_sum;
 		oport = (which == NPF_SRC) ? th->th_sport : th->th_dport;
 		break;
 	case IPPROTO_UDP:
-		KASSERT(npf_iscached(npc, NPC_UDP));
+		MPASS(npf_iscached(npc, NPC_UDP));
 		uh = npc->npc_l4.udp;
 		ocksum = &uh->uh_sum;
 		if (*ocksum == 0) {
@@ -830,7 +833,7 @@ npf_napt_rwr(const npf_cache_t *npc, u_int which,
 		break;
 	case IPPROTO_ICMP:
 	case IPPROTO_ICMPV6:
-		KASSERT(npf_iscached(npc, NPC_ICMP));
+		MPASS(npf_iscached(npc, NPC_ICMP));
 		/* Nothing. */
 		break;
 	default:
@@ -850,7 +853,7 @@ npf_npt66_rwr(const npf_cache_t *npc, u_int which, const npf_addr_t *pref,
 	unsigned remnant, word, preflen = len >> 4;
 	uint32_t sum;
 
-	KASSERT(which == NPF_SRC || which == NPF_DST);
+	MPASS(which == NPF_SRC || which == NPF_DST);
 
 	if (!npf_iscached(npc, NPC_IP6)) {
 		return EINVAL;

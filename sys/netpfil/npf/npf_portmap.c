@@ -41,10 +41,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/types.h>
 
 #include <sys/atomic.h>
-#include <sys/bitops.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
-#include <sys/cprng.h>
+#include <sys/prng.h>
 #include <sys/thmap.h>
 #endif
 
@@ -153,7 +152,7 @@ void
 npf_portmap_destroy(npf_portmap_t *pm)
 {
 	npf_portmap_flush(pm);
-	KASSERT(LIST_EMPTY(&pm->bitmap_list));
+	MPASS(LIST_EMPTY(&pm->bitmap_list));
 
 	thmap_destroy(pm->addr_map);
 	mutex_destroy(&pm->list_lock);
@@ -179,8 +178,8 @@ bitmap_word_isset(uint64_t x, unsigned bit)
 	uint64_t m, r;
 
 	bit++;
-	KASSERT((x & PORTMAP_L1_TAG) == 0);
-	KASSERT(bit <= (PORTMAP_L0_MASK + 1));
+	MPASS((x & PORTMAP_L1_TAG) == 0);
+	MPASS(bit <= (PORTMAP_L0_MASK + 1));
 
 	m = (x >> 4) ^ (UINT64_C(0x1001001001001) * bit);
 	r = (m - UINT64_C(0x1001001001001)) & (~m & UINT64_C(0x800800800800800));
@@ -200,8 +199,8 @@ bitmap_word_cax(uint64_t x, int exp, int bit)
 	 * since we use 12 bits to represent 11 bit values.
 	 */
 	bit++;
-	KASSERT((unsigned)bit <= (PORTMAP_L0_MASK + 1));
-	KASSERT((x & PORTMAP_L1_TAG) == 0);
+	MPASS((unsigned)bit <= (PORTMAP_L0_MASK + 1));
+	MPASS((x & PORTMAP_L1_TAG) == 0);
 
 	if (((x >> 52) & 0xfff) == e)
 		return x ^ ((uint64_t)bit << 52);
@@ -222,7 +221,7 @@ bitmap_word_unpack(uint64_t x, unsigned bitvals[static 5])
 	unsigned n = 0;
 	uint64_t v;
 
-	KASSERT((x & PORTMAP_L1_TAG) == 0);
+	MPASS((x & PORTMAP_L1_TAG) == 0);
 
 	if ((v = ((x >> 52)) & 0xfff) != 0)
 		bitvals[n++] = v - 1;
@@ -245,7 +244,7 @@ bitmap_isset(const bitmap_t *bm, unsigned bit)
 	uint64_t bval, b;
 	bitmap_l1_t *bm1;
 
-	KASSERT(bit < PORTMAP_MAX_BITS);
+	MPASS(bit < PORTMAP_MAX_BITS);
 	i = bit >> PORTMAP_L0_SHIFT;
 	bval = atomic_load_relaxed(&bm->bits0[i]);
 
@@ -263,7 +262,7 @@ bitmap_isset(const bitmap_t *bm, unsigned bit)
 
 	/* Level 1 check. */
 	bm1 = PORTMAP_L1_GET(bval);
-	KASSERT(bm1 != NULL);
+	MPASS(bm1 != NULL);
 	i = chunk_bit >> PORTMAP_L1_SHIFT;
 	b = UINT64_C(1) << (chunk_bit & PORTMAP_L1_MASK);
 	return (bm1->bits1[i] & b) != 0;
@@ -277,7 +276,7 @@ bitmap_set(bitmap_t *bm, unsigned bit)
 	uint64_t bval, b, oval, nval;
 	bitmap_l1_t *bm1;
 again:
-	KASSERT(bit < PORTMAP_MAX_BITS);
+	MPASS(bit < PORTMAP_MAX_BITS);
 	i = bit >> PORTMAP_L0_SHIFT;
 	chunk_bit = bit & PORTMAP_L0_MASK;
 	bval = atomic_load_relaxed(&bm->bits0[i]);
@@ -294,8 +293,8 @@ again:
 		 * Look for a zero-slot and put a value there.
 		 */
 		if ((nval = bitmap_word_cax(bval, -1, chunk_bit)) != 0) {
-			KASSERT((nval & PORTMAP_L1_TAG) == 0);
-			if (atomic_cas_64(&bm->bits0[i], bval, nval) != bval) {
+			MPASS((nval & PORTMAP_L1_TAG) == 0);
+			if (atomic_cmpset_64(&bm->bits0[i], bval, nval) == 0) {
 				goto again;
 			}
 			return true;
@@ -305,7 +304,7 @@ again:
 		 * Full: allocate L1 block and copy over the current
 		 * values into the level.
 		 */
-		bm1 = kmem_intr_zalloc(sizeof(bitmap_l1_t), KM_NOSLEEP);
+		bm1 = malloc(sizeof(bitmap_l1_t), M_NPF, M_NOWAIT|M_ZERO);
 		if (bm1 == NULL) {
 			return false; // error
 		}
@@ -314,8 +313,8 @@ again:
 			const unsigned v = bitvals[n];
 			const unsigned off = v >> PORTMAP_L1_SHIFT;
 
-			KASSERT(v <= PORTMAP_L0_MASK);
-			KASSERT(off < (sizeof(uint64_t) * CHAR_BIT));
+			MPASS(v <= PORTMAP_L0_MASK);
+			MPASS(off < (sizeof(uint64_t) * CHAR_BIT));
 			bm1->bits1[off] |= UINT64_C(1) << (v & PORTMAP_L1_MASK);
 		}
 
@@ -325,17 +324,17 @@ again:
 		 * Note: CAS serves as a memory barrier.
 		 */
 		bm1p = (uintptr_t)bm1;
-		KASSERT((bm1p & PORTMAP_L1_TAG) == 0);
+		MPASS((bm1p & PORTMAP_L1_TAG) == 0);
 		bm1p |= PORTMAP_L1_TAG;
 		if (atomic_cas_64(&bm->bits0[i], bval, bm1p) != bval) {
-			kmem_intr_free(bm1, sizeof(bitmap_l1_t));
+			free(bm1, M_NPF);
 			goto again;
 		}
 		bval = bm1p;
 	}
 
 	bm1 = PORTMAP_L1_GET(bval);
-	KASSERT(bm1 != NULL);
+	MPASS(bm1 != NULL);
 	i = chunk_bit >> PORTMAP_L1_SHIFT;
 	b = UINT64_C(1) << (chunk_bit & PORTMAP_L1_MASK);
 
@@ -357,7 +356,7 @@ bitmap_clr(bitmap_t *bm, unsigned bit)
 	uint64_t bval, b, oval, nval;
 	bitmap_l1_t *bm1;
 again:
-	KASSERT(bit < PORTMAP_MAX_BITS);
+	MPASS(bit < PORTMAP_MAX_BITS);
 	i = bit >> PORTMAP_L0_SHIFT;
 	chunk_bit = bit & PORTMAP_L0_MASK;
 	bval = bm->bits0[i];
@@ -367,7 +366,7 @@ again:
 			return false;
 		}
 		nval = bitmap_word_cax(bval, chunk_bit, chunk_bit);
-		KASSERT((nval & PORTMAP_L1_TAG) == 0);
+		MPASS((nval & PORTMAP_L1_TAG) == 0);
 		if (atomic_cas_64(&bm->bits0[i], bval, nval) != bval) {
 			goto again;
 		}
@@ -375,7 +374,7 @@ again:
 	}
 
 	bm1 = PORTMAP_L1_GET(bval);
-	KASSERT(bm1 != NULL);
+	MPASS(bm1 != NULL);
 	i = chunk_bit >> PORTMAP_L1_SHIFT;
 	b = UINT64_C(1) << (chunk_bit & PORTMAP_L1_MASK);
 
@@ -397,8 +396,8 @@ npf_portmap_autoget(npf_portmap_t *pm, unsigned alen, const npf_addr_t *addr)
 {
 	bitmap_t *bm;
 
-	KASSERT(pm && pm->addr_map);
-	KASSERT(alen && alen <= sizeof(npf_addr_t));
+	MPASS(pm && pm->addr_map);
+	MPASS(alen && alen <= sizeof(npf_addr_t));
 
 	/* Lookup the port map for this address. */
 	bm = thmap_get(pm->addr_map, addr, alen);
@@ -409,7 +408,7 @@ npf_portmap_autoget(npf_portmap_t *pm, unsigned alen, const npf_addr_t *addr)
 		 * Allocate a new port map for this address and
 		 * attempt to insert it.
 		 */
-		bm = kmem_intr_zalloc(sizeof(bitmap_t), KM_NOSLEEP);
+		bm = malloc(sizeof(bitmap_t), M_NPF, M_NOWAIT|M_ZERO);
 		if (bm == NULL) {
 			return NULL;
 		}
@@ -451,13 +450,13 @@ npf_portmap_flush(npf_portmap_t *pm)
 
 			if (bm1 & PORTMAP_L1_TAG) {
 				bitmap_l1_t *bm1p = PORTMAP_L1_GET(bm1);
-				kmem_intr_free(bm1p, sizeof(bitmap_l1_t));
+				free(bm1p, M_NPF);
 			}
 			bm->bits0[i] = UINT64_C(0);
 		}
 		LIST_REMOVE(bm, entry);
 		thmap_del(pm->addr_map, &bm->addr, bm->addr_len);
-		kmem_intr_free(bm, sizeof(bitmap_t));
+		free(bm, M_NPF);
 	}
 	/* Note: the caller ensures there are no active references. */
 	thmap_gc(pm->addr_map, thmap_stage_gc(pm->addr_map));
@@ -490,7 +489,7 @@ npf_portmap_get(npf_portmap_t *pm, int alen, const npf_addr_t *addr)
 	}
 
 	/* Randomly select a port. */
-	target = min_port + (cprng_fast32() % port_delta);
+	target = min_port + prng32_bounded(port_delta);
 	bit = target;
 next:
 	if (bitmap_set(bm, bit)) {

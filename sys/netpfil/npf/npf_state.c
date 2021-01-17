@@ -147,8 +147,8 @@ npf_state_init(npf_cache_t *npc, npf_state_t *nst)
 	const int proto = npc->npc_proto;
 	bool ret;
 
-	KASSERT(npf_iscached(npc, NPC_IP46));
-	KASSERT(npf_iscached(npc, NPC_LAYER4));
+	MPASS(npf_iscached(npc, NPC_IP46));
+	MPASS(npf_iscached(npc, NPC_LAYER4));
 
 	memset(nst, 0, sizeof(npf_state_t));
 
@@ -235,7 +235,7 @@ npf_state_etime(npf_t *npf, const npf_state_t *nst, const int proto)
 		timeout = params->gre_timeout;
 		break;
 	default:
-		KASSERT(false);
+		MPASS(false);
 	}
 	return timeout;
 }

@@ -80,7 +80,7 @@ npf_ifmap_init(npf_t *npf, const npf_ifops_t *ifops)
 {
 	const size_t nbytes = sizeof(npf_ifmap_t) * NPF_MAX_IFMAP;
 
-	KASSERT(ifops != NULL);
+	MPASS(ifops != NULL);
 	ifops->flush(npf, (void *)(uintptr_t)0);
 
 	npf_mutex_init(&npf->ifmap_lock, MUTEX_DEFAULT, IPL_SOFTNET);
@@ -93,7 +93,7 @@ npf_ifmap_init(npf_t *npf, const npf_ifops_t *ifops)
 void
 npf_ifmap_fini(npf_t *npf)
 {
-	const size_t nbytes = sizeof(npf_ifmap_t) * NPF_MAX_IFMAP;
+	const size_t nbytes __unused = sizeof(npf_ifmap_t) * NPF_MAX_IFMAP;
 	mutex_destroy(&npf->ifmap_lock);
 	kmem_free(npf->ifmap, nbytes);
 }
@@ -101,7 +101,7 @@ npf_ifmap_fini(npf_t *npf)
 static unsigned
 npf_ifmap_lookup(npf_t *npf, const char *ifname)
 {
-	KASSERT(mutex_owned(&npf->ifmap_lock));
+	MPASS(mutex_owned(&npf->ifmap_lock));
 
 	for (unsigned i = 0; i < npf->ifmap_cnt; i++) {
 		npf_ifmap_t *ifmap = &npf->ifmap[i];
@@ -136,7 +136,7 @@ npf_ifmap_register(npf_t *npf, const char *ifname)
 		id = NPF_IFMAP_NOID;
 		goto out;
 	}
-	KASSERT(npf->ifmap_cnt < NPF_MAX_IFMAP);
+	MPASS(npf->ifmap_cnt < NPF_MAX_IFMAP);
 
 	/* Allocate a new slot and convert and assign an ID. */
 	i = npf->ifmap_cnt++;

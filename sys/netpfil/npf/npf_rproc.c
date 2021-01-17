@@ -87,7 +87,7 @@ npf_ext_init(npf_t *npf)
 void
 npf_ext_fini(npf_t *npf)
 {
-	KASSERT(LIST_EMPTY(&npf->ext_list));
+	MPASS(LIST_EMPTY(&npf->ext_list));
 	mutex_destroy(&npf->ext_lock);
 }
 
@@ -105,7 +105,7 @@ npf_ext_lookup(npf_t *npf, const char *name, bool autoload)
 	char modname[RPROC_NAME_LEN + NPF_EXT_PREFLEN];
 	int error;
 
-	KASSERT(mutex_owned(&npf->ext_lock));
+	MPASS(mutex_owned(&npf->ext_lock));
 
 again:
 	LIST_FOREACH(ext, &npf->ext_list, ext_entry)
@@ -164,7 +164,7 @@ npf_ext_unregister(npf_t *npf, void *extid)
 		mutex_exit(&npf->ext_lock);
 		return EBUSY;
 	}
-	KASSERT(npf_ext_lookup(npf, ext->ext_callname, false));
+	MPASS(npf_ext_lookup(npf, ext->ext_callname, false));
 	LIST_REMOVE(ext, ext_entry);
 	mutex_exit(&npf->ext_lock);
 
@@ -197,7 +197,7 @@ npf_ext_construct(npf_t *npf, const char *name,
 	}
 
 	extops = ext->ext_ops;
-	KASSERT(extops != NULL);
+	MPASS(extops != NULL);
 
 	error = extops->ctor(rp, params);
 	if (error) {
@@ -328,7 +328,7 @@ npf_rproc_getname(const npf_rproc_t *rp)
 void
 npf_rproc_release(npf_rproc_t *rp)
 {
-	KASSERT(atomic_load_relaxed(&rp->rp_refcnt) > 0);
+	MPASS(atomic_load_relaxed(&rp->rp_refcnt) > 0);
 
 	if (atomic_dec_uint_nv(&rp->rp_refcnt) != 0) {
 		return;
@@ -350,7 +350,7 @@ npf_rproc_assign(npf_rproc_t *rp, void *params)
 	unsigned i = rp->rp_ext_count;
 
 	/* Note: params may be NULL. */
-	KASSERT(i < RPROC_EXT_COUNT);
+	MPASS(i < RPROC_EXT_COUNT);
 	rp->rp_ext_meta[i] = params;
 }
 
@@ -365,14 +365,14 @@ npf_rproc_run(npf_cache_t *npc, npf_rproc_t *rp, const npf_match_info_t *mi,
 {
 	const unsigned extcount = rp->rp_ext_count;
 
-	KASSERT(!nbuf_flag_p(npc->npc_nbuf, NBUF_DATAREF_RESET));
-	KASSERT(atomic_load_relaxed(&rp->rp_refcnt) > 0);
+	MPASS(!nbuf_flag_p(npc->npc_nbuf, NBUF_DATAREF_RESET));
+	MPASS(atomic_load_relaxed(&rp->rp_refcnt) > 0);
 
 	for (unsigned i = 0; i < extcount; i++) {
 		const npf_ext_t *ext = rp->rp_ext[i];
 		const npf_ext_ops_t *extops = ext->ext_ops;
 
-		KASSERT(atomic_load_relaxed(&ext->ext_refcnt) > 0);
+		MPASS(atomic_load_relaxed(&ext->ext_refcnt) > 0);
 
 		if (!extops->proc(npc, rp->rp_ext_meta[i], mi, decision)) {
 			return false;

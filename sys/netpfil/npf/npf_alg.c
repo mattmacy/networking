@@ -89,7 +89,7 @@ npf_alg_lookup(npf_t *npf, const char *name)
 {
 	npf_algset_t *aset = npf->algset;
 
-	KASSERT(npf_config_locked_p(npf));
+	MPASS(npf_config_locked_p(npf));
 
 	for (unsigned i = 0; i < aset->alg_count; i++) {
 		npf_alg_t *alg = &aset->alg_list[i];
@@ -101,6 +101,7 @@ npf_alg_lookup(npf_t *npf, const char *name)
 	return NULL;
 }
 
+#ifdef notyet
 npf_alg_t *
 npf_alg_construct(npf_t *npf, const char *name)
 {
@@ -122,6 +123,7 @@ npf_alg_construct(npf_t *npf, const char *name)
 	npf_config_exit(npf);
 	return alg;
 }
+#endif
 
 /*
  * npf_alg_register: register application-level gateway.
@@ -223,9 +225,8 @@ npf_alg_match(npf_cache_t *npc, npf_nat_t *nt, int di)
 	bool match = false;
 	unsigned count;
 	struct epoch_tracker et;
-	int s;
 
-	KASSERTMSG(npf_iscached(npc, NPC_IP46), "expecting protocol number");
+	KASSERT(npf_iscached(npc, NPC_IP46), ("expecting protocol number"));
 
 	npf_config_read_enter(&et);
 	count = atomic_load_relaxed(&aset->alg_count);
@@ -257,10 +258,10 @@ npf_alg_exec(npf_cache_t *npc, npf_nat_t *nt, const npf_flow_t flow)
 {
 	npf_t *npf = npc->npc_ctx;
 	npf_algset_t *aset = npf->algset;
+	struct epoch_tracker et;
 	unsigned count;
-	int s;
 
-	s = npf_config_read_enter(npf);
+	npf_config_read_enter(&et);
 	count = atomic_load_relaxed(&aset->alg_count);
 	for (unsigned i = 0; i < count; i++) {
 		const npfa_funcs_t *f = &aset->alg_funcs[i];
@@ -271,7 +272,7 @@ npf_alg_exec(npf_cache_t *npc, npf_nat_t *nt, const npf_flow_t flow)
 			translate_func(npc, nt, flow);
 		}
 	}
-	npf_config_read_exit(npf, s);
+	npf_config_read_exit(&et);
 }
 
 /*
@@ -297,10 +298,10 @@ npf_alg_conn(npf_cache_t *npc, int di)
 	npf_t *npf = npc->npc_ctx;
 	npf_algset_t *aset = npf->algset;
 	npf_conn_t *con = NULL;
+	struct epoch_tracker et;
 	unsigned count;
-	int s;
 
-	s = npf_config_read_enter(npf);
+	npf_config_read_enter(&et);
 	count = atomic_load_relaxed(&aset->alg_count);
 	for (unsigned i = 0; i < count; i++) {
 		const npfa_funcs_t *f = &aset->alg_funcs[i];
@@ -311,7 +312,7 @@ npf_alg_conn(npf_cache_t *npc, int di)
 			break;
 		}
 	}
-	npf_config_read_exit(npf, s);
+	npf_config_read_exit(&et);
 	return con;
 }
 
@@ -338,7 +339,7 @@ npf_alg_export(npf_t *npf, nvlist_t *nvl)
 {
 	npf_algset_t *aset = npf->algset;
 
-	KASSERT(npf_config_locked_p(npf));
+	MPASS(npf_config_locked_p(npf));
 
 	for (unsigned i = 0; i < aset->alg_count; i++) {
 		const npf_alg_t *alg = &aset->alg_list[i];

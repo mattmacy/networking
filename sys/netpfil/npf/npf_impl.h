@@ -54,6 +54,7 @@
 
 #include <net/bpf.h>
 #include <net/if.h>
+#include <net/pfil.h>
 #endif
 #include <sys/dnv.h>
 #include <sys/nv.h>
@@ -64,6 +65,8 @@
 
 #include <stand/bpf.h>
 
+#define PACKET_TAG_NPF	10
+#define PFIL_ALL (PFIL_IN|PFIL_OUT)
 
 MALLOC_DECLARE(M_NPF);
 

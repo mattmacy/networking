@@ -46,7 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/types.h>
 
 #include <net/bpf.h>
-#include <net/bpfjit.h>
+#include <net/bpf_jitter.h>
 #include <net/pfil.h>
 #include <net/if.h>
 #endif
@@ -154,7 +154,7 @@ npf_ruleset_create(size_t slots)
 void
 npf_ruleset_destroy(npf_ruleset_t *rlset)
 {
-	size_t len = offsetof(npf_ruleset_t, rs_rules[rlset->rs_slots]);
+	size_t len __unused = offsetof(npf_ruleset_t, rs_rules[rlset->rs_slots]);
 	npf_rule_t *rl;
 
 	while ((rl = LIST_FIRST(&rlset->rs_all)) != NULL) {
@@ -168,15 +168,15 @@ npf_ruleset_destroy(npf_ruleset_t *rlset)
 		}
 		if (NPF_DYNAMIC_RULE_P(rl->r_attr)) {
 			/* Not removing from r_subset, see above. */
-			KASSERT(rl->r_parent != NULL);
+			MPASS(rl->r_parent != NULL);
 		}
 		LIST_REMOVE(rl, r_aentry);
 		npf_rule_free(rl);
 	}
-	KASSERT(LIST_EMPTY(&rlset->rs_dynamic));
+	MPASS(LIST_EMPTY(&rlset->rs_dynamic));
 
 	npf_ruleset_gc(rlset);
-	KASSERT(LIST_EMPTY(&rlset->rs_gc));
+	MPASS(LIST_EMPTY(&rlset->rs_gc));
 	kmem_free(rlset, len);
 }
 
@@ -188,13 +188,13 @@ npf_ruleset_insert(npf_ruleset_t *rlset, npf_rule_t *rl)
 {
 	unsigned n = rlset->rs_nitems;
 
-	KASSERT(n < rlset->rs_slots);
+	MPASS(n < rlset->rs_slots);
 
 	LIST_INSERT_HEAD(&rlset->rs_all, rl, r_aentry);
 	if (NPF_DYNAMIC_GROUP_P(rl->r_attr)) {
 		LIST_INSERT_HEAD(&rlset->rs_dynamic, rl, r_dentry);
 	} else {
-		KASSERTMSG(rl->r_parent == NULL, "cannot be dynamic rule");
+		KASSERT(rl->r_parent == NULL, ("cannot be dynamic rule"));
 		rl->r_attr &= ~NPF_RULE_DYNAMIC;
 	}
 
@@ -213,7 +213,7 @@ npf_ruleset_lookup(npf_ruleset_t *rlset, const char *name)
 	npf_rule_t *rl;
 
 	LIST_FOREACH(rl, &rlset->rs_dynamic, r_dentry) {
-		KASSERT(NPF_DYNAMIC_GROUP_P(rl->r_attr));
+		MPASS(NPF_DYNAMIC_GROUP_P(rl->r_attr));
 		if (strncmp(rl->r_name, name, NPF_RULE_MAXNAMELEN) == 0)
 			break;
 	}
@@ -286,7 +286,7 @@ npf_ruleset_add(npf_ruleset_t *rlset, const char *rname, npf_rule_t *rl)
 static void
 npf_ruleset_unlink(npf_rule_t *rl, npf_rule_t *prev)
 {
-	KASSERT(NPF_DYNAMIC_RULE_P(rl->r_attr));
+	MPASS(NPF_DYNAMIC_RULE_P(rl->r_attr));
 	if (prev) {
 		prev->r_next = rl->r_next;
 	} else {
@@ -308,8 +308,8 @@ npf_ruleset_remove(npf_ruleset_t *rlset, const char *rname, uint64_t id)
 		return ESRCH;
 	}
 	for (npf_rule_t *rl = rg->r_subset; rl; rl = rl->r_next) {
-		KASSERT(rl->r_parent == rg);
-		KASSERT(NPF_DYNAMIC_RULE_P(rl->r_attr));
+		MPASS(rl->r_parent == rg);
+		MPASS(NPF_DYNAMIC_RULE_P(rl->r_attr));
 
 		/* Compare ID.  On match, remove and return. */
 		if (rl->r_id == id) {
@@ -331,7 +331,7 @@ npf_ruleset_remkey(npf_ruleset_t *rlset, const char *rname,
 {
 	npf_rule_t *rg, *rlast = NULL, *prev = NULL, *lastprev = NULL;
 
-	KASSERT(len && len <= NPF_RULE_MAXKEYLEN);
+	MPASS(len && len <= NPF_RULE_MAXKEYLEN);
 
 	if ((rg = npf_ruleset_lookup(rlset, rname)) == NULL) {
 		return ESRCH;
@@ -339,8 +339,8 @@ npf_ruleset_remkey(npf_ruleset_t *rlset, const char *rname,
 
 	/* Compare the key and find the last in the list. */
 	for (npf_rule_t *rl = rg->r_subset; rl; rl = rl->r_next) {
-		KASSERT(rl->r_parent == rg);
-		KASSERT(NPF_DYNAMIC_RULE_P(rl->r_attr));
+		MPASS(rl->r_parent == rg);
+		MPASS(NPF_DYNAMIC_RULE_P(rl->r_attr));
 		if (memcmp(rl->r_key, key, len) == 0) {
 			lastprev = prev;
 			rlast = rl;
@@ -364,7 +364,7 @@ npf_ruleset_list(npf_t *npf, npf_ruleset_t *rlset, const char *rname,
 {
 	const npf_rule_t *rg;
 
-	KASSERT(npf_config_locked_p(npf));
+	MPASS(npf_config_locked_p(npf));
 
 	if ((rg = npf_ruleset_lookup(rlset, rname)) == NULL) {
 		return ESRCH;
@@ -372,8 +372,8 @@ npf_ruleset_list(npf_t *npf, npf_ruleset_t *rlset, const char *rname,
 	for (const npf_rule_t *rl = rg->r_subset; rl; rl = rl->r_next) {
 		nvlist_t *rule;
 
-		KASSERT(rl->r_parent == rg);
-		KASSERT(NPF_DYNAMIC_RULE_P(rl->r_attr));
+		MPASS(rl->r_parent == rg);
+		MPASS(NPF_DYNAMIC_RULE_P(rl->r_attr));
 
 		if ((rule = npf_rule_export(npf, rl)) == NULL) {
 			return ENOMEM;
@@ -401,8 +401,8 @@ npf_ruleset_flush(npf_ruleset_t *rlset, const char *rname)
 	membar_producer();
 
 	while (rl) {
-		KASSERT(NPF_DYNAMIC_RULE_P(rl->r_attr));
-		KASSERT(rl->r_parent == rg);
+		MPASS(NPF_DYNAMIC_RULE_P(rl->r_attr));
+		MPASS(rl->r_parent == rg);
 
 		LIST_REMOVE(rl, r_aentry);
 		LIST_INSERT_HEAD(&rlset->rs_gc, rl, r_aentry);
@@ -437,7 +437,7 @@ npf_ruleset_export(npf_t *npf, const npf_ruleset_t *rlset,
 	unsigned n = 0;
 	int error = 0;
 
-	KASSERT(npf_config_locked_p(npf));
+	MPASS(npf_config_locked_p(npf));
 
 	while (n < nitems) {
 		const npf_rule_t *rl = rlset->rs_rules[n];
@@ -473,7 +473,7 @@ npf_ruleset_reload(npf_t *npf, npf_ruleset_t *newset,
 	npf_rule_t *rg, *rl;
 	uint64_t nid = 0;
 
-	KASSERT(npf_config_locked_p(npf));
+	MPASS(npf_config_locked_p(npf));
 
 	/*
 	 * Scan the dynamic rules and share (migrate) if needed.
@@ -501,11 +501,11 @@ npf_ruleset_reload(npf_t *npf, npf_ruleset_t *newset,
 		 * reset the parent rule, though.
 		 */
 		for (rl = rg->r_subset; rl; rl = rl->r_next) {
-			KASSERT(NPF_DYNAMIC_RULE_P(rl->r_attr));
+			MPASS(NPF_DYNAMIC_RULE_P(rl->r_attr));
 			LIST_REMOVE(rl, r_aentry);
 			LIST_INSERT_HEAD(&newset->rs_all, rl, r_aentry);
 
-			KASSERT(rl->r_parent == active_rgroup);
+			MPASS(rl->r_parent == active_rgroup);
 			rl->r_parent = rg;
 		}
 	}
@@ -708,7 +708,7 @@ npf_rule_export(npf_t *npf, const npf_rule_t *rl)
 void
 npf_rule_setcode(npf_rule_t *rl, const int type, void *code, size_t size)
 {
-	KASSERT(type == NPF_CODE_BPF);
+	MPASS(type == NPF_CODE_BPF);
 
 	rl->r_type = type;
 	rl->r_code = code;
@@ -766,7 +766,7 @@ npf_rule_free(npf_rule_t *rl)
 uint64_t
 npf_rule_getid(const npf_rule_t *rl)
 {
-	KASSERT(NPF_DYNAMIC_RULE_P(rl->r_attr));
+	MPASS(NPF_DYNAMIC_RULE_P(rl->r_attr));
 	return rl->r_id;
 }
 
@@ -794,7 +794,7 @@ npf_rule_getnat(const npf_rule_t *rl)
 void
 npf_rule_setnat(npf_rule_t *rl, npf_natpolicy_t *np)
 {
-	KASSERT(rl->r_natp == NULL);
+	MPASS(rl->r_natp == NULL);
 	rl->r_natp = np;
 }
 
@@ -819,10 +819,10 @@ npf_rule_inspect(const npf_rule_t *rl, bpf_args_t *bc_args,
 
 	/* Any code? */
 	if (!rl->r_code) {
-		KASSERT(rl->r_jcode == NULL);
+		MPASS(rl->r_jcode == NULL);
 		return true;
 	}
-	KASSERT(rl->r_type == NPF_CODE_BPF);
+	MPASS(rl->r_type == NPF_CODE_BPF);
 	return npf_bpf_filter(bc_args, rl->r_code, rl->r_jcode) != 0;
 }
 
@@ -836,11 +836,11 @@ npf_rule_reinspect(const npf_rule_t *rg, bpf_args_t *bc_args,
 {
 	npf_rule_t *final_rl = NULL, *rl;
 
-	KASSERT(NPF_DYNAMIC_GROUP_P(rg->r_attr));
+	MPASS(NPF_DYNAMIC_GROUP_P(rg->r_attr));
 
 	rl = atomic_load_relaxed(&rg->r_subset);
 	for (; rl; rl = atomic_load_relaxed(&rl->r_next)) {
-		KASSERT(!final_rl || rl->r_priority >= final_rl->r_priority);
+		MPASS(!final_rl || rl->r_priority >= final_rl->r_priority);
 		if (!npf_rule_inspect(rl, bc_args, di_mask, ifid)) {
 			continue;
 		}
@@ -870,7 +870,7 @@ npf_ruleset_inspect(npf_cache_t *npc, const npf_ruleset_t *rlset,
 	bpf_args_t bc_args;
 	unsigned n = 0;
 
-	KASSERT(((di & PFIL_IN) != 0) ^ ((di & PFIL_OUT) != 0));
+	MPASS(((di & PFIL_IN) != 0) ^ ((di & PFIL_OUT) != 0));
 
 	/*
 	 * Prepare the external memory store and the arguments for
@@ -887,8 +887,8 @@ npf_ruleset_inspect(npf_cache_t *npc, const npf_ruleset_t *rlset,
 		const unsigned skip_to = rl->r_skip_to & SKIPTO_MASK;
 		const uint32_t attr = rl->r_attr;
 
-		KASSERT(!nbuf_flag_p(nbuf, NBUF_DATAREF_RESET));
-		KASSERT(n < skip_to);
+		MPASS(!nbuf_flag_p(nbuf, NBUF_DATAREF_RESET));
+		MPASS(n < skip_to);
 
 		/* Group is a barrier: return a matching if found any. */
 		if ((attr & NPF_RULE_GROUP) != 0 && final_rl) {
@@ -925,7 +925,7 @@ npf_ruleset_inspect(npf_cache_t *npc, const npf_ruleset_t *rlset,
 		n++;
 	}
 
-	KASSERT(!nbuf_flag_p(nbuf, NBUF_DATAREF_RESET));
+	MPASS(!nbuf_flag_p(nbuf, NBUF_DATAREF_RESET));
 	return final_rl;
 }
 

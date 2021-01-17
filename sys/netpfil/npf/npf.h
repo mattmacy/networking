@@ -242,8 +242,8 @@ bool		npf_autounload_p(void);
 #define	NPF_CODE_BPF			1
 
 /* Address translation types and flags. */
-#define	NPF_NATIN			1
-#define	NPF_NATOUT			2
+#define	NPF_NATIN			PFIL_IN
+#define	NPF_NATOUT			PFIL_OUT
 
 #define	NPF_NAT_PORTS			0x01
 #define	NPF_NAT_PORTMAP			0x02

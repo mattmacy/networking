@@ -241,21 +241,34 @@ nbuf_ensure_contig(nbuf_t *nbuf, size_t len)
 	return nbuf->nb_nptr;
 }
 
+static int
+m_writable(struct mbuf *m, int len)
+{
+	while (m && len > 0) {
+		if (!M_WRITABLE(m))
+			return (0);
+		len -= m->m_len;
+		m = m->m_next;
+	}
+	return (1);
+}
+
 void *
 nbuf_ensure_writable(nbuf_t *nbuf, size_t len)
 {
-	struct mbuf *m = nbuf->nb_mbuf;
+	struct mbuf *m_new, *m = nbuf->nb_mbuf;
 	const unsigned off = (uintptr_t)nbuf->nb_nptr - mtod(m, uintptr_t);
 	const int tlen = off + len;
 	bool head_buf;
 
 	MPASS(off < m_length(nbuf->nb_mbuf0, NULL));
 
-	if (!M_UNWRITABLE(m, tlen)) {
+	if (m_writable(m, tlen)) {
 		return nbuf->nb_nptr;
 	}
 	head_buf = (nbuf->nb_mbuf0 == m);
-	if (m_makewritable(&m, 0, tlen, M_NOWAIT)) {
+	
+	if ((m_new = m_pullup(m, tlen)) == NULL) {
 		memset(nbuf, 0, sizeof(nbuf_t));
 		return NULL;
 	}
@@ -282,15 +295,16 @@ nbuf_cksum_barrier(nbuf_t *nbuf, int di)
 	m = nbuf->nb_mbuf0;
 	MPASS(m_flags_p(m, M_PKTHDR));
 
-	if (m->m_pkthdr.csum_flags & (M_CSUM_TCPv4 | M_CSUM_UDPv4)) {
-		in_undefer_cksum_tcpudp(m);
-		m->m_pkthdr.csum_flags &= ~(M_CSUM_TCPv4 | M_CSUM_UDPv4);
+	if (m->m_pkthdr.csum_flags & CSUM_DELAY_DATA) {
+		in_delayed_cksum(m);
+		m->m_pkthdr.csum_flags &= ~(CSUM_IP_TCP | CSUM_IP_UDP);
 		return true;
 	}
 #ifdef INET6
-	if (m->m_pkthdr.csum_flags & (M_CSUM_TCPv6 | M_CSUM_UDPv6)) {
-		in6_undefer_cksum_tcpudp(m);
-		m->m_pkthdr.csum_flags &= ~(M_CSUM_TCPv6 | M_CSUM_UDPv6);
+	if (m->m_pkthdr.csum_flags & CSUM_DELAY_DATA_IPV6) {
+		uint32_t plen = m0->m_pkthdr.len - sizeof(*ip6);
+		in6_delayed_cksum(m0, plen, sizeof(struct ip6_hdr));
+		m->m_pkthdr.csum_flags &= ~CSUM_DELAY_DATA_IPV6;
 		return true;
 	}
 #endif
@@ -345,7 +359,7 @@ nbuf_find_tag(nbuf_t *nbuf, uint32_t *val)
 
 	MPASS(m_flags_p(m, M_PKTHDR));
 
-	mt = m_tag_find(m, PACKET_TAG_NPF);
+	mt = m_tag_find(m, PACKET_TAG_NPF, NULL);
 	if (mt == NULL) {
 		return EINVAL;
 	}

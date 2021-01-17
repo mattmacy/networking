@@ -98,7 +98,7 @@ npf_connkey_setkey(npf_connkey_t *key, unsigned alen, unsigned proto,
 	/*
 	 * See the key layout explanation above.
 	 */
-	KASSERT((alen >> 2) <= 0xf && proto <= 0xff);
+	MPASS((alen >> 2) <= 0xf && proto <= 0xff);
 	k[0] = ((uint32_t)(alen >> 2) << 28) | (proto << 20);
 	k[1] = ((uint32_t)id[isrc] << 16) | id[idst];
 
@@ -136,7 +136,7 @@ npf_connkey_getkey(const npf_connkey_t *key, unsigned *alen, unsigned *proto,
 		memcpy(&ips[NPF_DST], &k[2 + ((unsigned)*alen >> 2)], *alen);
 		return;
 	default:
-		KASSERT(0);
+		MPASS(0);
 	}
 }
 
@@ -156,8 +156,8 @@ npf_connkey_setckey(npf_connkey_t *key, unsigned ifid, unsigned di)
 		 * Direction: The highest 2 bits of the 20-bit 'ckey'.
 		 * Note: we rely on PFIL_IN and PFIL_OUT definitions.
 		 */
-		CTASSERT(PFIL_IN == 0x1 || PFIL_OUT == 0x2);
-		KASSERT((di & ~PFIL_ALL) == 0);
+		//CTASSERT(PFIL_IN == 0x1 || PFIL_OUT == 0x2);
+		MPASS((di & ~PFIL_ALL) == 0);
 		key->ck_key[0] |= ((uint32_t)di << 18);
 	}
 }
@@ -184,8 +184,8 @@ npf_conn_adjkey(npf_connkey_t *key, const npf_addr_t *naddr,
 	uint32_t * const k = key->ck_key;
 	uint32_t *addr = &k[2 + ((alen >> 2) * which)];
 
-	KASSERT(which == NPF_SRC || which == NPF_DST);
-	KASSERT(alen > 0);
+	MPASS(which == NPF_SRC || which == NPF_DST);
+	MPASS(alen > 0);
 	memcpy(addr, naddr, alen);
 
 	if (id) {
@@ -245,13 +245,13 @@ npf_conn_conkey(const npf_cache_t *npc, npf_connkey_t *key,
 
 	switch (proto) {
 	case IPPROTO_TCP:
-		KASSERT(npf_iscached(npc, NPC_TCP));
+		MPASS(npf_iscached(npc, NPC_TCP));
 		th = npc->npc_l4.tcp;
 		id[NPF_SRC] = th->th_sport;
 		id[NPF_DST] = th->th_dport;
 		break;
 	case IPPROTO_UDP:
-		KASSERT(npf_iscached(npc, NPC_UDP));
+		MPASS(npf_iscached(npc, NPC_UDP));
 		uh = npc->npc_l4.udp;
 		id[NPF_SRC] = uh->uh_sport;
 		id[NPF_DST] = uh->uh_dport;
@@ -302,7 +302,7 @@ npf_connkey_t *
 npf_conn_getbackkey(npf_conn_t *conn, unsigned alen)
 {
 	const unsigned off = 2 + ((alen * 2) >> 2);
-	KASSERT(off == NPF_CONNKEY_V4WORDS || off == NPF_CONNKEY_V6WORDS);
+	MPASS(off == NPF_CONNKEY_V4WORDS || off == NPF_CONNKEY_V6WORDS);
 	return (void *)&conn->c_keys[off];
 }
 

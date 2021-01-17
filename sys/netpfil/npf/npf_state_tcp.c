@@ -127,7 +127,7 @@ npf_tcpfl2case(const unsigned tcpfl)
 	i = (tcpfl & (TH_SYN | TH_FIN)) | ((tcpfl & TH_ACK) >> 2);
 	c = (0x2430140 >> (i << 2)) & 7;
 
-	KASSERT(c < TCPFC_COUNT);
+	MPASS(c < TCPFC_COUNT);
 	return c;
 }
 
@@ -300,7 +300,7 @@ npf_tcp_inwindow(npf_cache_t *npc, npf_state_t *nst, const npf_flow_t flow)
 	uint32_t win;
 
 	params = npc->npc_ctx->params[NPF_PARAMS_TCP_STATE];
-	KASSERT(npf_iscached(npc, NPC_TCP));
+	MPASS(npf_iscached(npc, NPC_TCP));
 
 	/*
 	 * Perform SEQ/ACK numbers check against boundaries.  Reference:
@@ -461,7 +461,7 @@ npf_state_tcp(npf_cache_t *npc, npf_state_t *nst, npf_flow_t flow)
 	const unsigned tcpfl = th->th_flags, state = nst->nst_state;
 	unsigned nstate;
 
-	KASSERT(nst->nst_state < NPF_TCP_NSTATES);
+	MPASS(nst->nst_state < NPF_TCP_NSTATES);
 
 	/* Look for a transition to a new state. */
 	if (__predict_true((tcpfl & TH_RST) == 0)) {
@@ -510,7 +510,7 @@ npf_state_tcp_timeout(npf_t *npf, const npf_state_t *nst)
 	const npf_state_tcp_params_t *params;
 	const unsigned state = nst->nst_state;
 
-	KASSERT(state < NPF_TCP_NSTATES);
+	MPASS(state < NPF_TCP_NSTATES);
 	params = npf->params[NPF_PARAMS_TCP_STATE];
 	return params->timeouts[state_timeout_idx[state]];
 }

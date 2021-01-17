@@ -37,6 +37,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/systm.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -49,11 +50,12 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <netinet6/ip6_var.h>
 #include <netinet6/scope6_var.h>
 #include <sys/mbuf.h>
+#include <machine/in_cksum.h>
 #endif
 
 #include "npf_impl.h"
 
-#define	DEFAULT_IP_TTL		(ip_defttl)
+#define	DEFAULT_IP_TTL		(V_ip_defttl)
 
 #if defined(_NPF_STANDALONE)
 #define	m_gethdr(t, f)		(npf)->mbufops->alloc((npf), 0, 0)
@@ -101,8 +103,8 @@ npf_return_tcp(npf_cache_t *npc)
 	uint32_t win;
 
 	/* Fetch relevant data. */
-	KASSERT(npf_iscached(npc, NPC_IP46));
-	KASSERT(npf_iscached(npc, NPC_LAYER4));
+	MPASS(npf_iscached(npc, NPC_IP46));
+	MPASS(npf_iscached(npc, NPC_LAYER4));
 	tcpdlen = npf_tcpsaw(npc, &seq, &ack, &win);
 	oth = npc->npc_l4.tcp;
 
@@ -119,7 +121,7 @@ npf_return_tcp(npf_cache_t *npc)
 		return EINVAL;
 	}
 
-	m = m_gethdr(M_DONTWAIT, MT_HEADER);
+	m = m_gethdr(M_NOWAIT, MT_HEADER);
 	if (m == NULL) {
 		return ENOMEM;
 	}
@@ -148,7 +150,7 @@ npf_return_tcp(npf_cache_t *npc)
 	} else {
 		struct ip6_hdr *oip = npc->npc_ip.v6;
 
-		KASSERT(npf_iscached(npc, NPC_IP6));
+		MPASS(npf_iscached(npc, NPC_IP6));
 		ip6 = mtod(m, struct ip6_hdr *);
 		memset(ip6, 0, len);
 
@@ -187,7 +189,7 @@ npf_return_tcp(npf_cache_t *npc)
 		ip->ip_len = htons(len);
 		ip->ip_ttl = DEFAULT_IP_TTL;
 	} else {
-		KASSERT(npf_iscached(npc, NPC_IP6));
+		MPASS(npf_iscached(npc, NPC_IP6));
 		th->th_sum = in6_cksum(m, IPPROTO_TCP, sizeof(struct ip6_hdr),
 		    sizeof(struct tcphdr));
 
@@ -216,7 +218,7 @@ npf_return_icmp(const npf_cache_t *npc)
 	struct mbuf *m = nbuf_head_mbuf(npc->npc_nbuf);
 
 	if (npf_iscached(npc, NPC_IP4)) {
-		icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_ADMIN_PROHIBIT, 0, 0);
+		icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_NET_PROHIB, 0, 0);
 		return 0;
 	} else if (npf_iscached(npc, NPC_IP6)) {
 		/* Handle IPv6 scopes */
